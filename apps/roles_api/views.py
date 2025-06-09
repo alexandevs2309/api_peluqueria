@@ -1,6 +1,6 @@
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
-from .permissions import RolePermission
+from .permissions import role_permission_for
 from .models import Role
 from .serializers import PermissionSerializer, RoleSerializer
 from rest_framework.decorators import action
@@ -20,13 +20,16 @@ from .utils import log_admin_action
     destroy=extend_schema(description="Elimina un rol."),
 )
 class RoleViewSet(viewsets.ModelViewSet):
-    queryset = Role.objects.all()
+    queryset = Role.objects.all().order_by('id')
     serializer_class = RoleSerializer
-    permission_classes = [IsAuthenticated, RolePermission]
-    RolePermission.allowed_roles = ['admin']  # Solo los administradores pueden gestionar roles
+    permission_classes = [IsAuthenticated, role_permission_for(['Admin'])]
+
     filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['name', 'permissions__codename', 'users']
+    filterset_fields = ['name', 'permissions__codename']
     pagination_class = PageNumberPagination
+    ordering_fields = ['id', 'name']
+    search_fields = ['name']
+    ordering = ['id']
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)

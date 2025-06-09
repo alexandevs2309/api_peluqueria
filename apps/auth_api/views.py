@@ -30,6 +30,7 @@ import qrcode
 from io import BytesIO
 from base64 import b64encode
 
+
 User = get_user_model()
 
 class RegisterView(generics.CreateAPIView):
@@ -116,7 +117,7 @@ class LoginView(generics.GenericAPIView):
             'user': {
                 'email': user.email,
                 'full_name': user.full_name,
-                'role': user.role
+                # 'role': user.role
             },
             'access': access_token,
             'refresh': refresh_token
@@ -473,7 +474,7 @@ class MFALoginVerifyView(APIView):
                 'user': {
                     'email': user.email,
                     'full_name': user.full_name,
-                    'role': user.role
+                    
                 },
                 'access': access_token,
                 'refresh': refresh_token

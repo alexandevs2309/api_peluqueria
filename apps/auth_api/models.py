@@ -1,7 +1,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.contrib.auth import get_user_model
 from django.db import models
 from django.utils import timezone
+from apps.roles_api.models import Role, UserRole
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -17,7 +17,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('is_active', True)
-        extra_fields.setdefault('role', 'Admin')
+       
 
         if extra_fields.get('is_staff') is not True:
             raise ValueError('El superusuario debe tener is_staff=True.')
@@ -29,21 +29,12 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser, PermissionsMixin):
 
 
-    ROLES = (
-        ('Admin' , 'Administrador'),
-        ('Stylist' , 'Estilista'),
-        ('Barber' , 'Barbero'),
-        ('Assistant' , 'Asistente'),
-        ('Client' , 'Cliente'),
-        ('Receptionist' , 'Recepcionista'),
-        ('Manager' , 'Gerente'),
-        ('Owner' , 'Propietario'),
-    )
+  
 
     email = models.EmailField(unique=True, max_length=255)
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, blank=True, null=True)
-    role = models.CharField(max_length=20, choices=ROLES, default='Client' )
+
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     is_email_verified = models.BooleanField(default=False)
@@ -53,6 +44,13 @@ class User(AbstractBaseUser, PermissionsMixin):
     date_joined = models.DateTimeField(default=timezone.now)
     last_login_ip_address = models.GenericIPAddressField(null=True, blank=True)
 
+
+    roles = models.ManyToManyField(
+        'roles_api.Role',
+        through='roles_api.UserRole',
+        related_name='assigned_users',
+    )
+
     objects = UserManager()
 
     USERNAME_FIELD = 'email'
@@ -61,7 +59,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         indexes = [
             models.Index(fields=['email']),
-            models.Index(fields=['role']),
+           
         ]
 
     def __str__(self):
@@ -70,7 +68,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 class LoginAudit(models.Model):
 
-    User = get_user_model()
+
 
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="login_audits")
     ip_address = models.GenericIPAddressField(null=True, blank=True,)
@@ -89,7 +87,7 @@ class LoginAudit(models.Model):
         return f"Login attempt for {self.user.email if self.user else 'unknown'} - {'Success' if self.successful else 'Failed'}"
     
 
-User = get_user_model()
+
 
 EVENT_CHOICES = [
     ('LOGIN', 'Login'),

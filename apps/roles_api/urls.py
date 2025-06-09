@@ -6,6 +6,6 @@ router = DefaultRouter()
 router.register(r'roles', RoleViewSet ,basename='role')
 
 urlpatterns = [
-    path('roles', include(router.urls)),
+    path('', include(router.urls)),
     path('roles/permissions', RoleViewSet.as_view({'get': 'list_permissions'}), name='list_permissions')
 ]

@@ -1,8 +1,14 @@
-# conftest.py
-import pytest
-from django.conf import settings
+# apps/roles_api/tests.py o un conftest.py para crear roles base
 
-@pytest.fixture(scope='session', autouse=True)
-def configure_settings():
-    settings.CELERY_TASK_ALWAYS_EAGER = True
-    settings.CELERY_TASK_EAGER_PROPAGATES = True
+import pytest
+from apps.roles_api.models import Role # Importa Role
+
+# Este fixture se ejecutará una vez por sesión de prueba
+@pytest.fixture(scope="session", autouse=True)
+def setup_roles_for_tests(django_db_setup, django_db_blocker):
+    with django_db_blocker.unblock():
+        # Crea los roles base que usarán tus tests si no existen
+        Role.objects.get_or_create(name='Admin', defaults={'description': 'Administrador del sistema'})
+        Role.objects.get_or_create(name='Client', defaults={'description': 'Cliente regular'})
+        # Asegúrate de que los nombres coincidan exactamente con lo que usas en el código
+        # por ejemplo, 'Admin' con 'A' mayúscula

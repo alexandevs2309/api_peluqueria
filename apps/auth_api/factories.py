@@ -1,3 +1,5 @@
+# apps/auth_api/factories.py
+
 import factory
 from django.contrib.auth import get_user_model
 
@@ -10,7 +12,6 @@ class UserFactory(factory.django.DjangoModelFactory):
     email = factory.Faker('email')
     full_name = factory.Faker('name')
     is_email_verified = True
-    role = 'Admin'
 
     @factory.post_generation
     def password(self, create, extracted, **kwargs):

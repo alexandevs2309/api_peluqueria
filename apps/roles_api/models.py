@@ -1,16 +1,14 @@
 from django.conf import settings
 from django.db import models
-from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
 from django.utils.timezone import now
 
-User = get_user_model()
+
 
 class Role(models.Model):
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
     permissions = models.ManyToManyField(Permission, blank=True, related_name='roles')
-    users = models.ManyToManyField(User, blank=True, related_name='roles')  # usuarios asignados a este rol
 
     class Meta:
         indexes = [
@@ -20,10 +18,13 @@ class Role(models.Model):
     def __str__(self):
         return self.name
 
-User = get_user_model()
 
 class UserRole(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='user_roles')
+    user = models.ForeignKey(
+            settings.AUTH_USER_MODEL, # <-- CAMBIO AQUÍ
+            on_delete=models.CASCADE,
+            related_name='user_roles'
+        )   
     role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_roles_assignments')
     assigned_at = models.DateTimeField(auto_now_add=True)
 
@@ -37,7 +38,11 @@ class UserRole(models.Model):
         return f"{self.user.email} - {self.role.name}"
 
 class AdminActionLog(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='admin_logs')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, # <-- CAMBIO AQUÍ
+        on_delete=models.CASCADE,
+        related_name='admin_logs'
+    )
     action = models.CharField(max_length=255)
     ip_address = models.GenericIPAddressField()
     user_agent = models.TextField()

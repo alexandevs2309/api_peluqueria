@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from .models import User, ActiveSession
+from apps.roles_api.models import Role , UserRole
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils.translation import gettext_lazy as _
 from django.utils.http import urlsafe_base64_decode
@@ -8,17 +9,18 @@ from django.utils.encoding import force_str
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.contrib.auth import get_user_model
+from apps.roles_api.models import Role, UserRole
 
 User = get_user_model()
 
 class RegisterSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     password2 = serializers.CharField(write_only=True, min_length=8)
-    role = serializers.ChoiceField(choices=User.ROLES, default='Client')
+
 
     class Meta:
         model = User
-        fields = ['email', 'full_name', 'phone', 'password', 'password2', 'role']
+        fields = ['email', 'full_name', 'phone', 'password', 'password2']
 
     def validate(self, data):
         if data['password'] != data['password2']:
@@ -42,17 +44,30 @@ class RegisterSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El nombre completo es muy corto.")
         return value
 
-    def validate_role(self, value):
-        if value not in ['Client', 'Admin', 'Stylist', 'Utility']:
-            raise serializers.ValidationError("Rol no válido")
-        return value
+    
 
     def create(self, validated_data):
         validated_data.pop('password2')
-        user = User.objects.create_user(**validated_data)
+        
+
+        user = User.objects.create_user(
+            email=validated_data['email'],
+            password=validated_data['password'],
+            full_name=validated_data.get('full_name'),
+            phone=validated_data.get('phone')
+           
+        )
+        try:
+            client_role = Role.objects.get(name='Client') # Asegúrate de que este rol exista en tu DB
+            UserRole.objects.create(user=user, role=client_role)
+        except Role.DoesNotExist:
+            print("Advertencia: El rol 'Client' no existe. Asegúrate de crearlo en la base de datos.")
+            
+
         user.email_verification_token = default_token_generator.make_token(user)
         user.save()
         return user
+    
 
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -66,9 +81,7 @@ class LoginSerializer(serializers.Serializer):
             raise serializers.ValidationError(_('Credenciales inválidas.'))
         if not user.is_active:
             raise serializers.ValidationError(_('Esta cuenta está desactivada.'))
-        # if not user.is_email_verified:
-        #     raise serializers.ValidationError(_('El correo electrónico no está verificado.'))
-
+       
         refresh = RefreshToken.for_user(user)
         self.user = user
         return {
