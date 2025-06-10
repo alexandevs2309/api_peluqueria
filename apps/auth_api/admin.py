@@ -40,7 +40,9 @@ class CustomUserAdmin(BaseUserAdmin):
    
     @admin.display(description='Roles Asignados')
     def get_roles_display(self, obj):
-        return ", ".join([role.name for role in obj.assigned_users.all()])
+        roles = UserRole.objects.filter(user=obj).select_related('role')
+        return ", ".join([user_role.role.name for user_role in roles])
+
 
 
 
