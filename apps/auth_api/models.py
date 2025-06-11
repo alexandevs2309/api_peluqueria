@@ -27,10 +27,6 @@ class UserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
-
-
-  
-
     email = models.EmailField(unique=True, max_length=255)
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, blank=True, null=True)
@@ -67,9 +63,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class LoginAudit(models.Model):
-
-
-
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="login_audits")
     ip_address = models.GenericIPAddressField(null=True, blank=True,)
     user_agent = models.TextField(null=True, blank=True,)
