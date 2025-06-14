@@ -1,6 +1,12 @@
 from django.db import models
 from apps.clients_api.models import Client
 from apps.roles_api.models import Role
+from django.contrib.auth import get_user_model
+from apps.services_api.models import Service
+
+
+
+User = get_user_model()
 
 class Appointment(models.Model):
     STATUS_CHOICES = [
@@ -10,7 +16,8 @@ class Appointment(models.Model):
     ]
 
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='client_appointments')
-    stylist = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='stylist_appointments', limit_choices_to={'name': 'stylist'})
+    stylist = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stylist_appointments',  limit_choices_to={'userrole__role__name': 'stylist'} )
+    service = models.ForeignKey(Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
     role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='role_appointments')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='scheduled')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -19,6 +26,8 @@ class Appointment(models.Model):
     date_time = models.DateTimeField()
 
     class Meta:
+        verbose_name = 'Cita'
+        verbose_name_plural = 'Citas'
         unique_together = ['stylist', 'date_time']
         ordering = ['-date_time']
 
