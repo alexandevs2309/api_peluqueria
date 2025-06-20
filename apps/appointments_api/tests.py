@@ -5,6 +5,8 @@ from rest_framework.test import APIClient
 from apps.services_api.models import Service, StylistService
 from apps.clients_api.models import Client
 from django.contrib.auth import get_user_model
+
+from apps.employees_api.models import WorkSchedule, Employee
 from .models import Appointment
 from faker import Faker
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -74,63 +76,111 @@ def stylist(stylist_role):
         is_staff=True
     )
     UserRole.objects.create(user=user, role=stylist_role)
-    return user  # Devolver User en lugar de Role
+    employee = Employee.objects.create(user=user, specialty='Corte de cabello')
+    
+    return user,employee
 
 @pytest.mark.django_db
 def test_create_appointment_with_service(authenticated_user, client_factory, service_factory, stylist, stylist_role):
     user, client = authenticated_user
     client_obj = client_factory.create()
-    future_date_time = timezone.now() + timedelta(days=1)
     service = service_factory.create(name='Corte Básico')
-    # Crear StylistService para pasar la validación
-    StylistService.objects.create(stylist=stylist, service=service, duration=timedelta(minutes=30))
+    user, employee = stylist
+
+    # --- 👇 Zona corregida 👇 ---
+    from datetime import time
+    appointment_datetime = timezone.localtime(timezone.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+    naive_future_datetime = appointment_datetime.replace(tzinfo=None)
+    day_name = appointment_datetime.strftime('%A').lower()
+    start_time = time(9, 0)
+    end_time = time(18, 0)
+    # --- ☝️ Zona corregida ☝️ ---
+
+    StylistService.objects.create(stylist=user, service=service, duration=timedelta(minutes=30))
+
+    WorkSchedule.objects.create(
+        employee=employee,
+        day_of_week=day_name,
+        start_time=start_time,
+        end_time=end_time
+    )
+
     data = {
         'client': client_obj.id,
-        'stylist': stylist.id,
+        'stylist': user.id,
         'service': service.id,
         'role': stylist_role.id,
-        'date_time': future_date_time 
+        'date_time': naive_future_datetime.isoformat()
     }
+
     response = client.post(reverse('appointment-list'), data, format='json')
     assert response.status_code == status.HTTP_201_CREATED, f"Error: {response.data}"
     appointment = Appointment.objects.first()
     assert appointment.service == service
     assert appointment.date_time.year == 2025
 
+
 @pytest.mark.django_db
 def test_create_appointment_without_service(authenticated_user, client_factory, stylist, stylist_role):
     user, client = authenticated_user
     client_obj = client_factory.create()
-    future_date_time = timezone.now() + timedelta(days=1)
+    user, employee = stylist
+
+    # --- 👇 Zona corregida 👇 ---
+    from datetime import time
+    appointment_datetime = timezone.localtime(timezone.now() + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0)
+    naive_future_datetime = appointment_datetime.replace(tzinfo=None)
+    day_name = appointment_datetime.strftime('%A').lower()
+    start_time = time(9, 0)
+    end_time = time(18, 0)
+    # --- ☝️ Zona corregida ☝️ ---
+
+    WorkSchedule.objects.create(
+        employee=employee,
+        day_of_week=day_name,
+        start_time=start_time,
+        end_time=end_time
+    )
+
     data = {
         'client': client_obj.id,
-        'stylist': stylist.id,
+        'stylist': user.id,
         'role': stylist_role.id,
-        'date_time': future_date_time,
+        'date_time': naive_future_datetime.isoformat()
     }
+
     response = client.post(reverse('appointment-list'), data, format='json')
     assert response.status_code == status.HTTP_201_CREATED, f"Error: {response.data}"
     assert Appointment.objects.count() == 1
     appointment = Appointment.objects.first()
     assert appointment.service is None
 
+
 @pytest.mark.django_db
 def test_list_appointments(api_client, client_factory, stylist, service_factory, stylist_role):
-    # Use the stylist's credentials for authentication since they should see the appointments
-    api_client.force_authenticate(user=stylist)
+    user, employee = stylist  # Desempaquetar user y employee
+    api_client.force_authenticate(user=user)  # Usar user
     client_obj = client_factory.create()
     service = service_factory.create(name='Corte Básico')
-    StylistService.objects.create(stylist=stylist, service=service, duration=timedelta(minutes=30))  # Añadido
+    StylistService.objects.create(stylist=user, service=service, duration=timedelta(minutes=30))
+   
+    appointment_date = datetime(2025, 6, 12, tzinfo=dt_timezone.utc)
+    WorkSchedule.objects.create(
+        employee=employee,
+        day_of_week=appointment_date.strftime('%A').lower(),  # Thursday
+        start_time=datetime(2025, 6, 12, 9, 0).time(),  # 9:00 AM
+        end_time=datetime(2025, 6, 12, 12, 0).time()    # 12:00 PM
+    )
     Appointment.objects.create(
         client=client_obj,
-        stylist=stylist,
+        stylist=user,  # Usar user
         service=service,
         role=stylist_role,
         date_time=datetime(2025, 6, 12, 10, 0, tzinfo=dt_timezone.utc)
     )
     Appointment.objects.create(
         client=client_obj,
-        stylist=stylist,
+        stylist=user,  # Usar user
         service=None,
         role=stylist_role,
         date_time=datetime(2025, 6, 12, 11, 0, tzinfo=dt_timezone.utc)
