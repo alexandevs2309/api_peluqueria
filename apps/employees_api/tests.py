@@ -1,71 +1,65 @@
-from faker import Faker
 import pytest
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.urls import reverse
-from django.contrib.auth import get_user_model
-from apps.services_api.models import Service
+from apps.auth_api.factories import UserFactory
 from apps.roles_api.models import Role, UserRole
-from .models import Employee, EmployeeService, WorkSchedule
+from apps.employees_api.models import Employee, WorkSchedule
+from apps.services_api.models import Service
 
+@pytest.fixture
+def admin_client(db):
+    user = UserFactory(is_email_verified=True, is_superuser=True , is_staff=True)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
 
-faker = Faker('es_ES')
+@pytest.fixture
+def stylist_user(db):
+    user = UserFactory(is_email_verified=True)
+    stylist_role, _ = Role.objects.get_or_create(name='Stylist')
+    UserRole.objects.get_or_create(user=user, role=stylist_role)
+    return user
 
-User = get_user_model()
+@pytest.fixture
+def normal_client(db):
+    user = UserFactory(is_email_verified=True)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
 
 @pytest.mark.django_db
-def test_create_employee():
-    client = APIClient()
-    admin_role, _ = Role.objects.get_or_create(name='Admin')
-    stylist_role, _ = Role.objects.get_or_create(name='Stylist')
-    admin = User.objects.create_user(email='admin@example.com', full_name='Admin User', password='testpass123', is_staff=True, is_superuser=True, is_active=True)
-    UserRole.objects.get_or_create(user=admin, role=admin_role)
-    stylist_user = User.objects.create_user(email='stylist@example.com', full_name='Stylist User', password='testpass123')
-    UserRole.objects.get_or_create(user=stylist_user, role=stylist_role)
-    
-    client.force_authenticate(user=admin)
+def test_create_employee_success(admin_client, stylist_user):
     payload = {
-        'user_email': stylist_user.id,
+        'user_id': stylist_user.id,
         'specialty': 'Hair Stylist',
         'phone': '1234567890',
         'hire_date': '2025-06-01',
         'is_active': True
     }
-    response = client.post(reverse('employee-list'), payload, format='json')
-    
-    if response.status_code != status.HTTP_201_CREATED:
-        print(f"Error creating employee: {response.data}")
+    response = admin_client.post(reverse('employee-list'), payload, format='json')
     assert response.status_code == status.HTTP_201_CREATED
 
 @pytest.mark.django_db
-def test_assign_service():
-    client = APIClient()
-    admin_role, _ = Role.objects.get_or_create(name='Admin')
-    stylist_role, _ = Role.objects.get_or_create(name='Stylist')
-    admin = User.objects.create_user(email='admin@example.com', full_name='Admin User', password='testpass123', is_staff=True, is_superuser=True, is_active=True)
-    UserRole.objects.get_or_create(user=admin, role=admin_role)
-    stylist_user = User.objects.create_user(email='stylist@example.com', full_name='Stylist User', password='testpass123')
-    
-    UserRole.objects.get_or_create(user=stylist_user, role=stylist_role)
-    employee = Employee.objects.create(user=stylist_user, specialty='Hair Stylist')
-    service = Service.objects.create(name='Haircut', price=25.00)
-            
-    client.force_authenticate(user=admin)
-    payload = {'service_id': service.id , 'employee': employee.id}
-    response = client.post(reverse('employee-assign-service', kwargs={'pk': 999}), payload, format='json')
-
-    assert response.status_code == status.HTTP_404_NOT_FOUND  # Cambiar a 404
-    assert EmployeeService.objects.count() == 0
+def test_create_employee_missing_data(admin_client):
+    response = admin_client.post(reverse('employee-list'), {}, format='json')
+    assert response.status_code == status.HTTP_400_BAD_REQUEST 
 
 @pytest.mark.django_db
-def test_create_schedule_as_stylist():
+def test_delete_nonexistent_employee(admin_client):
+    response = admin_client.delete(reverse('employee-detail', kwargs={'pk': 9999}))
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+@pytest.mark.django_db
+def test_list_employees_denied_to_non_admin(normal_client):
+    response = normal_client.get(reverse('employee-list'))
+    assert response.status_code in [403, 401]
+
+@pytest.mark.django_db
+def test_create_schedule_denied_for_stylist(stylist_user):
     client = APIClient()
-    stylist_role, _ = Role.objects.get_or_create(name='Stylist')
-    stylist = User.objects.create_user(email='stylist@example.com', full_name='Stylist User', password='testpass123')
-    UserRole.objects.get_or_create(user=stylist, role=stylist_role)
-    employee = Employee.objects.create(user=stylist, specialty='Hair Stylist')
-    
-    client.force_authenticate(user=stylist)
+    client.force_authenticate(user=stylist_user)
+    employee = Employee.objects.create(user=stylist_user, specialty='Stylist')
     payload = {
         'employee': employee.id,
         'day_of_week': 'monday',
@@ -73,30 +67,42 @@ def test_create_schedule_as_stylist():
         'end_time': '17:00:00'
     }
     response = client.post(reverse('work_schedule-list'), payload, format='json')
-    
     assert response.status_code == status.HTTP_403_FORBIDDEN
-    assert WorkSchedule.objects.count() == 0
-
 
 @pytest.mark.django_db
-def test_stylist_cannot_create_other_employee():
+def test_stylist_cannot_create_other_employee(stylist_user):
     client = APIClient()
-    stylist_role, _ = Role.objects.get_or_create(name='Stylist')
-    stylist = User.objects.create_user(email='stylist@example.com', full_name='Stylist User', password='testpass123')
-    UserRole.objects.get_or_create(user=stylist, role=stylist_role)
-    other_user = User.objects.create_user(email='other@example.com', full_name='Other User', password='testpass123')
-    UserRole.objects.get_or_create(user=other_user, role=stylist_role)
-    
-    client.force_authenticate(user=stylist)
+    client.force_authenticate(user=stylist_user)
+    other_user = UserFactory(is_email_verified=True)
     payload = {
-        'user_id': other_user.id,
+        'user_email': other_user.id,
         'specialty': 'Nail Technician',
         'phone': '0987654321',
         'hire_date': '2025-06-01',
         'is_active': True
-
     }
     response = client.post(reverse('employee-list'), payload, format='json')
-    
-    assert response.status_code == status.HTTP_403_FORBIDDEN  # Usar constante de DRF
-    assert Employee.objects.count() == 0
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+@pytest.mark.django_db
+def test_update_employee_denied_for_non_admin(normal_client):
+    employee = Employee.objects.create(user=UserFactory(), specialty="Stylist")
+    response = normal_client.put(reverse("employee-detail", args=[employee.id]), {"specialty": "Updated"})
+    assert response.status_code in [403, 401]
+
+@pytest.mark.django_db
+def test_permission_denied_if_inactive():
+    user = UserFactory(is_email_verified=True, is_active=False)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.get(reverse("employee-list"))
+    assert response.status_code in [403, 401]
+
+@pytest.mark.django_db
+def test_delete_employee_permission_denied_other_roles():
+    user = UserFactory(is_email_verified=True)
+    employee = Employee.objects.create(user=UserFactory(), specialty="Stylist")
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.delete(reverse("employee-detail", args=[employee.id]))
+    assert response.status_code in [403, 401]

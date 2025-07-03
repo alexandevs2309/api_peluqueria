@@ -68,3 +68,8 @@ class BranchListCreateView(generics.ListCreateAPIView):
     queryset = Branch.objects.all()
     serializer_class = BranchSerializer
     permission_classes = [permissions.IsAdminUser]
+
+class SettingListCreateView(generics.ListCreateAPIView):
+    queryset = Setting.objects.all()
+    serializer_class = SettingSerializer
+    permission_classes = [permissions.IsAdminUser]

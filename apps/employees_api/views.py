@@ -2,6 +2,8 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated , IsAdminUser
 from rest_framework.decorators import action
 from rest_framework.response import Response
+
+from apps.roles_api.permissions import IsActiveAndRolePermission, role_permission_for
 from .models import Employee, EmployeeService, WorkSchedule
 from apps.auth_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
@@ -10,11 +12,16 @@ from .permissions import IsAdminOrOwnStylist, role_permission_for
 class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
+  
     def get_permissions(self):
             if self.action in ['create', 'update', 'partial_update', 'destroy']:
-                self.permission_classes = [IsAuthenticated, IsAdminUser]
-            return super().get_permissions()
+                permission_classes = [IsAuthenticated, IsAdminUser]
+            else:
+                permission_classes = [IsAuthenticated, role_permission_for(['Admin', 'Stylist']), IsAdminOrOwnStylist]
+            return [permission() for permission in permission_classes]
 
+   
+   
     def get_queryset(self):
         if UserRole.objects.filter(user=self.request.user, role__name='Admin').exists():
             return Employee.objects.all()

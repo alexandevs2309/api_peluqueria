@@ -11,8 +11,8 @@ class Branch(models.Model):
         return self.name
 
 class Setting(models.Model):
-    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, null=True, blank=True, verbose_name=_("Sucursal"))
-    business_name = models.CharField(_("Nombre del negocio"), max_length=255)
+    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, null=False, blank=False, verbose_name=_("Sucursal"))
+    business_name = models.CharField(_("Nombre del negocio"), max_length=255 , blank=False, null=False)
     business_email = models.EmailField(_("Email de contacto"), blank=True, null=True)
     phone_number = models.CharField(_("Teléfono"), max_length=50, blank=True, null=True)
     address = models.TextField(_("Dirección"), blank=True, null=True)
@@ -33,7 +33,10 @@ class Setting(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = ('branch',)
+        constraints = [
+            models.UniqueConstraint(fields=["branch"], name="unique_setting_per_branch")
+        ]
+
 
     def save(self, *args, **kwargs):
         if not self.pk and Setting.objects.filter(branch=self.branch).exists():

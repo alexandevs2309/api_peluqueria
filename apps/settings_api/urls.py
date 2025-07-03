@@ -4,8 +4,13 @@ from .views import (
     SettingExportView,
     SettingImportView,
     SettingAuditLogListView,
-    BranchListCreateView
+    BranchListCreateView,
+    SettingListCreateView
+
 )
+from rest_framework.routers import DefaultRouter
+
+
 
 urlpatterns = [
     path('', SettingRetrieveUpdateView.as_view(), name='setting-detail'),
@@ -13,4 +18,5 @@ urlpatterns = [
     path('import/', SettingImportView.as_view(), name='setting-import'),
     path('audit-logs/', SettingAuditLogListView.as_view(), name='setting-audit'),
     path('branches/', BranchListCreateView.as_view(), name='branch-list-create'),
+    path('settings/', SettingListCreateView.as_view(), name='setting-list-create'),
 ]

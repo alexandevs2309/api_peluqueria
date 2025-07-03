@@ -30,7 +30,7 @@ class IsAdminOrOwnStylist(permissions.BasePermission):
             return True
         user_roles_names = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
         # Permitir solo a Admin para crear o modificar
-        if view.action in ['create', 'update', 'partial_update', 'destroy']:
+        if hasattr(view, 'action') and view.action in ['create', 'update', 'partial_update', 'destroy']:
             return 'Admin' in user_roles_names
         # Para otras acciones permitir Admin o Stylist
         return any(role in ['Admin', 'Stylist'] for role in user_roles_names)

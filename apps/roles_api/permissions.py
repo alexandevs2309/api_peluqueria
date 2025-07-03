@@ -15,11 +15,17 @@ class RolePermission(BasePermission):
         if request.user.is_superuser:
             return True
 
-        user_roles_names = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
-        return any(role in self.allowed_roles for role in user_roles_names)
+        if not hasattr(request, '_cached_roles'):
+            request._cached_roles = set(
+                request.user.roles.values_list('name', flat=True)
+            )
 
-# ✅ Esta función crea una clase de permiso personalizada con los roles que tú quieras
+        return bool(set(self.allowed_roles) & request._cached_roles)
+
 def role_permission_for(roles):
+    """
+    Genera dinámicamente un permiso específico para los roles indicados.
+    """
     return type(
         f'RolePermissionFor{"_".join(roles)}',
         (RolePermission,),
@@ -27,3 +33,21 @@ def role_permission_for(roles):
             '__init__': lambda self: RolePermission.__init__(self, allowed_roles=roles)
         }
     )
+
+class IsActiveAndRolePermission(BasePermission):
+    """
+    Verifica que el usuario esté activo y tenga uno de los roles permitidos.
+    """
+    def __init__(self, allowed_roles):
+        self.allowed_roles = allowed_roles
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated or not request.user.is_active:
+            return False
+
+        if not hasattr(request, '_cached_roles'):
+            request._cached_roles = set(
+                request.user.roles.values_list('name', flat=True)
+            )
+
+        return bool(set(self.allowed_roles) & request._cached_roles)

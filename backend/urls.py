@@ -1,3 +1,5 @@
+from django.conf import settings
+from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
@@ -18,6 +20,7 @@ urlpatterns = [
         path('reports/', include('apps.reports_api.urls')),
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
-    ])),
+    ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    )),
 
 ]

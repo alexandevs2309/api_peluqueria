@@ -1,11 +1,16 @@
 import pytest
 from django.urls import reverse
 from rest_framework.test import APIClient
+from apps.auth_api.factories import UserFactory
 from apps.auth_api.models import User
 from apps.settings_api.models import Setting, Branch, SettingAuditLog
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.cache import cache
 from PIL import Image
+from django.db import IntegrityError
+from rest_framework.exceptions import ValidationError
+from apps.settings_api.serializers import SettingSerializer
+from apps.settings_api.models import Branch
 
 @pytest.mark.django_db
 class TestSettingsAPI:
@@ -163,3 +168,78 @@ class TestSettingsAPI:
         # Segunda llamada usa cache
         response2 = api_client_admin.get(url)
         assert response2.status_code == 200
+
+
+@pytest.fixture
+def admin_client(db):
+    user = UserFactory(is_superuser=True, is_email_verified=True)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+@pytest.mark.django_db
+def test_create_setting_missing_fields(admin_client):
+    response = admin_client.post(reverse('setting-detail'), {}, format='json')
+    assert response.status_code == 403
+
+@pytest.mark.django_db
+def test_create_setting_invalid_values(admin_client):
+    data = {
+        "key": "",  # required field empty
+        "value": "SomeValue",
+        "description": "Test"
+    }
+    response = admin_client.post(reverse('setting-detail'), data, format='json')
+    assert response.status_code == 403
+
+
+@pytest.mark.django_db
+def test_create_setting_missing_required_fields(admin_user):
+    client = APIClient()
+    client.force_authenticate(user=admin_user)
+    response = client.post(reverse("setting-list-create"), {"value": "X"}, format="json")
+    assert response.status_code == 400
+    assert 'business_name' in response.data
+    assert 'branch' in response.data
+
+
+@pytest.mark.django_db
+def test_no_duplicate_settings_per_branch():
+    branch = Branch.objects.create(name="Sucursal 1")
+    Setting.objects.create(branch=branch, business_name="Empresa 1")
+    with pytest.raises(ValueError):
+        Setting.objects.create(branch=branch, business_name="Empresa 2")
+
+@pytest.mark.django_db
+def test_validate_business_hours_invalid_format():
+    branch = Branch.objects.create(name="Sucursal A")
+    data = {
+        "branch": branch.id,
+        "business_name": "Negocio Test",
+        "business_hours": "9-5"
+    }
+    serializer = SettingSerializer(data=data)
+    with pytest.raises(ValidationError) as exc:
+        serializer.is_valid(raise_exception=True)
+    assert "horario" in str(exc.value).lower()
+
+@pytest.mark.django_db
+def test_validate_business_hours_invalid_day_format():
+    branch = Branch.objects.create(name="Sucursal B")
+    data = {
+        "branch": branch.id,
+        "business_name": "Negocio Test",
+        "business_hours": {"lunes": 123}
+    }
+    serializer = SettingSerializer(data=data)
+    with pytest.raises(ValidationError) as exc:
+        serializer.is_valid(raise_exception=True)
+    assert "formato inválido" in str(exc.value).lower()
+
+@pytest.mark.django_db
+def test_setting_unique_branch_constraint():
+    branch = Branch.objects.create(name="Sucursal Única")
+    Setting.objects.create(branch=branch, business_name="Negocio 1")
+    with pytest.raises(ValueError) as exc:
+        Setting.objects.create(branch=branch, business_name="Negocio 2")
+    assert "solo puede existir un setting" in str(exc.value).lower()

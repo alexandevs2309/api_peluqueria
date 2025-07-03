@@ -12,6 +12,7 @@ from faker import Faker
 from datetime import datetime, timedelta, timezone as dt_timezone
 from django.utils import timezone
 from apps.roles_api.models import Role, UserRole
+from apps.auth_api.factories import UserFactory
 
 faker = Faker('es_ES')
 User = get_user_model()
@@ -188,3 +189,16 @@ def test_list_appointments(api_client, client_factory, stylist, service_factory,
     response = api_client.get(reverse('appointment-list'))
     assert response.status_code == status.HTTP_200_OK
     assert len(response.data['results']) == 2
+
+
+@pytest.mark.django_db
+def test_create_appointment_invalid_service():
+    user = UserFactory(is_email_verified=True)
+    client = APIClient()
+    client.force_authenticate(user=user)
+    data = {
+        "date_time": "2030-01-01T10:00:00Z",
+        "service": 9999  # ID que no existe
+    }
+    response = client.post(reverse("appointment-list"), data, format="json")
+    assert response.status_code == 400

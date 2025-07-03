@@ -1,11 +1,12 @@
 import pytest
 from django.urls import reverse
 from django.utils import timezone
-from rest_framework import status
+from rest_framework import status 
+from rest_framework.test import APIClient
 from apps.inventory_api.models import Product, StockMovement
 from apps.appointments_api.models import Appointment
 from apps.clients_api.models import Client
-from apps.pos_api.models import Sale
+from apps.pos_api.models import CashRegister, Sale
 
 @pytest.mark.django_db
 def test_sale_with_product_discounts_stock(authenticated_user):
@@ -110,3 +111,77 @@ def test_low_stock_alerts(authenticated_user):
     product_names = [p["name"] for p in response.data]
     assert "Pomada" in product_names
     assert "Cera" not in product_names
+
+
+@pytest.mark.django_db
+def test_close_cash_register(authenticated_user):
+    user, client = authenticated_user
+    register = CashRegister.objects.create(user=user, is_open=True, opened_at=timezone.now())
+
+    client.force_authenticate(user=user)
+    url = reverse("cash-register-close", kwargs={"pk": register.id})
+    data = {"final_cash": 100.0}
+    response = client.post(url, data, format="json")
+
+    assert response.status_code == status.HTTP_200_OK
+    register.refresh_from_db()
+    assert not register.is_open
+    assert register.final_cash == 100.0
+
+@pytest.mark.django_db
+def test_close_already_closed_cash_register(authenticated_user):
+    user, client = authenticated_user
+    register = CashRegister.objects.create(user=user, is_open=False, opened_at=timezone.now())
+
+    client.force_authenticate(user=user)
+    url = reverse("cash-register-close", kwargs={"pk": register.id})
+    data = {"final_cash": 100.0}
+    response = client.post(url, data, format="json")
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.data["detail"] == "Caja ya está cerrada."
+
+
+@pytest.mark.django_db
+def test_close_cash_register(authenticated_user):
+    user, client = authenticated_user
+    register = CashRegister.objects.create(user=user, is_open=True, opened_at=timezone.now())
+
+    client.force_authenticate(user=user)
+    url = reverse("cash-register-close", kwargs={"pk": register.id})
+    data = {"final_cash": 100.0}
+    response = client.post(url, data, format="json")
+
+    assert response.status_code == status.HTTP_200_OK
+    register.refresh_from_db()
+    assert not register.is_open
+    assert register.final_cash == 100.0
+
+@pytest.mark.django_db
+def test_close_already_closed_cash_register(authenticated_user):
+    user, client = authenticated_user
+    register = CashRegister.objects.create(
+        user=user, 
+        is_open=False, 
+        opened_at=timezone.now())
+
+    client.force_authenticate(user=user)
+    url = reverse("cash-register-close", kwargs={"pk": register.id})
+    data = {"final_cash": 100.0}
+    response = client.post(url, data, format="json")
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.data["detail"] == "Caja ya está cerrada."
+
+
+@pytest.mark.django_db
+def test_close_cash_register_view_invalid_final_cash(authenticated_user):
+    user, client = authenticated_user
+    register = CashRegister.objects.create(user=user, is_open=True ,opened_at=timezone.now)
+
+    client.force_authenticate(user=user)
+    url = reverse("cash-register-close", kwargs={"pk": register.id})
+    data = {"final_cash": "not_a_number"}  # Invalid final cash value
+    response = client.post(url, data, format="json")
+    assert response.status_code == 400
+    assert "final_cash" in str(response.data).lower()

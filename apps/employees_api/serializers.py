@@ -8,12 +8,12 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 class EmployeeSerializer(serializers.ModelSerializer):
-    user_email = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='user', write_only=True)
+    user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='user', write_only=True)
     user = serializers.StringRelatedField(read_only=True)
 
     class Meta:
         model = Employee
-        fields = ['id', 'user', 'user_email', 'specialty', 'phone', 'hire_date', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'user', 'user_id', 'specialty', 'phone', 'hire_date', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
     def create(self, validated_data):

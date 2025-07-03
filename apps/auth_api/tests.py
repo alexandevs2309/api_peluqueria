@@ -1,5 +1,5 @@
 import pytest
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 from django.urls import reverse
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
@@ -7,8 +7,9 @@ from django.contrib.auth.tokens import default_token_generator
 from .factories import UserFactory
 from .models import User, ActiveSession, LoginAudit, AccessLog
 from rest_framework_simplejwt.tokens import RefreshToken
+from .permissions import RolePermission
+from .models import Role, UserRole
 import pyotp
-import sys
 
 
 @pytest.fixture(autouse=True)
@@ -224,3 +225,43 @@ def test_mfa_setup_and_verify():
     assert response.status_code == 200
     user.refresh_from_db()
     assert user.mfa_enabled
+
+@pytest.mark.django_db
+def test_role_permission_denies_anonymous():
+    factory = APIRequestFactory()
+    request = factory.get('/')
+    request.user = None
+    perm = RolePermission()
+    assert not perm.has_permission(request, None)
+
+@pytest.mark.django_db
+def test_role_permission_denies_user_without_role():
+    user = User.objects.create_user(email="user@test.com", password="123456", full_name="User Test")
+    factory = APIRequestFactory()
+    request = factory.get('/')
+    request.user = user
+    perm = RolePermission()
+    assert not perm.has_permission(request, None)
+
+@pytest.mark.django_db
+def test_role_permission_allows_user_with_allowed_role():
+    user = User.objects.create_user(email="admin@test.com", password="123456", full_name="Admin Test")
+    role, _ = Role.objects.get_or_create(name="Admin")
+    UserRole.objects.create(user=user, role=role)
+
+    factory = APIRequestFactory()
+    request = factory.get('/')
+    request.user = user
+    perm = RolePermission()
+    assert perm.has_permission(request, None)
+
+
+@pytest.mark.django_db
+def test_login_inactive_user():
+    user = UserFactory(is_email_verified=True, is_active=False)
+    client = APIClient()
+    data = {"email": user.email, "password": "123456"}
+    response = client.post(reverse("login"), data)
+    assert response.status_code == 400
+    # Ajustar para aceptar mensaje genérico de credenciales inválidas
+    assert "credenciales inválidas" in str(response.data).lower() or "inactive" in str(response.data).lower()

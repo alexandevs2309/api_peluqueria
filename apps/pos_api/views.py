@@ -1,17 +1,11 @@
-from rest_framework import viewsets, permissions
+from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from .models import Sale, CashRegister
 from .serializers import SaleSerializer, CashRegisterSerializer
-from django.db.models import Sum, Count
-from apps.inventory_api.models import Product
-
-
-
-
-
+from django.db.models import Sum
+from decimal import Decimal, InvalidOperation
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.all()
@@ -50,14 +44,23 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
     def close(self, request, pk=None):
         register = self.get_object()
         if not register.is_open:
-            return Response({"detail": "Caja ya está cerrada."}, status=400)
+            return Response({"detail": "Caja ya está cerrada."}, status=status.HTTP_400_BAD_REQUEST)
+
+        final_cash_value = request.data.get('final_cash', 0)
+        try:
+            final_cash_decimal = Decimal(str(final_cash_value))
+        except (InvalidOperation, ValueError):
+            return Response(
+                {"final_cash": "El valor debe ser un número decimal válido."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         register.is_open = False
         register.closed_at = timezone.now()
-        register.final_cash = request.data.get('final_cash', 0)
+        register.final_cash = final_cash_decimal
         register.save()
         return Response(CashRegisterSerializer(register).data)
-    
+            
 @api_view(['GET'])  
 def daily_summary(request):
         today = timezone.localdate()

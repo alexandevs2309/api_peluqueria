@@ -80,6 +80,18 @@ class LoginView(generics.GenericAPIView):
             raise
         
         user = serializer.validated_data['user']
+
+        if not user.is_active:
+            LoginAudit.objects.create(
+                user=user,
+                ip_address=get_client_ip(request),
+                user_agent=get_user_agent(request),
+                successful=False,
+                message="Cuenta inactiva",
+                timestamp=now()
+            )
+            return Response({"detail": "Cuenta inactiva. Contacte al administrador."}, status=status.HTTP_403_FORBIDDEN)
+
         if user.mfa_enabled:
             return Response({"detail": "Se requiere verificación MFA.", "email": user.email}, status=status.HTTP_200_OK)
 

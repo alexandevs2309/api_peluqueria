@@ -11,7 +11,7 @@ class BranchSerializer(serializers.ModelSerializer):
         ]
 
 class SettingSerializer(serializers.ModelSerializer):
-    business_name = serializers.CharField(required=False)
+    business_name = serializers.CharField(required=True )
     business_email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     address = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -22,7 +22,7 @@ class SettingSerializer(serializers.ModelSerializer):
     preferences = serializers.JSONField(required=False)
     logo = serializers.ImageField(required=False, allow_null=True)
     theme = serializers.CharField(required=False)
-    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=False, allow_null=True)
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=True, allow_null=True)
 
     class Meta:
         model = Setting

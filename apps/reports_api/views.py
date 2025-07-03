@@ -2,11 +2,14 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from .serializers import SalesReportSerializer, AppointmentsReportSerializer, EmployeePerformanceSerializer
+from rest_framework.permissions import IsAdminUser
 from apps.pos_api.models import Sale
 from apps.appointments_api.models import Appointment
 from apps.employees_api.models import Employee
 from django.utils import timezone
-from django.db.models import Sum, Count
+from django.http import HttpResponse
+from django.db.models import Sum
+import csv
 
 class SalesReportView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -62,3 +65,42 @@ class EmployeePerformanceReportView(APIView):
 
         serializer = EmployeePerformanceSerializer(performance_data, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+class ReportExportView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def get(self, request, *args, **kwargs):
+        # Validar parámetro format
+        export_format = request.query_params.get("format", "csv").lower()
+        if export_format != "csv":
+            return Response({"detail": "Formato no soportado"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Filtros opcionales
+        start_date = request.query_params.get("start_date")
+        end_date = request.query_params.get("end_date")
+
+        sales = Sale.objects.all()
+
+        if start_date:
+            sales = sales.filter(date_time__date__gte=start_date)
+        if end_date:
+            sales = sales.filter(date_time__date__lte=end_date)
+
+        # Crear respuesta CSV
+        response = HttpResponse(content_type="text/csv")
+        response["Content-Disposition"] = f'attachment; filename="sales_report_{timezone.now().date()}.csv"'
+
+        writer = csv.writer(response)
+        writer.writerow(["ID", "Cliente", "Total", "Pagado", "Método de pago", "Fecha"])
+
+        for sale in sales:
+            writer.writerow([
+                sale.id,
+                sale.client.full_name if sale.client else "Sin cliente",
+                sale.total,
+                sale.paid,
+                sale.payment_method,
+                sale.date_time.strftime("%Y-%m-%d %H:%M:%S")
+            ])
+
+        return response
