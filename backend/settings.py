@@ -50,6 +50,7 @@ INSTALLED_APPS = [
     'apps.reports_api',
     'apps.settings_api',
     'apps.roles_api',
+    'apps.subscriptions_api',
 ]
 
 MIDDLEWARE = [
