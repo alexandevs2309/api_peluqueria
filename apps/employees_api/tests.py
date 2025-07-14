@@ -1,11 +1,14 @@
 import pytest
 from rest_framework.test import APIClient
 from rest_framework import status
+from django.utils import timezone
 from django.urls import reverse
 from apps.auth_api.factories import UserFactory
 from apps.roles_api.models import Role, UserRole
 from apps.employees_api.models import Employee, WorkSchedule
 from apps.services_api.models import Service
+from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
+from apps.subscriptions_api.tests import user
 
 @pytest.fixture
 def admin_client(db):
@@ -29,7 +32,24 @@ def normal_client(db):
     return client
 
 @pytest.mark.django_db
-def test_create_employee_success(admin_client, stylist_user):
+def test_create_employee_success(admin_client, stylist_user, user):
+    # Crear plan con 5 empleados permitidos
+    plan = SubscriptionPlan.objects.create(
+        name="Pro",
+        price=0,
+        duration_month=1,
+        max_employees=5
+    )
+    # Suscripción activa para el stylist_user
+    UserSubscription.objects.create(
+        user=stylist_user,
+        plan=plan,
+        start_date=timezone.now() - timezone.timedelta(days=1),
+        end_date=timezone.now() + timezone.timedelta(days=29),
+        is_active=True,
+        auto_renew=True
+    )
+
     payload = {
         'user_id': stylist_user.id,
         'specialty': 'Hair Stylist',
@@ -38,6 +58,8 @@ def test_create_employee_success(admin_client, stylist_user):
         'is_active': True
     }
     response = admin_client.post(reverse('employee-list'), payload, format='json')
+    print("Status:", response.status_code)
+    print("Errors:", response.data)  # 👈 Esto es clave
     assert response.status_code == status.HTTP_201_CREATED
 
 @pytest.mark.django_db

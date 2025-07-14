@@ -21,6 +21,27 @@ def admin_user(db, django_user_model):
 @pytest.mark.django_db
 def test_sales_report(authenticated_user):
     user, client = authenticated_user
+
+    # Crear plan con feature reports_enabled
+    from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
+    from django.utils import timezone
+
+    plan = SubscriptionPlan.objects.create(
+        name="Report Plan",
+        price=0,
+        duration_month=1,
+        max_employees=5,
+        features={"reports_enabled": True}
+    )
+    UserSubscription.objects.create(
+        user=user,
+        plan=plan,
+        start_date=timezone.now() - timezone.timedelta(days=1),
+        end_date=timezone.now() + timezone.timedelta(days=29),
+        is_active=True,
+        auto_renew=True
+    )
+
     client.force_authenticate(user=user)
     response = client.get(reverse("sales-report"))
     assert response.status_code == status.HTTP_200_OK

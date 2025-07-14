@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from .models import UserSubscription, SubscriptionPlan
+from  django.utils.timezone import now
+from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     class Meta:
@@ -27,4 +28,18 @@ class UserSubscriptionSerializer(serializers.ModelSerializer):
             'end_date',
             'is_active',
         ]
-        read_only_fields = ['start_date', 'end_date']
+        read_only_fields = [ 'user', 'start_date', 'end_date','is_active']
+
+    def validate(self , data):
+        user = self.context['request'].user
+        active_sub =UserSubscription.objects.filter(user=user , is_active=True , end_date__gte=now()).exists()
+
+        if active_sub:
+            raise serializers.ValidationError('Ya tienes una subscripcion Activa.')
+        return data
+
+class SubscriptionAuditLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SubscriptionAuditLog
+        fields = ['id', 'user', 'action', 'description', 'created_at']
+        read_only_fields = fields

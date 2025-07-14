@@ -1,6 +1,8 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
+
+from apps.subscriptions_api.permissions import CanAccessReports ,CanExportData
 from .serializers import SalesReportSerializer, AppointmentsReportSerializer, EmployeePerformanceSerializer
 from rest_framework.permissions import IsAdminUser
 from apps.pos_api.models import Sale
@@ -12,7 +14,7 @@ from django.db.models import Sum
 import csv
 
 class SalesReportView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated , CanAccessReports]
 
     def get(self, request):
         today = timezone.now().date()
@@ -67,7 +69,7 @@ class EmployeePerformanceReportView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 class ReportExportView(APIView):
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAdminUser ,CanExportData]
 
     def get(self, request, *args, **kwargs):
         # Validar parámetro format

@@ -1,18 +1,26 @@
 from rest_framework import viewsets
-from .models import UserSubscription, SubscriptionPlan
-from .serializers import  SubscriptionPlanSerializer , UserSubscriptionSerializer
+from rest_framework.response import Response
+from rest_framework import status
+from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan
+from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer
 from .permissions import IsSuperuserOrReadOnly
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import action
+from django.utils import timezone
+from rest_framework.views import APIView
+from .utils import get_user_active_subscription, log_subscription_event
+
 
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     queryset = SubscriptionPlan.objects.all()
     serializer_class = SubscriptionPlanSerializer
     permission_classes = [IsSuperuserOrReadOnly , IsAuthenticated]
-
     filterset_fields = ['is_active']
     search_fields = ['name', ]
     ordering_fields = ['price', 'duration_days']
 
+
+    
 
 class UserSubscriptionViewSet(viewsets.ModelViewSet):
     serializer_class = UserSubscriptionSerializer
@@ -24,4 +32,72 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
         return UserSubscription.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        subscription = serializer.save(user=self.request.user)
+        log_subscription_event(
+            user=self.request.user,
+            subscription = subscription,
+            action='created',
+            description=f'Suscripción creada para el plan "{subscription.plan.name}".'
+        )
+
+    def perform_update(self, serializer):
+        original = self.get_object()
+        updated = serializer.save()
+
+        if original.plan != updated.plan:
+            log_subscription_event(user=updated.user, subscription=updated, action='plan_changed')
+
+
+    @action(detail=True, methods=['post'], url_path='cancel')
+    def cancel_subscription(self, request, pk=None):
+        subscription = self.get_object()
+
+        if not subscription.is_active:
+            return Response({'detail': 'La suscripción ya está inactiva.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        subscription.is_active = False
+        subscription.save()
+
+        log_subscription_event(
+            user=request.user,
+            subscription=subscription,
+            action='cancelled',
+            description=f'Suscripción al plan "{subscription.plan.name}" cancelada anticipadamente.'
+        )
+
+        return Response({'detail': 'Suscripción cancelada correctamente.'}, status=status.HTTP_200_OK)
+    
+    @action(detail=False, methods=["get"], url_path="current")
+    def current(self, request):
+        try:
+            subscription = UserSubscription.objects.get(
+                user=request.user,
+                is_active=True,
+                end_date__gte=timezone.now()
+            )
+            serializer = UserSubscriptionSerializer(subscription)
+            return Response(serializer.data)
+        except UserSubscription.DoesNotExist:
+            return Response({'detail': 'No active subscription'}, status=404)
+
+
+class SubscriptionAuditLogViewSet(viewsets.ModelViewSet):
+    serializer_class = SubscriptionAuditLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return SubscriptionAuditLog.objects.filter(user=self.request.user)
+
+
+    
+
+class MyActiveSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        subscription = get_user_active_subscription(request.user)
+        if not subscription:
+            return Response({"detail": "No tienes una suscripción activa."}, status=404)
+        
+        serializer = UserSubscriptionSerializer(subscription)
+        return Response(serializer.data)
