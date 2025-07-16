@@ -199,3 +199,24 @@ def test_invoice_serializer_output():
     data = serializer.data
     assert "amount" in data
     assert data["is_paid"] is False
+
+
+@pytest.mark.django_db
+def test_invoice_creation_uses_active_subscription(auth_client, user_with_active_subscription):
+    """
+    Cubre perform_create en InvoiceViewSet.
+    """
+    url = reverse("invoice-list")
+    payload = {
+        "amount": "200.00",
+        "description": "Factura automática",
+        "due_date": (timezone.now() + timezone.timedelta(days=5)).isoformat()
+    }
+
+    response = auth_client.post(url, payload, format="json")
+    assert response.status_code == status.HTTP_201_CREATED
+    invoice_id = response.data["id"]
+    invoice = Invoice.objects.get(id=invoice_id)
+
+    assert invoice.subscription is not None
+    assert invoice.subscription.user == invoice.user
