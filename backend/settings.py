@@ -47,7 +47,9 @@ INSTALLED_APPS = [
     'apps.services_api',
     'apps.inventory_api',
     'apps.pos_api',
+
     'apps.billing_api',
+
     'apps.reports_api',
     'apps.settings_api',
     'apps.roles_api',

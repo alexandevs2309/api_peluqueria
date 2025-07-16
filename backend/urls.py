@@ -19,7 +19,10 @@ urlpatterns = [
         path('inventory/', include('apps.inventory_api.urls')),
         path('reports/', include('apps.reports_api.urls')),
         path('subscriptions/', include('apps.subscriptions_api.urls')),
+<<<<<<< HEAD
         path('billing/', include('apps.billing_api.urls')),
+=======
+>>>>>>> 5a836c1416b880e44c6bbbf6d677982699763e18
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
     ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
