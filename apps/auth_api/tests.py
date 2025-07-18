@@ -265,3 +265,46 @@ def test_login_inactive_user():
     assert response.status_code == 400
     # Ajustar para aceptar mensaje genérico de credenciales inválidas
     assert "credenciales inválidas" in str(response.data).lower() or "inactive" in str(response.data).lower()
+
+
+@pytest.mark.django_db
+def test_verify_email_invalid_token():
+    client = APIClient()
+    response = client.get(reverse('verify-email', args=["invalid-token"]))
+    assert response.status_code == 400
+    assert "Token inválido" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_mfa_login_invalid_code():
+    user = UserFactory(is_email_verified=True, mfa_enabled=True, mfa_secret=pyotp.random_base32())
+    client = APIClient()
+    response = client.post(reverse("mfa-login-verify"), {
+        "email": user.email,
+        "code": "000000"  # código inválido
+    })
+    assert response.status_code == 400
+    assert "MFA inválido" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_mfa_verify_invalid_code():
+    user = UserFactory(is_email_verified=True)
+    client = APIClient()
+    client.force_authenticate(user)
+
+    user.mfa_secret = pyotp.random_base32()
+    user.save()
+
+    response = client.post(reverse('mfa-verify'), {"code": "123456"})
+    assert response.status_code == 400
+    assert "inválido" in str(response.data).lower()
+
+
+@pytest.mark.django_db
+def test_terminate_session_not_found():
+    user = UserFactory(is_email_verified=True)
+    client = APIClient()
+    client.force_authenticate(user)
+    response = client.delete(reverse('terminate-session', args=["no-existe-jti"]))
+    assert response.status_code == 404

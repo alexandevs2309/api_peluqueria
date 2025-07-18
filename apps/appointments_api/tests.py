@@ -202,3 +202,84 @@ def test_create_appointment_invalid_service():
     }
     response = client.post(reverse("appointment-list"), data, format="json")
     assert response.status_code == 400
+
+
+@pytest.mark.django_db
+def test_create_appointment_stylist_without_employee(client_factory, service_factory, stylist_role):
+    user = User.objects.create_user(email='stylist@nomodel.com', password='pass')
+    UserRole.objects.create(user=user, role=stylist_role)
+    client_obj = client_factory.create()
+    service = service_factory.create()
+
+    appointment_datetime = timezone.localtime(timezone.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+    naive_dt = appointment_datetime.replace(tzinfo=None)
+
+    data = {
+        'client': client_obj.id,
+        'stylist': user.id,
+        'role': stylist_role.id,
+        'service': service.id,
+        'date_time': naive_dt.isoformat()
+    }
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.post(reverse("appointment-list"), data, format="json")
+    assert response.status_code == 400
+    assert "no tiene un perfil de empleado" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_create_appointment_outside_schedule(client_factory, service_factory, stylist, stylist_role):
+    user, employee = stylist
+    client_obj = client_factory.create()
+    service = service_factory.create()
+    appointment_datetime = timezone.localtime(timezone.now() + timedelta(days=1)).replace(hour=22, minute=0, second=0, microsecond=0)
+    naive_dt = appointment_datetime.replace(tzinfo=None)
+    day_name = appointment_datetime.strftime('%A').lower()
+
+    # Horario laboral es 9 a 18, cita fuera de ese horario
+    WorkSchedule.objects.create(employee=employee, day_of_week=day_name, start_time=datetime(2025,1,1,9,0).time(), end_time=datetime(2025,1,1,18,0).time())
+    StylistService.objects.create(stylist=user, service=service, duration=timedelta(minutes=30))
+
+    data = {
+        'client': client_obj.id,
+        'stylist': user.id,
+        'role': stylist_role.id,
+        'service': service.id,
+        'date_time': naive_dt.isoformat()
+    }
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.post(reverse("appointment-list"), data, format="json")
+    assert response.status_code == 400
+    assert "no está disponible en este horario" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_create_appointment_service_not_offered(client_factory, service_factory, stylist, stylist_role):
+    user, employee = stylist
+    client_obj = client_factory.create()
+    service = service_factory.create()
+
+    # Estilista NO registrado en StylistService
+
+    appointment_datetime = timezone.localtime(timezone.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
+    naive_dt = appointment_datetime.replace(tzinfo=None)
+    day_name = appointment_datetime.strftime('%A').lower()
+    WorkSchedule.objects.create(employee=employee, day_of_week=day_name, start_time=datetime(2025,1,1,9,0).time(), end_time=datetime(2025,1,1,18,0).time())
+
+    data = {
+        'client': client_obj.id,
+        'stylist': user.id,
+        'role': stylist_role.id,
+        'service': service.id,
+        'date_time': naive_dt.isoformat()
+    }
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.post(reverse("appointment-list"), data, format="json")
+    assert response.status_code == 400
+    assert "no ofrece este servicio" in str(response.data)

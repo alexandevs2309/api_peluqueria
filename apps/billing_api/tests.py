@@ -220,3 +220,24 @@ def test_invoice_creation_uses_active_subscription(auth_client, user_with_active
 
     assert invoice.subscription is not None
     assert invoice.subscription.user == invoice.user
+
+
+@pytest.mark.django_db
+def test_superuser_can_list_all_invoices():
+    superuser = User.objects.create_superuser(email="admin@admin.com", password="adminpass")
+    client = APIClient()
+    client.force_authenticate(superuser)
+
+    Invoice.objects.create(user=superuser, amount=10, due_date=timezone.now())
+
+    response = client.get(reverse("invoice-list"))
+    assert response.status_code == 200
+    assert response.data["count"] >= 1
+
+
+@pytest.mark.django_db
+def test_invoice_creation_missing_fields(auth_client):
+    response = auth_client.post(reverse("invoice-list"), {"description": "Incomplete"}, format="json")
+    assert response.status_code == 400
+    assert "amount" in response.data
+    assert "due_date" in response.data

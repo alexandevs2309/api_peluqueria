@@ -1,13 +1,24 @@
 import pytest
+import time
+from django.urls import path
+from django.db.models import Q
 from django.urls import reverse
 from rest_framework.test import APIClient
 from apps.auth_api.models import User
+from apps.subscriptions_api.utils import log_subscription_event
 from .models import SubscriptionPlan, UserSubscription
 from datetime import date, timedelta
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
-from apps.subscriptions_api.tasks import deactivate_expired_subscriptions
+from apps.subscriptions_api.tasks import deactivate_expired_subscriptions, renew_subscriptions
 from apps.subscriptions_api.models import SubscriptionAuditLog
+from rest_framework.response import Response
+from rest_framework.decorators import api_view
+from rest_framework import status
+from apps.roles_api.decorators import check_active_subscription
+
+
+
 
 @pytest.mark.django_db
 def test_create_subscription_plan_as_admin():
@@ -214,3 +225,105 @@ def test_cannot_reactivate_cancelled_subscription():
     sub.is_active = True
     with pytest.raises(ValueError, match="No se puede reactivar"):
         sub.save()
+
+
+@pytest.mark.django_db
+def test_deactivate_and_renew_subscription(user):
+    plan = SubscriptionPlan.objects.create(
+        name="Premium",
+        price=100,
+        duration_month=1,
+        max_employees=10
+    )
+
+    now = timezone.now()
+
+    expired = UserSubscription.objects.create(
+        user=user,
+        plan=plan,
+        start_date=now - relativedelta(months=2),
+        end_date=now - timezone.timedelta(days=2),
+        is_active=False,  # desactivado por defecto
+        auto_renew=True
+    )
+    # Forzar activación por fuera del .save()
+    UserSubscription.objects.filter(pk=expired.pk).update(is_active=True)
+
+    print("[TEST DEBUG] antes de task")
+    for s in UserSubscription.objects.all():
+        print(f"ID={s.id}, user={s.user.email}, active={s.is_active}, end={s.end_date}, auto_renew={s.auto_renew}")
+
+    deactivate_expired_subscriptions()
+
+    expired.refresh_from_db()
+    assert not expired.is_active
+
+    new_subs = UserSubscription.objects.filter(user=user, is_active=True).exclude(id=expired.id)
+    assert new_subs.exists(), "No se creó nueva suscripción"
+
+    new_sub = new_subs.first()
+    assert new_sub.start_date > expired.end_date
+    assert new_sub.plan == plan
+    assert new_sub.auto_renew
+
+
+    # Vista protegida usando el decorador
+@api_view(["GET"])
+@check_active_subscription
+def protected_view(request):
+    return Response({"detail": "Acceso permitido"}, status=status.HTTP_200_OK)
+
+# Inyección dinámica para urls de prueba
+urlpatterns = [
+    path("api/protected/", protected_view, name="protected-view"),
+]
+
+@pytest.fixture
+def client_with_urls(settings):
+    settings.ROOT_URLCONF = __name__
+    return APIClient()
+
+@pytest.mark.django_db
+def test_access_denied_without_active_subscription(client_with_urls):
+    user = User.objects.create_user(email="test@noactive.com", password="123456")
+    client_with_urls.force_authenticate(user=user)
+    response = client_with_urls.get("/api/protected/")
+    assert response.status_code == 403
+    assert "requiere una suscripción activa" in response.data["detail"].lower()
+
+@pytest.mark.django_db
+def test_access_allowed_with_active_subscription(client_with_urls):
+    user = User.objects.create_user(email="test@active.com", password="123456")
+    plan = SubscriptionPlan.objects.create(name="Basic", price=10, duration_month=1)
+    UserSubscription.objects.create(
+        user=user,
+        plan=plan,
+        start_date=timezone.now() - timezone.timedelta(days=1),
+        end_date=timezone.now() + timezone.timedelta(days=30),
+        is_active=True
+    )
+    client_with_urls.force_authenticate(user=user)
+    response = client_with_urls.get("/api/protected/")
+    assert response.status_code == 200
+    assert response.data["detail"] == "Acceso permitido"
+
+
+@pytest.mark.django_db
+def renew_subscriptions():
+    now = timezone.now()
+    renewables = UserSubscription.objects.filter(
+        Q(end_date__lt=now) & Q(auto_renew=True) & Q(is_active=True)
+    )
+    for sub in renewables:
+        sub.start_date = now
+        sub.end_date = now + relativedelta(months=sub.plan.duration_month) 
+        sub.save()
+
+        log_subscription_event(
+            user=sub.user,
+            subscription=sub,
+            action="renewed",
+            description="Suscripción renovada automáticamente."
+        )
+
+

@@ -1,5 +1,7 @@
 from django.http import HttpRequest
 import pytest
+from rest_framework import status
+from unittest.mock import patch
 from rest_framework.test import APIClient, APIRequestFactory
 from django.urls import reverse
 from django.contrib.auth.models import Permission
@@ -10,6 +12,8 @@ from apps.auth_api.models import User
 from apps.roles_api.models import Role, UserRole, AdminActionLog
 from apps.roles_api.permissions import RolePermission, role_permission_for
 from apps.auth_api.utils import get_client_ip
+from apps.roles_api.decorators import admin_action_log, permission_required
+
 
 
 @pytest.fixture
@@ -262,3 +266,36 @@ def test_get_client_ip_without_forwarded_for():
     request.META['REMOTE_ADDR'] = '5.6.7.8'
     ip = get_client_ip(request)
     assert ip == '5.6.7.8'
+
+
+@pytest.mark.django_db
+def test_admin_action_log_executes_logging_on_exception(admin_user):
+    factory = APIRequestFactory()
+    request = factory.get("/")
+    request.user = admin_user
+
+    @admin_action_log("delete_user")
+    def view_raises(request):
+        raise ValueError("Boom!")
+
+    with patch("apps.roles_api.decorators.log_admin_action") as mock_logger:
+        with pytest.raises(ValueError):
+            view_raises(request)
+        mock_logger.assert_called_once_with(request, "delete_user")
+
+class DummyPermission:
+    def has_permission(self, request, view):
+        return False
+
+@pytest.mark.django_db
+def test_permission_required_decorator_denies_access():
+    factory = APIRequestFactory()
+    request = factory.get("/")
+    request.user = None
+
+    @permission_required(DummyPermission)
+    def dummy_view(request):
+        return response({"success": True})
+
+    response = dummy_view(request)
+    assert response.status_code == status.HTTP_403_FORBIDDEN
