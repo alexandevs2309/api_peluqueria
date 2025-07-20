@@ -1,5 +1,4 @@
-#!/bin/bash
-
+#!/bin/sh
 echo "▶ Esperando a que la base de datos esté lista..."
 while ! nc -z $DB_HOST $DB_PORT; do
   sleep 1

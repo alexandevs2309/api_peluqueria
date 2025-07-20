@@ -10,8 +10,10 @@ WORKDIR /code
 
 # Instala dependencias del sistema
 RUN apt-get update \
-    && apt-get install -y gcc libpq-dev \
+    && apt-get install -y gcc libpq-dev netcat-openbsd \
     && apt-get clean
+
+
 
 # Copia el requirements
 COPY requirements.txt /code/

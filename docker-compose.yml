@@ -1,4 +1,4 @@
-version: '3.9'
+
 services:
   db:
     image: postgres:16
@@ -9,7 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"  # Para acceder a PostgreSQL desde el host si es necesario
+      - "5433:5432"  # Para acceder a PostgreSQL desde el host si es necesario
     networks:
       - backend
 
@@ -18,7 +18,7 @@ services:
     volumes:
       - redis_data:/data  # Persistir datos de Redis
     ports:
-      - "6379:6379"  # Para depuración desde el host
+      - "6380:6379" 
     networks:
       - backend
 
@@ -31,6 +31,10 @@ services:
       - media_volume:/code/media
     env_file:
       - .env
+    
+    ports:
+      - "8000:8000"
+
     depends_on:
       - db
       - redis
@@ -39,7 +43,7 @@ services:
 
   celery:
     build: .
-    command: celery -A barbershop worker --loglevel=info
+    command: celery -A backend worker --loglevel=info
     volumes:
       - .:/code
     env_file:
@@ -52,7 +56,7 @@ services:
 
   celery-beat:
     build: .
-    command: celery -A barbershop beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - .:/code
     env_file:
