@@ -22,7 +22,12 @@ urlpatterns = [
         path('billing/', include('apps.billing_api.urls')),
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
+        path('users/', include('apps.users_api.urls')),
     ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     )),
 
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

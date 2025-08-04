@@ -129,7 +129,8 @@ class LoginView(generics.GenericAPIView):
             'user': {
                 'email': user.email,
                 'full_name': user.full_name,
-                # 'role': user.role
+                'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
+
             },
             'access': access_token,
             'refresh': refresh_token
