@@ -22,7 +22,7 @@ from .utils import log_admin_action
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all().order_by('id')
     serializer_class = RoleSerializer
-    permission_classes = [IsAuthenticated, role_permission_for(['Admin'])]
+    permission_classes = [IsAuthenticated, role_permission_for(['Super-Admin'])]
 
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ['name', 'permissions__codename']

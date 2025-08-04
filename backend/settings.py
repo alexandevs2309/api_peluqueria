@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'rest_framework_simplejwt.token_blacklist',    
     'celery',
+    'django_celery_beat',
 
 # Apps personalizadas
     'apps.appointments_api',
@@ -49,6 +50,7 @@ INSTALLED_APPS = [
     'apps.pos_api',
 
     'apps.billing_api',
+    'apps.users_api',
 
     'apps.reports_api',
     'apps.settings_api',
@@ -111,13 +113,7 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
 }
-CELERY_TASK_ALWAYS_EAGER = True
-CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-CELERY_RESULT_SERIALIZER = 'json'
-CELERY_TIMEZONE = 'America/Santo_Domingo'
+
 
 
 TEMPLATES = [
@@ -221,6 +217,11 @@ STATICFILES_DIRS = [
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+STATICFILES_FINDERS = [
+    'django.contrib.staticfiles.finders.FileSystemFinder',
+    'django.contrib.staticfiles.finders.AppDirectoriesFinder',
+]
+
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
@@ -233,7 +234,10 @@ if "pytest" in sys.modules:
     CELERY_TASK_EAGER_PROPAGATES = True
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 else:
-    EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
+
+    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+    # EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
 
     EMAIL_HOST = env('EMAIL_HOST', default='smtp.example.com')
     EMAIL_PORT = env.int('EMAIL_PORT', default=587)
