@@ -3,11 +3,7 @@ from django.urls import path, include
 from apps.users_api.views import UserViewSet
 
 router = DefaultRouter()
-<<<<<<< HEAD
-router.register(r'', UserViewSet, basename='user')  # SIN 'users'
-=======
-router.register(r'users', UserViewSet, basename='user')
->>>>>>> origin/master
+router.register(r'', UserViewSet, basename='user')
 
 urlpatterns = [
     path('', include(router.urls)),
