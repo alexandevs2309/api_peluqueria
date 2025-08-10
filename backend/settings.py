@@ -86,6 +86,7 @@ REST_FRAMEWORK = {
 
         
         ],
+<<<<<<< HEAD
 
     
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
@@ -103,6 +104,11 @@ REST_FRAMEWORK = {
         'anon': '50/hour',
     },
 
+=======
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'PAGE_SIZE': 100,
+    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+>>>>>>> origin/master
 }
 
 SIMPLE_JWT = {
@@ -283,5 +289,9 @@ LOGGING = {
             'level': 'DEBUG' if DEBUG else 'INFO',
         },
     },
+<<<<<<< HEAD
 }
 
+=======
+}
+>>>>>>> origin/master

@@ -11,6 +11,7 @@ class PermissionSerializer(serializers.ModelSerializer):
 
 class RoleSerializer(serializers.ModelSerializer):
     permissions = serializers.PrimaryKeyRelatedField(
+<<<<<<< HEAD
         many=True, queryset=Permission.objects.all(), required=False
     )
     assigned_users = serializers.SerializerMethodField()  # ✅ Esto es obligatorio
@@ -19,14 +20,35 @@ class RoleSerializer(serializers.ModelSerializer):
         model = Role
         fields = ['id', 'name', 'description', 'permissions', 'assigned_users']
         extra_kwargs = {
+=======
+        many=True, queryset=Permission.objects.all() ,required=False
+    )
+    # users = serializers.PrimaryKeyRelatedField(pero ya hice eso
+    #     many=True, queryset=User.objects.all(), required=False
+    # )
+
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description', 'permissions' ,'assigned_users']
+        extra_kwargs = {
+            # 'users': {'required': False},
+>>>>>>> origin/master
             'permissions': {'required': False},
         }
 
     def get_assigned_users(self, obj):
+<<<<<<< HEAD
         # Asegúrate de que el modelo Role tenga la relación user_roles_assignments
+=======
+>>>>>>> origin/master
         return list(obj.user_roles_assignments.values_list('user__id', flat=True))
 
     def validate_permissions(self, value):
         if len(value) != len(set(value)):
             raise serializers.ValidationError("No se permiten permisos duplicados.")
         return value
+<<<<<<< HEAD
+=======
+
+   
+>>>>>>> origin/master

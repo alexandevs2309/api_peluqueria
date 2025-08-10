@@ -1,7 +1,10 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
+<<<<<<< HEAD
 
+=======
+>>>>>>> origin/master
 from apps.roles_api.models import Role, UserRole
 
 class UserManager(BaseUserManager):
@@ -42,6 +45,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     last_login_ip_address = models.GenericIPAddressField(null=True, blank=True)
 
 
+<<<<<<< HEAD
     roles = models.ManyToManyField(Role , through=UserRole , related_name='users')
 
     is_deleted = models.BooleanField(default=False)
@@ -52,6 +56,19 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     objects = UserManager()
 
+=======
+    roles = models.ManyToManyField(
+        'roles_api.Role',
+        through='roles_api.UserRole',
+        related_name='assigned_users',
+    )
+
+    objects = UserManager()
+
+    USERNAME_FIELD = 'email'
+    REQUIRED_FIELDS = ['full_name']
+
+>>>>>>> origin/master
     class Meta:
         indexes = [
             models.Index(fields=['email']),
