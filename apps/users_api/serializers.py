@@ -1,13 +1,19 @@
+<<<<<<< HEAD
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from apps.roles_api.models import Role, UserRole
 from apps.roles_api.serializers import RoleSerializer
 from apps.auth_api.models import AccessLog
+=======
+from django.contrib.auth import get_user_model
+from rest_framework import serializers
+>>>>>>> origin/master
 
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
+<<<<<<< HEAD
     roles = RoleSerializer(many=True, read_only=True)
     role_ids = serializers.PrimaryKeyRelatedField(
         many=True,
@@ -43,10 +49,21 @@ class UserSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"email": "Este correo ya está registrado."})
 
 
+=======
+
+    class Meta:
+        model = User
+        fields = ['id', 'full_name', 'email', 'roles', 'is_active', 'password', 'date_joined']
+        read_only_fields = ['id', 'date_joined']
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+>>>>>>> origin/master
         user = User(**validated_data)
         if password:
             user.set_password(password)
         user.save()
+<<<<<<< HEAD
 
         for role in roles:
 
@@ -83,3 +100,15 @@ class AccessLogSerializer(serializers.ModelSerializer):
         model = AccessLog
         fields = ['event_type', 'timestamp', 'ip_address', 'user_agent']
 
+=======
+        return user
+
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
+>>>>>>> origin/master
