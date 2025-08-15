@@ -101,3 +101,29 @@ class MyActiveSubscriptionView(APIView):
         
         serializer = UserSubscriptionSerializer(subscription)
         return Response(serializer.data)
+
+class MyEntitlementsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        sub = get_user_active_subscription(request.user)
+        if not sub:
+            return Response({"detail":"Sin suscripción activa"}, status=404)
+
+        plan = sub.plan
+        # Calcula "usage" de lo que te interese (ejemplo: empleados)
+        usage = {
+            "employees": request.user.tenant.employees.count() if hasattr(request.user, "tenant") else 0
+        }
+        limits = {
+            "max_employees": plan.max_employees,  # 0 = ilimitado
+        }
+        data = {
+            "plan": plan.name,
+            "plan_display": plan.get_name_display(),
+            "features": plan.features or {},
+            "limits": limits,
+            "usage": usage,
+            "duration_month": plan.duration_month,
+        }
+        return Response(data)

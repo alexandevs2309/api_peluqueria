@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
+    MyEntitlementsView,
     SubscriptionPlanViewSet, 
     UserSubscriptionViewSet,
     SubscriptionAuditLogViewSet,
@@ -14,4 +15,6 @@ router.register(r'audit-logs', SubscriptionAuditLogViewSet, basename='subscripti
 
 urlpatterns = [
     path("", include(router.urls)),
+    path("me/entitlements/", MyEntitlementsView.as_view(), name="my-entitlements"),
+
 ]
