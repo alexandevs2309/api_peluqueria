@@ -1,10 +1,8 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-<<<<<<< HEAD
 from django.http import JsonResponse
-=======
->>>>>>> origin/master
+
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
@@ -27,11 +25,10 @@ urlpatterns = [
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
         path('users/', include('apps.users_api.urls')),
-<<<<<<< HEAD
+
         path("healthz/", lambda request: JsonResponse({"status": "ok"})),
 
-=======
->>>>>>> origin/master
+
     ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     )),
 

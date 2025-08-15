@@ -16,7 +16,6 @@ class Sale(models.Model):
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     paid = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    appointment = models.ForeignKey('appointments_api.Appointment', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     payment_method = models.CharField(max_length=50, choices=[
         ('cash', 'Cash'),
         ('card', 'Card'),

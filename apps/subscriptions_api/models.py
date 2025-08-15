@@ -8,10 +8,10 @@ from dateutil.relativedelta import relativedelta
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
-        ('basic', 'Basico'),
-        ('standard', 'Standard'),
-        ('premium', 'Premium'),
-        ('enterprise', 'Enterprise'),
+        ('basic', 'Plan Básico'),
+        ('standard', 'Plan Estándar'),
+        ('premium', 'Plan Premium'),
+        ('enterprise', 'Plan Empresarial'),
     ]
 
     name = models.CharField(max_length=100, unique=True , choices=PLAN_CHOICES, help_text="Name of the subscription plan")
@@ -26,7 +26,7 @@ class SubscriptionPlan(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return self.name
+        return self.get_name_display()
     
 class UserSubscription(models.Model):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='subscriptions')
@@ -39,21 +39,22 @@ class UserSubscription(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
-
-
-        if self.end_date and self.end_date < timezone.now():
-            self.is_active = False
-
-        if not self ._state.adding:
+        # Handle reactivation prevention
+        if not self._state.adding:
             old = UserSubscription.objects.get(pk=self.pk)
-            if  old.is_active is False and self.is_active is True:
-                raise ValueError("No se puede reactivar")      
-            super().save(*args , **kwargs)
-
-
-        if not self.end_date:
+            if old.is_active is False and self.is_active is True:
+                raise ValueError("No se puede reactivar una suscripción inactiva")
+        
+        # Handle automatic date calculation for new subscriptions
+        if self._state.adding and not self.end_date:
             self.start_date = timezone.now()
             self.end_date = self.start_date + relativedelta(months=self.plan.duration_month)
+        
+        # Handle expired subscriptions
+        if self.end_date and self.end_date < timezone.now():
+            self.is_active = False
+            
+        # Single save operation
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -81,7 +82,7 @@ class SubscriptionAuditLog(models.Model):
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='subscription_audit_logs')
     subscription = models.ForeignKey('UserSubscription', on_delete=models.CASCADE, related_name='audit_logs')
-    action = models.CharField(max_length=50, help_text="Action performed on the subscription")
+    action = models.CharField(max_length=50, choices=ACTION_CHOICES, help_text="Action performed on the subscription")
     description = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
