@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions
+from apps.audit_api.mixins import AuditLoggingMixin
 from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
 from rest_framework.permissions import IsAuthenticated
@@ -7,7 +8,7 @@ from rest_framework.response import Response
 from django.db.models import F
 
 
-class ProductViewSet(viewsets.ModelViewSet):
+class ProductViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -21,7 +22,7 @@ def low_stock_alerts(request):
         return Response(data)
 
 
-class SupplierViewSet(viewsets.ModelViewSet):
+class SupplierViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [permissions.IsAuthenticated]
