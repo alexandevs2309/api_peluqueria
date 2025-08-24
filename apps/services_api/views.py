@@ -1,17 +1,20 @@
-from rest_framework import viewsets
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
+from rest_framework import viewsets, permissions, filters
+from django_filters.rest_framework import DjangoFilterBackend
+from apps.audit_api.mixins import AuditLoggingMixin
 from .models import Service
 from .serializers import ServiceSerializer
 
-
-class ServiceViewSet(viewsets.ModelViewSet):
+class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Service.objects.all()
     serializer_class = ServiceSerializer
-  
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            return [IsAuthenticated() , IsAdminUser()]
-        return [IsAuthenticated()]
+    permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self):
-        return Service.objects.filter(is_active=True)
+    filter_backends = [
+        DjangoFilterBackend,
+        filters.SearchFilter,
+        filters.OrderingFilter
+    ]
+    filterset_fields = ['category', 'duration', 'price']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'price', 'duration']
+    ordering = ['name']

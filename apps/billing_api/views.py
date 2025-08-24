@@ -1,12 +1,13 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
+from apps.audit_api.mixins import AuditLoggingMixin
 from .models import Invoice, PaymentAttempt
 from .serializers import InvoiceSerializer, PaymentAttemptSerializer
 from .permissions import IsOwnerOrAdmin
 from rest_framework.response import Response
 
 
-class InvoiceViewSet(viewsets.ModelViewSet):
+class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = InvoiceSerializer
     permission_classes = [permissions.IsAuthenticated , IsOwnerOrAdmin]
 
@@ -38,7 +39,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response({'detail': 'Pago exitoso.'}, status=status.HTTP_200_OK)
 
 
-class PaymentAttemptViewSet(viewsets.ModelViewSet):
+class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = PaymentAttemptSerializer
     permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
 

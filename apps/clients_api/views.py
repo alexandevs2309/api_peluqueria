@@ -1,9 +1,10 @@
 from rest_framework import viewsets, permissions, filters
 from django_filters.rest_framework import DjangoFilterBackend
+from apps.audit_api.mixins import AuditLoggingMixin
 from .models import Client
 from .serializers import ClientSerializer
 
-class ClientViewSet(viewsets.ModelViewSet):
+class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Client.objects.all()
     serializer_class = ClientSerializer
     permission_classes = [permissions.IsAuthenticated]

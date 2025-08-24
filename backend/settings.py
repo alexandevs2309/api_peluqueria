@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.settings_api',
     'apps.roles_api',
     'apps.subscriptions_api',
+    'apps.audit_api',
 ]
 
 MIDDLEWARE = [
@@ -68,6 +69,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.roles_api.middleware.RoleDebugMiddleware',  # Middleware para depuración de roles
+    'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
 ]
 
 

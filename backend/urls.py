@@ -25,6 +25,7 @@ urlpatterns = [
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
         path('users/', include('apps.users_api.urls')),
+        path('audit/', include('apps.audit_api.urls')),
 
         path("healthz/", lambda request: JsonResponse({"status": "ok"})),
 
