@@ -32,40 +32,67 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
         return UserSubscription.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        subscription = serializer.save(user=self.request.user)
+        user = self.request.user
+        active_sub = UserSubscription.objects.filter(user=user, is_active=True).exists()
+        if active_sub:
+            raise serializer.ValidationError("Ya tienes una suscripción activa.")
+        
+        subscription = serializer.save(user=user)
         log_subscription_event(
-            user=self.request.user,
-            subscription = subscription,
+            user=user,
+            subscription=subscription,
             action='created',
             description=f'Suscripción creada para el plan "{subscription.plan.name}".'
         )
 
     def perform_update(self, serializer):
         original = self.get_object()
+        if not original.is_active:
+            raise serializers.ValidationError("No se puede actualizar una suscripción inactiva.")
+        
         updated = serializer.save()
-
         if original.plan != updated.plan:
             log_subscription_event(user=updated.user, subscription=updated, action='plan_changed')
 
 
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel_subscription(self, request, pk=None):
-        subscription = self.get_object()
+        try:
+            subscription = self.get_object()
 
-        if not subscription.is_active:
-            return Response({'detail': 'La suscripción ya está inactiva.'}, status=status.HTTP_400_BAD_REQUEST)
+            if not subscription.is_active:
+                return Response(
+                    {'detail': 'La suscripción ya está inactiva.'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
-        subscription.is_active = False
-        subscription.save()
+            # Verificar que la suscripción pertenezca al usuario (para usuarios no superusuarios)
+            if not request.user.is_superuser and subscription.user != request.user:
+                return Response(
+                    {'detail': 'No tienes permiso para cancelar esta suscripción.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
 
-        log_subscription_event(
-            user=request.user,
-            subscription=subscription,
-            action='cancelled',
-            description=f'Suscripción al plan "{subscription.plan.name}" cancelada anticipadamente.'
-        )
+            subscription.is_active = False
+            subscription.save()
 
-        return Response({'detail': 'Suscripción cancelada correctamente.'}, status=status.HTTP_200_OK)
+            log_subscription_event(
+                user=request.user,
+                subscription=subscription,
+                action='cancelled',
+                description=f'Suscripción al plan "{subscription.plan.name}" cancelada anticipadamente.'
+            )
+
+            return Response(
+                {'detail': 'Suscripción cancelada correctamente.'}, 
+                status=status.HTTP_200_OK
+            )
+            
+        except Exception as e:
+            return Response(
+                {'detail': f'Error al cancelar la suscripción: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
     
     @action(detail=False, methods=["get"], url_path="current")
     def current(self, request):

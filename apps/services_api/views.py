@@ -14,7 +14,7 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         filters.SearchFilter,
         filters.OrderingFilter
     ]
-    filterset_fields = ['category', 'duration', 'price']
+    filterset_fields = ['price']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'price', 'duration']
     ordering = ['name']

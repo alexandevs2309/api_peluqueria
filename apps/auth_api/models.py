@@ -45,16 +45,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 
-    roles = models.ManyToManyField(Role , through=UserRole , related_name='users')
-
     is_deleted = models.BooleanField(default=False)
-
-   
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['full_name']
-
-    objects = UserManager()
-
 
     roles = models.ManyToManyField(
         'roles_api.Role',

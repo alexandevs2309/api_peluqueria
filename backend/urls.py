@@ -2,9 +2,16 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
 from django.http import JsonResponse
+from django.views.decorators.cache import cache_page
+from django.views.decorators.http import require_http_methods
 
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+
+@require_http_methods(["GET"])
+@cache_page(60)
+def health_check(request):
+    return JsonResponse({"status": "ok"})
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -21,18 +28,15 @@ urlpatterns = [
         path('inventory/', include('apps.inventory_api.urls')),
         path('reports/', include('apps.reports_api.urls')),
         path('subscriptions/', include('apps.subscriptions_api.urls')),
+        path('tenants/', include('apps.tenants_api.urls')),
         path('billing/', include('apps.billing_api.urls')),
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
         path('users/', include('apps.users_api.urls')),
         path('audit/', include('apps.audit_api.urls')),
 
-        path("healthz/", lambda request: JsonResponse({"status": "ok"})),
-
-
-    ] + static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-    )),
-
+        path("healthz/", health_check, name="health_check"),
+    ])),
 ]
 
 if settings.DEBUG:

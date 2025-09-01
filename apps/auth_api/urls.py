@@ -3,6 +3,8 @@ from .views import (
     RegisterView, LoginView, LogoutView,
     ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView
 )
+from .permissions_check import UserPermissionsView
+
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
     path('login/', LoginView.as_view() , name='login'),
@@ -16,5 +18,6 @@ urlpatterns = [
     path('mfa/setup/', MFASetupView.as_view(), name='mfa-setup'),
     path('mfa/verify/', MFAVerifyView.as_view(), name='mfa-verify'),
     path('mfa/login-verify/', MFALoginVerifyView.as_view(), name='mfa-login-verify'),
+    path('permissions/', UserPermissionsView.as_view(), name='user-permissions'),
 
 ]
