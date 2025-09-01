@@ -6,9 +6,20 @@ from django.utils.timezone import now
 
 
 class Role(models.Model):
+ 
+    SCOPE_CHOICE = [
+        ('GLOBAL' , 'Global'),
+        ('TENANT' , 'Tenant'),
+        ('MODULE', 'Module')
+    ]
     name = models.CharField(max_length=100, unique=True)
     description = models.TextField(blank=True)
+    scope = models.CharField(max_length=20, choices=SCOPE_CHOICE, default='TENANT')
+    module = models.CharField(max_length=100, blank=True, help_text='solo si scope=MODULE')
+    limits = models.JSONField(default=dict , blank=True)
     permissions = models.ManyToManyField(Permission, blank=True, related_name='roles')
+
+
 
     class Meta:
         indexes = [
@@ -26,6 +37,7 @@ class UserRole(models.Model):
             related_name='user_roles'
         )   
     role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_roles_assignments')
+    tenant = models.ForeignKey('tenants_api.Tenant', null=True, blank=True, on_delete=models.CASCADE, related_name='tenant_user_roles')
     assigned_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -35,7 +47,8 @@ class UserRole(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.user.email} - {self.role.name}"
+        who = getattr(self.user, "email", self.user_id)
+        return f"{who} - {self.role.name} ({self.tenant_id or 'GLOBAL'})"
 
 class AdminActionLog(models.Model):
     user = models.ForeignKey(

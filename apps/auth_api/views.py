@@ -129,8 +129,8 @@ class LoginView(generics.GenericAPIView):
             'user': {
                 'email': user.email,
                 'full_name': user.full_name,
+                'is_superuser': user.is_superuser,
                 'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
-
             },
             'access': access_token,
             'refresh': refresh_token
@@ -487,7 +487,7 @@ class MFALoginVerifyView(APIView):
                 'user': {
                     'email': user.email,
                     'full_name': user.full_name,
-                    
+                    'is_superuser': user.is_superuser
                 },
                 'access': access_token,
                 'refresh': refresh_token

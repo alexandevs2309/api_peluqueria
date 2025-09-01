@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     'apps.roles_api',
     'apps.subscriptions_api',
     'apps.audit_api',
+    'apps.tenants_api',
 ]
 
 MIDDLEWARE = [
@@ -85,32 +86,18 @@ REST_FRAMEWORK = {
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
-
-        
-        ],
-
-
-    
+    ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 100,
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
-
-
-
     'DEFAULT_THROTTLE_CLASSES': [
-    'rest_framework.throttling.UserRateThrottle',
-    'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'user': '1000/day',        # Puedes ajustar según necesidad
+        'user': '1000/day',
         'anon': '50/hour',
     },
-
-
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 100,
-    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
-
 }
 
 SIMPLE_JWT = {

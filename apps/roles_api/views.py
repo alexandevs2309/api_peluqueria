@@ -1,4 +1,4 @@
-from rest_framework import viewsets
+from rest_framework import viewsets,filters
 from rest_framework.permissions import IsAuthenticated
 from .permissions import role_permission_for
 from .models import Role
@@ -24,11 +24,11 @@ class RoleViewSet(viewsets.ModelViewSet):
     serializer_class = RoleSerializer
     permission_classes = [IsAuthenticated, role_permission_for(['Super-Admin'])]
 
-    filter_backends = [DjangoFilterBackend]
-    filterset_fields = ['name', 'permissions__codename']
+    filter_backends = [DjangoFilterBackend , DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['name', 'permissions__codename','scope', 'module']
     pagination_class = PageNumberPagination
-    ordering_fields = ['id', 'name']
-    search_fields = ['name']
+    ordering_fields = ['id', 'name' , 'module']
+    search_fields = ['name', 'description','module']
     ordering = ['id']
 
     def list(self, request, *args, **kwargs):

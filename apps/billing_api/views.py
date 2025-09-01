@@ -17,7 +17,6 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         return Invoice.objects.filter(user=self.request.user)
     
     def perform_create(self, serializer):
-        # Obtener suscripción activa del usuario
         from apps.subscriptions_api.models import UserSubscription
         active_sub = UserSubscription.objects.filter(user=self.request.user, is_active=True).first()
         serializer.save(user=self.request.user, subscription=active_sub)

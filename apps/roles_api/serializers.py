@@ -1,12 +1,15 @@
 from rest_framework import serializers
-from django.contrib.auth.models import Permission
-from .models import Role
+from django.contrib.auth.models import Permission, ContentType
+from .models import Role, UserRole
 
 
 class PermissionSerializer(serializers.ModelSerializer):
+
+    app_label = serializers.CharField(source='content_type.app_label', read_only=True)
+    model = serializers.CharField(source='content_type.model', read_only=True)
     class Meta:
         model = Permission
-        fields = ("id", "codename", "name", "content_type")
+        fields = ("id", "codename", "name", "app_label", "model", "content_type")
 
 
 class RoleSerializer(serializers.ModelSerializer):
@@ -18,11 +21,23 @@ class RoleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Role
-        fields = ("id", "name", "description", "permissions", "assigned_users")
+        fields = ("id", "name", "description", 'scope', 'module', 'limits', "permissions", "assigned_users")
         extra_kwargs = {
             "permissions": {"required": False},
             "description": {"required": False, "allow_null": True, "allow_blank": True},
         }
+
+    def validate(self, attrs):
+        scope = attrs.get("scope", getattr(self.instance, 'scope', None))
+        module = attrs.get("module", getattr(self.instance, 'module', None))
+
+        if scope == "MODULE" and not module:
+            raise serializers.ValidationError({"module": "Debes especificar un módulo cuando scope=MODULE."})
+        if scope != "MODULE" and module:
+            raise serializers.ValidationError({"module": "No debes especificar un módulo cuando scope != MODULE."})
+
+        return attrs
+
 
     def get_assigned_users(self, obj):
         # Asegúrate de que el related_name exista en el modelo (user_roles_assignments)
@@ -49,3 +64,10 @@ class RoleSerializer(serializers.ModelSerializer):
         if perms is not None:
             instance.permissions.set(perms)
         return instance
+
+
+        
+class UserRoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserRole
+        fields = ('id', 'user', 'role', 'tenant', 'assigned_at')
