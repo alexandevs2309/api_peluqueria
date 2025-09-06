@@ -7,6 +7,7 @@ from django.views.decorators.http import require_http_methods
 
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
+from apps.settings_api.views import SystemSettingsRetrieveUpdateView, SystemSettingsResetView
 
 @require_http_methods(["GET"])
 @cache_page(60)
@@ -32,6 +33,8 @@ urlpatterns = [
         path('billing/', include('apps.billing_api.urls')),
         # path('notifications/', include('apps.notifications_api.urls')),
         path('settings/', include('apps.settings_api.urls')),
+        path('system-settings/', SystemSettingsRetrieveUpdateView.as_view(), name='system-settings'),
+        path('system-settings/reset/', SystemSettingsResetView.as_view(), name='system-settings-reset'),
         path('users/', include('apps.users_api.urls')),
         path('audit/', include('apps.audit_api.urls')),
 

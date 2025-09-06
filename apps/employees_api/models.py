@@ -4,6 +4,7 @@ from apps.services_api.models import Service
 
 class Employee(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')
     specialty = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     hire_date = models.DateField(null=True, blank=True)

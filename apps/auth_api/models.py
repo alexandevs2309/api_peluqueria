@@ -46,6 +46,15 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
     is_deleted = models.BooleanField(default=False)
+    
+    # Multitenancy: Usuario pertenece a un tenant
+    tenant = models.ForeignKey(
+        'tenants_api.Tenant', 
+        on_delete=models.CASCADE, 
+        null=True, 
+        blank=True,
+        related_name='users'
+    )
 
     roles = models.ManyToManyField(
         'roles_api.Role',
