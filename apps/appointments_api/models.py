@@ -18,6 +18,7 @@ class Appointment(models.Model):
     service = models.ForeignKey(Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
     role = models.ForeignKey(Role, on_delete=models.SET_NULL,null=True, related_name='role_appointments')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='scheduled')
+    sale = models.OneToOneField('pos_api.Sale', on_delete=models.SET_NULL, null=True, blank=True, related_name='appointment')
     created_at = models.DateTimeField(auto_now_add=True)
     description = models.TextField(blank=True, null=True)
     updated_at = models.DateTimeField(auto_now=True)

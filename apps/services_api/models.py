@@ -8,7 +8,8 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 class Service(models.Model):
-    name = models.CharField(max_length=100, unique=True)
+    name = models.CharField(max_length=100)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='services')
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -25,9 +26,11 @@ class Service(models.Model):
     class Meta:
         verbose_name = 'Servicio'
         verbose_name_plural = 'Servicios'
+        unique_together = ('name', 'tenant')  # Nombre único por tenant
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['is_active']),
+            models.Index(fields=['tenant']),
         ]
 
 

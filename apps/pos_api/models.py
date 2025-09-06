@@ -1,6 +1,8 @@
 from django.db import models 
 from django.utils import timezone
 from django.contrib.auth import get_user_model
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
 from apps.clients_api.models import Client
 from apps.services_api.models import Service
 from apps.inventory_api.models import Product
@@ -32,14 +34,16 @@ class Sale(models.Model):
 
 class SaleDetail(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='details')
-    content_type = models.CharField(max_length=50, choices=[
-        ('product', 'Product'),
-        ('service', 'Service')
-    ], default='service')
+    
+    # GenericForeignKey para referenciar Product o Service
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE)
     object_id = models.PositiveIntegerField()
-    name = models.CharField(max_length=255)
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    # Campos para almacenar datos al momento de la venta
+    name = models.CharField(max_length=255)  # Nombre del producto/servicio
     quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(max_digits=10, decimal_places=2)
+    price = models.DecimalField(max_digits=10, decimal_places=2)  # Precio al momento de la venta
     
 
     class Meta:
@@ -47,7 +51,12 @@ class SaleDetail(models.Model):
         verbose_name_plural = 'Sale Details'
 
     def __str__(self): 
-        return f"{self.content_type}:{self.object_id} - {self.name}"
+        return f"{self.content_type.model}:{self.object_id} - {self.name}"
+    
+    @property
+    def item_type(self):
+        """Helper para obtener el tipo de item (product/service)"""
+        return self.content_type.model
 
 class Payment(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='payments')

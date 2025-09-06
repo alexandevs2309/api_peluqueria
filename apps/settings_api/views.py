@@ -1,6 +1,6 @@
 from rest_framework import generics, permissions, parsers, views, response, status
-from .models import Setting, SettingAuditLog, Branch
-from .serializers import SettingSerializer, SettingExportSerializer, SettingAuditLogSerializer, BranchSerializer
+from .models import Setting, SettingAuditLog, Branch, SystemSettings
+from .serializers import SettingSerializer, SettingExportSerializer, SettingAuditLogSerializer, BranchSerializer, SystemSettingsSerializer
 from django.core.cache import cache
 from django.db import transaction
 
@@ -73,3 +73,22 @@ class SettingListCreateView(generics.ListCreateAPIView):
     queryset = Setting.objects.all()
     serializer_class = SettingSerializer
     permission_classes = [permissions.IsAdminUser]
+
+class SystemSettingsRetrieveUpdateView(generics.RetrieveUpdateAPIView):
+    """Vista para obtener y actualizar configuraciones globales del sistema"""
+    serializer_class = SystemSettingsSerializer
+    permission_classes = [permissions.IsAdminUser]
+
+    def get_object(self):
+        return SystemSettings.get_settings()
+
+class SystemSettingsResetView(views.APIView):
+    """Vista para restablecer configuraciones a valores por defecto"""
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request, *args, **kwargs):
+        # Eliminar configuración existente y crear una nueva con valores por defecto
+        SystemSettings.objects.all().delete()
+        settings = SystemSettings.get_settings()
+        serializer = SystemSettingsSerializer(settings)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)

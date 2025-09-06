@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Setting, SettingAuditLog, Branch
+from .models import Setting, SettingAuditLog, Branch, SystemSettings
 
 class BranchSerializer(serializers.ModelSerializer):
     class Meta:
@@ -70,3 +70,22 @@ class SettingAuditLogSerializer(serializers.ModelSerializer):
             "changed_at",
             "change_summary",
         ]
+
+class SystemSettingsSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SystemSettings
+        fields = [
+            "id",
+            "platform_name",
+            "support_email",
+            "maintenance_mode",
+            "default_currency",
+            "max_tenants",
+            "backup_frequency",
+            "email_notifications",
+            "auto_suspend_expired",
+            "trial_days",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["created_at", "updated_at"]

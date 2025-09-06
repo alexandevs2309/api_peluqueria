@@ -130,6 +130,7 @@ class LoginView(generics.GenericAPIView):
                 'email': user.email,
                 'full_name': user.full_name,
                 'is_superuser': user.is_superuser,
+                'tenant_id': user.tenant_id if user.tenant else None,
                 'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
             },
             'access': access_token,

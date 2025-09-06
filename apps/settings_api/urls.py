@@ -5,8 +5,9 @@ from .views import (
     SettingImportView,
     SettingAuditLogListView,
     BranchListCreateView,
-    SettingListCreateView
-
+    SettingListCreateView,
+    SystemSettingsRetrieveUpdateView,
+    SystemSettingsResetView
 )
 from rest_framework.routers import DefaultRouter
 

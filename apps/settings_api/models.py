@@ -54,3 +54,62 @@ class SettingAuditLog(models.Model):
 
     def __str__(self):
         return f"Cambio en {self.setting} por {self.changed_by} el {self.changed_at}"
+
+class SystemSettings(models.Model):
+    """Configuraciones globales del sistema SaaS"""
+    platform_name = models.CharField(_("Nombre de la plataforma"), max_length=255, default="BarberSaaS")
+    support_email = models.EmailField(_("Email de soporte"), default="soporte@barbersaas.com")
+    maintenance_mode = models.BooleanField(_("Modo mantenimiento"), default=False)
+    default_currency = models.CharField(_("Moneda por defecto"), max_length=10, default="USD")
+    max_tenants = models.PositiveIntegerField(_("Máximo de clientes"), default=100)
+    backup_frequency = models.CharField(
+        _("Frecuencia de respaldo"), 
+        max_length=20, 
+        choices=[
+            ('daily', 'Diario'),
+            ('weekly', 'Semanal'),
+            ('monthly', 'Mensual')
+        ],
+        default='daily'
+    )
+    email_notifications = models.BooleanField(_("Notificaciones por email"), default=True)
+    auto_suspend_expired = models.BooleanField(_("Suspender automáticamente vencidos"), default=True)
+    trial_days = models.PositiveIntegerField(
+        _("Días de prueba"), 
+        default=7,
+        validators=[MinValueValidator(0), MaxValueValidator(365)]
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _("Configuración del Sistema")
+        verbose_name_plural = _("Configuraciones del Sistema")
+
+    def save(self, *args, **kwargs):
+        # Solo permitir una instancia de configuraciones del sistema
+        if not self.pk and SystemSettings.objects.exists():
+            raise ValueError(_("Solo puede existir una configuración del sistema"))
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Configuraciones del Sistema - {self.platform_name}"
+
+    @classmethod
+    def get_settings(cls):
+        """Obtener o crear la configuración del sistema"""
+        settings, created = cls.objects.get_or_create(
+            pk=1,
+            defaults={
+                'platform_name': 'BarberSaaS',
+                'support_email': 'soporte@barbersaas.com',
+                'maintenance_mode': False,
+                'default_currency': 'USD',
+                'max_tenants': 100,
+                'backup_frequency': 'daily',
+                'email_notifications': True,
+                'auto_suspend_expired': True,
+                'trial_days': 7
+            }
+        )
+        return settings

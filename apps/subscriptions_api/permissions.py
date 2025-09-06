@@ -7,8 +7,14 @@ class IsSuperuserOrReadOnly(BasePermission):
         # Allow read-only access for all users
         if request.method in ['GET', 'HEAD', 'OPTIONS']:
             return True
-        # Allow full access for superusers
-        return request.user and request.user.is_superuser
+        # Allow full access for superusers or users with Super-Admin role
+        if request.user and request.user.is_superuser:
+            return True
+        # Check if user has Super-Admin role
+        if request.user and hasattr(request.user, 'roles'):
+            user_roles = [role.name for role in request.user.roles.all()]
+            return 'Super-Admin' in user_roles
+        return False
     
 
 class HasFeatureEnabled(BasePermission):

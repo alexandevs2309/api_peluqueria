@@ -8,6 +8,7 @@ class Client(models.Model):
         ('O', 'Otro'),
     ]
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='clients')
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='clients')
     full_name = models.CharField(max_length=255)
     email = models.EmailField(blank=True, null=True)
     phone = models.CharField(max_length=20, blank=True, null=True)

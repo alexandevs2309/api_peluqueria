@@ -14,10 +14,51 @@ from .utils import get_user_active_subscription, log_subscription_event
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     queryset = SubscriptionPlan.objects.all()
     serializer_class = SubscriptionPlanSerializer
-    permission_classes = [IsSuperuserOrReadOnly , IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     filterset_fields = ['is_active']
     search_fields = ['name', ]
     ordering_fields = ['price', 'duration_days']
+    
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        
+        # Verificar suscripciones activas
+        active_subs = instance.user_subscriptions.filter(is_active=True)
+        if active_subs.exists():
+            return Response({
+                'error': 'No se puede eliminar un plan con suscripciones activas',
+                'message': f'Este plan tiene {active_subs.count()} suscripciones activas. Desactívelo en su lugar.',
+                'active_subscriptions': active_subs.count(),
+                'suggestion': 'Desactive el plan en lugar de eliminarlo'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Solo eliminar si no hay suscripciones activas
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+    
+    @action(detail=True, methods=['post'], url_path='deactivate')
+    def deactivate_plan(self, request, pk=None):
+        """Desactivar un plan de forma segura"""
+        plan = self.get_object()
+        
+        if not plan.is_active:
+            return Response({
+                'message': 'El plan ya está desactivado'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Desactivar el plan
+        plan.is_active = False
+        plan.save()
+        
+        # Contar suscripciones afectadas
+        active_subs = plan.user_subscriptions.filter(is_active=True).count()
+        
+        return Response({
+            'message': 'Plan desactivado correctamente',
+            'plan_name': plan.name,
+            'affected_subscriptions': active_subs,
+            'note': 'Las suscripciones activas continuarán hasta su vencimiento'
+        }, status=status.HTTP_200_OK)
 
 
     
@@ -139,8 +180,12 @@ class MyEntitlementsView(APIView):
 
         plan = sub.plan
         # Calcula "usage" de lo que te interese (ejemplo: empleados)
+        employee_count = 0
+        if hasattr(request.user, "tenant") and request.user.tenant is not None:
+            employee_count = request.user.tenant.employees.count()
+        
         usage = {
-            "employees": request.user.tenant.employees.count() if hasattr(request.user, "tenant") else 0
+            "employees": employee_count
         }
         limits = {
             "max_employees": plan.max_employees,  # 0 = ilimitado

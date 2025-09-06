@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
+from django.utils import timezone
 from .models import AuditLog
 from .serializers import AuditLogSerializer, AuditLogCreateSerializer
 
@@ -52,19 +53,13 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     @action(detail=False, methods=['get'])
     def summary(self, request):
         """Retorna un resumen de actividad reciente"""
-        recent_logs = self.get_queryset()[:50]
+        recent_logs = self.get_queryset()[:10]
         serializer = self.get_serializer(recent_logs, many=True)
-        
-        # Estadísticas básicas
-        total_logs = self.get_queryset().count()
-        actions_count = self.get_queryset().values('action').annotate(
-            count=models.Count('action')
-        )
         
         return Response({
             'recent_activity': serializer.data,
-            'total_logs': total_logs,
-            'actions_breakdown': list(actions_count)
+            'total_logs': self.get_queryset().count(),
+            'actions_breakdown': []
         })
     
     @action(detail=False, methods=['get'])
