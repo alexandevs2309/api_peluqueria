@@ -1,0 +1,58 @@
+[
+  {
+    "model": "inventory_api.product",
+    "pk": 1,
+    "fields": {
+      "name": "Shampoo Premium",
+      "sku": "SH001",
+      "price": "25.99",
+      "stock": 50,
+      "category": "hair-care",
+      "description": "Shampoo profesional para todo tipo de cabello",
+      "is_active": true,
+      "tenant": 1
+    }
+  },
+  {
+    "model": "inventory_api.product", 
+    "pk": 2,
+    "fields": {
+      "name": "Cera Modeladora",
+      "sku": "CER001",
+      "price": "18.50", 
+      "stock": 30,
+      "category": "styling",
+      "description": "Cera para peinado con fijación fuerte",
+      "is_active": true,
+      "tenant": 1
+    }
+  },
+  {
+    "model": "inventory_api.product",
+    "pk": 3, 
+    "fields": {
+      "name": "Aceite para Barba",
+      "sku": "AC001",
+      "price": "32.00",
+      "stock": 25,
+      "category": "treatments", 
+      "description": "Aceite nutritivo para barba",
+      "is_active": true,
+      "tenant": 1
+    }
+  },
+  {
+    "model": "inventory_api.product",
+    "pk": 4,
+    "fields": {
+      "name": "Gel Fijador",
+      "sku": "GEL001", 
+      "price": "15.75",
+      "stock": 40,
+      "category": "styling",
+      "description": "Gel de fijación extra fuerte",
+      "is_active": true,
+      "tenant": 1
+    }
+  }
+]

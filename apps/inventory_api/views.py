@@ -1,5 +1,6 @@
 from rest_framework import viewsets, permissions
 from apps.audit_api.mixins import AuditLoggingMixin
+from apps.roles_api.permissions import role_permission_for
 from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
 from rest_framework.permissions import IsAuthenticated
@@ -11,7 +12,12 @@ from django.db.models import F
 class ProductViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated, role_permission_for(['Client-Admin', 'Admin', 'Manager'])]
+    
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        context['request'] = self.request
+        return context
     
     @action(detail=False, methods=['get'])
     def low_stock(self, request):
@@ -94,7 +100,7 @@ def low_stock_alerts(request):
 class SupplierViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated, role_permission_for(['Client-Admin', 'Admin', 'Manager'])]
 
 class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = StockMovement.objects.all()

@@ -174,15 +174,35 @@ class MyEntitlementsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # Para Super-Admin, devolver entitlements ilimitados
+        if request.user.roles.filter(name='Super-Admin').exists():
+            return Response({
+                "plan": "Super-Admin",
+                "plan_display": "Administrador del Sistema",
+                "features": {"unlimited": True},
+                "limits": {"max_employees": 0},  # 0 = ilimitado
+                "usage": {"employees": 0},
+                "duration_month": 0
+            })
+        
         sub = get_user_active_subscription(request.user)
         if not sub:
-            return Response({"detail":"Sin suscripción activa"}, status=404)
+            # Usuario sin suscripción - plan gratuito básico
+            return Response({
+                "plan": "free",
+                "plan_display": "Plan Gratuito",
+                "features": {},
+                "limits": {"max_employees": 1},
+                "usage": {"employees": 0},
+                "duration_month": 0
+            })
 
         plan = sub.plan
-        # Calcula "usage" de lo que te interese (ejemplo: empleados)
+        # Calcula usage de empleados
         employee_count = 0
         if hasattr(request.user, "tenant") and request.user.tenant is not None:
-            employee_count = request.user.tenant.employees.count()
+            from apps.employees_api.models import Employee
+            employee_count = Employee.objects.filter(tenant=request.user.tenant).count()
         
         usage = {
             "employees": employee_count
@@ -192,10 +212,10 @@ class MyEntitlementsView(APIView):
         }
         data = {
             "plan": plan.name,
-            "plan_display": plan.get_name_display(),
+            "plan_display": getattr(plan, 'get_name_display', lambda: plan.name)(),
             "features": plan.features or {},
             "limits": limits,
             "usage": usage,
-            "duration_month": plan.duration_month,
+            "duration_month": getattr(plan, 'duration_month', 1),
         }
         return Response(data)

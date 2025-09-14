@@ -1,13 +1,14 @@
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
-from apps.tenants_api.mixins import TenantFilterMixin, TenantPermissionMixin
+from apps.tenants_api.models import Tenant
 from .models import Client
 from .serializers import ClientSerializer
 
-class ClientViewSet(TenantFilterMixin, TenantPermissionMixin, AuditLoggingMixin, viewsets.ModelViewSet):
+class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Client.objects.all()
     serializer_class = ClientSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -22,11 +23,45 @@ class ClientViewSet(TenantFilterMixin, TenantPermissionMixin, AuditLoggingMixin,
     ordering_fields = ['created_at', 'updated_at', 'last_visit']
     ordering = ['-created_at']  # default ordering
 
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        
+        # SuperAdmin puede ver todo
+        if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
+            return queryset
+            
+        # Filtrar por tenant del usuario
+        if hasattr(user, 'tenant') and user.tenant:
+            return queryset.filter(tenant=user.tenant)
+            
+        return queryset.none()
+    
     def perform_create(self, serializer):
-        print(f"Usuario autenticado en perform_create: {self.request.user}, Autenticado: {self.request.user.is_authenticated}")
-        if not self.request.user.is_authenticated:
+        user = self.request.user
+        if not user.is_authenticated:
             raise ValueError("No hay usuario autenticado")
-        serializer.save(user=self.request.user, created_by=self.request.user)
+            
+        # SuperAdmin puede crear para cualquier tenant
+        if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
+            # Para SuperAdmin, usar el primer tenant disponible o crear sin tenant
+            tenant = user.tenant or Tenant.objects.first()
+            serializer.save(
+                user=user, 
+                created_by=user,
+                tenant=tenant
+            )
+            return
+            
+        # Usar tenant del usuario directamente
+        if not user.tenant:
+            raise ValidationError("Usuario sin tenant asignado")
+        
+        serializer.save(
+            user=user, 
+            created_by=user,
+            tenant=user.tenant
+        )
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):

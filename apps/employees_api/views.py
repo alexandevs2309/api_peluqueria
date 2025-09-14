@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.mixins import TenantFilterMixin, TenantPermissionMixin
+from apps.tenants_api.models import Tenant
 from apps.roles_api.permissions import IsActiveAndRolePermission, role_permission_for
 from apps.subscriptions_api.utils import get_user_active_subscription
 from .models import Employee, EmployeeService, WorkSchedule
@@ -12,7 +13,7 @@ from apps.auth_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
 from .permissions import IsAdminOrOwnStylist, role_permission_for
 
-class EmployeeViewSet(TenantFilterMixin, TenantPermissionMixin, viewsets.ModelViewSet):
+class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Employee.objects.all()
     serializer_class = EmployeeSerializer
   
@@ -44,24 +45,14 @@ class EmployeeViewSet(TenantFilterMixin, TenantPermissionMixin, viewsets.ModelVi
         user = self.request.user
         
         # SuperAdmin puede crear para cualquier tenant
-        if user.is_superuser:
-            return super().perform_create(serializer)
+        if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
+            tenant = user.tenant or Tenant.objects.first()
+            serializer.save(tenant=tenant)
+            return
             
-        # Usuario normal solo puede crear para su tenant
+        # Usar tenant del usuario directamente
         if not user.tenant:
             raise ValidationError("Usuario sin tenant asignado")
-            
-        # Obtener suscripción activa del tenant
-        sub = get_user_active_subscription(user)
-        max_employees = sub.plan.max_employees if sub and sub.plan else 0
-
-        # Contar empleados del tenant
-        current_employees = Employee.objects.filter(tenant=user.tenant).count()
-
-        # Validar límite
-        if current_employees >= max_employees:
-            raise ValidationError(
-                f"Has alcanzado el límite de empleados permitidos en tu plan actual ({max_employees}).")
 
         serializer.save(tenant=user.tenant)
 

@@ -10,10 +10,11 @@ User = get_user_model()
 class EmployeeSerializer(serializers.ModelSerializer):
     user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='user', write_only=True)
     user = serializers.StringRelatedField(read_only=True)
+    user_id_read = serializers.IntegerField(source='user.id', read_only=True)
 
     class Meta:
         model = Employee
-        fields = ['id', 'user', 'user_id', 'specialty', 'phone', 'hire_date', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
     def create(self, validated_data):
