@@ -5,7 +5,6 @@ from .models import Service
 from .serializers import ServiceSerializer
 
 class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Service.objects.all()
     serializer_class = ServiceSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -14,7 +13,13 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         filters.SearchFilter,
         filters.OrderingFilter
     ]
-    filterset_fields = ['price']
+    filterset_fields = ['price', 'is_active']
     search_fields = ['name', 'description']
-    ordering_fields = ['name', 'price', 'duration']
+    ordering_fields = ['name', 'price']
     ordering = ['name']
+
+    def get_queryset(self):
+        return Service.objects.filter(tenant=self.request.user.tenant)
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user.tenant)

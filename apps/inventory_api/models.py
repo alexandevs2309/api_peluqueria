@@ -19,6 +19,9 @@ class Product(models.Model):
     unit = models.CharField(max_length=50, default='unidad')
     is_active = models.BooleanField(default=True)
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True)
+    description = models.TextField(blank=True, default='')
+    category = models.CharField(max_length=100, blank=True, default='')
+    image = models.ImageField(upload_to='products/', blank=True, null=True)
 
     class Meta:
         unique_together = ('sku', 'tenant')  # SKU único por tenant

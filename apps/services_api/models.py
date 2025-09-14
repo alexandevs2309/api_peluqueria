@@ -17,6 +17,7 @@ class Service(models.Model):
         )
 
     description = models.TextField(blank=True, null=True)
+    duration = models.PositiveIntegerField(default=30, help_text="Duración en minutos")
     allowed_roles = models.ManyToManyField(Role, blank=True, related_name='services')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

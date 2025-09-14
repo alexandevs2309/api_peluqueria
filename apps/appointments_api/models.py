@@ -14,9 +14,9 @@ class Appointment(models.Model):
     ]
 
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='client_appointments')
-    stylist = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stylist_appointments',  limit_choices_to={'user_roles__role__name': 'stylist'} )
+    stylist = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stylist_appointments')
     service = models.ForeignKey(Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
-    role = models.ForeignKey(Role, on_delete=models.SET_NULL,null=True, related_name='role_appointments')
+    role = models.ForeignKey(Role, on_delete=models.SET_NULL, null=True, blank=True, related_name='role_appointments')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='scheduled')
     sale = models.OneToOneField('pos_api.Sale', on_delete=models.SET_NULL, null=True, blank=True, related_name='appointment')
     created_at = models.DateTimeField(auto_now_add=True)

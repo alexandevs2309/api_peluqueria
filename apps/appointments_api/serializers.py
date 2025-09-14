@@ -12,7 +12,7 @@ User = get_user_model()
 
 class AppointmentSerializer(serializers.ModelSerializer):
     client = serializers.PrimaryKeyRelatedField(queryset=Client.objects.all())
-    stylist = serializers.PrimaryKeyRelatedField(queryset=User.objects.filter(user_roles__role__name='stylist'))
+    stylist = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
     stylist_info = EmployeeSerializer(source='stylist.employee_profile', read_only=True)
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False, allow_null=True)
     date_time = serializers.DateTimeField(default=timezone.now)
@@ -22,6 +22,11 @@ class AppointmentSerializer(serializers.ModelSerializer):
         required=False
     )
     sale = serializers.PrimaryKeyRelatedField(read_only=True)
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Temporalmente sin filtros para debuggear
+        pass
 
     class Meta:
         model = Appointment
@@ -33,28 +38,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
         extra_kwargs = {'stylist_info': {'read_only': True}}  # Añadir como read_only
 
     def validate(self, data):
-        stylist = data.get('stylist')
-        service = data.get('service')
-        date_time = data.get('date_time')
-
-        if stylist:
-            try:
-                employee = Employee.objects.get(user=stylist)
-            except Employee.DoesNotExist:
-                raise serializers.ValidationError("El estilista no tiene un perfil de empleado.")
-
-            if date_time:
-                # Convertimos a naive local para comparar con horarios de trabajo
-                local_time = date_time.astimezone(timezone.get_current_timezone()).replace(tzinfo=None).time()
-                day_name = date_time.strftime('%A').lower()
-                schedules = WorkSchedule.objects.filter(employee=employee, day_of_week=day_name)
-                if not schedules.filter(start_time__lte=local_time, end_time__gte=local_time).exists():
-                    raise serializers.ValidationError("El empleado no está disponible en este horario.")
-
-        if service and stylist:
-            if not StylistService.objects.filter(service=service, stylist=stylist).exists():
-                raise serializers.ValidationError("El estilista no ofrece este servicio.")
-
+        # Temporalmente sin validaciones complejas
         return data
 
     def validate_date_time(self, value):

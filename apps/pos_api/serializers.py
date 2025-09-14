@@ -8,9 +8,14 @@ from apps.inventory_api.models import Product, StockMovement
 
 
 class SaleDetailSerializer(serializers.ModelSerializer):
+    item_type = serializers.SerializerMethodField()
+    
     class Meta:
         model = SaleDetail
-        fields = ['id', 'content_type', 'object_id', 'name', 'quantity', 'price']
+        fields = ['id', 'content_type', 'object_id', 'name', 'quantity', 'price', 'item_type']
+        
+    def get_item_type(self, obj):
+        return obj.content_type.model
 
 class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -21,11 +26,12 @@ class SaleSerializer(serializers.ModelSerializer):
     details = SaleDetailSerializer(many=True)
     payments = PaymentSerializer(many=True)
     appointment = serializers.PrimaryKeyRelatedField(queryset=Appointment.objects.all(), required=False)
+    client_name = serializers.CharField(source='client.name', read_only=True)
 
     class Meta:
         model = Sale
-        fields = ['id', 'client', 'user', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment']
-        read_only_fields = ['user', 'date_time', 'closed']
+        fields = ['id', 'client', 'client_name', 'user', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment']
+        read_only_fields = ['user', 'date_time', 'closed', 'client_name']
 
     def validate(self, data):
         total_calculated = sum(d['quantity'] * d['price'] for d in data['details']) - data.get('discount', 0)

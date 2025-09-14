@@ -1,6 +1,6 @@
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework import status, serializers
 from django.utils import timezone
@@ -14,20 +14,14 @@ from apps.employees_api.models import WorkSchedule
 User = get_user_model() 
 
 class AppointmentViewSet(AuditLoggingMixin, ModelViewSet):
-   
-    queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated:
-           
-            if user.roles.filter(name='stylist').exists():
-               
-                return Appointment.objects.filter(stylist=user) 
-            else:
-                return Appointment.objects.filter(client__user=user)
+        if user.is_authenticated and hasattr(user, 'tenant'):
+            # Filtrar por tenant del usuario
+            return Appointment.objects.filter(client__tenant=user.tenant)
         return Appointment.objects.none()
 
     def perform_create(self, serializer):
@@ -167,3 +161,24 @@ class AppointmentViewSet(AuditLoggingMixin, ModelViewSet):
         
         serializer = AppointmentSerializer(appointments, many=True)
         return Response(serializer.data)
+
+@api_view(['POST'])
+def test_appointment(request):
+    """Endpoint de prueba para debuggear"""
+    try:
+        data = request.data
+        print(f"Received data: {data}")
+        
+        # Crear cita simple sin validaciones
+        appointment = Appointment.objects.create(
+            client_id=data.get('client'),
+            stylist_id=data.get('stylist'),
+            service_id=data.get('service'),
+            date_time=data.get('date_time'),
+            status=data.get('status', 'scheduled')
+        )
+        
+        return Response({'id': appointment.id, 'message': 'Created successfully'})
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return Response({'error': str(e)}, status=400)

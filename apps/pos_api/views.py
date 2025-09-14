@@ -94,17 +94,21 @@ class SaleViewSet(viewsets.ModelViewSet):
         
         # SuperAdmin puede ver todo
         if user.is_superuser:
-            return qs
-            
-        # Filtrar por tenant del usuario
-        if user.tenant:
+            pass  # No filtrar nada
+        elif user.tenant:
+            # Filtrar por tenant del usuario
             qs = qs.filter(user__tenant=user.tenant)
         else:
             qs = qs.none()
             
         # Si no es staff, solo sus propias ventas
-        if not user.is_staff:
+        if not user.is_staff and not user.is_superuser:
             qs = qs.filter(user=user)
+        
+        # Filtro por teléfono del cliente
+        client_phone = self.request.query_params.get('client_phone')
+        if client_phone:
+            qs = qs.filter(client__phone__icontains=client_phone)
             
         return qs
 
@@ -232,3 +236,57 @@ def daily_summary(request):
             'by_method': list(by_method),
             'by_type': by_type,
         })
+
+@api_view(['GET'])
+def dashboard_stats(request):
+    """Estadísticas para el dashboard del POS"""
+    from .models import SaleDetail
+    
+    today = timezone.localdate()
+    sales = Sale.objects.filter(user=request.user, date_time__date=today)
+    
+    total_sales = sales.aggregate(total=Sum('total'))['total'] or 0
+    total_transactions = sales.count()
+    avg_ticket = total_sales / total_transactions if total_transactions > 0 else 0
+    
+    # Top productos vendidos hoy
+    from django.db.models import Count
+    top_products = SaleDetail.objects.filter(
+        sale__user=request.user,
+        sale__date_time__date=today,
+        content_type__model='product'
+    ).values('name').annotate(
+        sold=Sum('quantity')
+    ).order_by('-sold')[:5]
+    
+    return Response({
+        'total_sales': float(total_sales),
+        'total_transactions': total_transactions,
+        'average_ticket': float(avg_ticket),
+        'top_products': list(top_products),
+        'hourly_data': []  # Placeholder para datos por hora
+    })
+
+@api_view(['GET'])
+def active_promotions(request):
+    """Promociones activas - placeholder"""
+    # Por ahora retornamos promociones hardcodeadas
+    # En el futuro se puede crear un modelo Promotion
+    promotions = [
+        {
+            'id': 1,
+            'name': '2x1 en Servicios',
+            'type': 'buy_x_get_y',
+            'conditions': {'buy': 2, 'get': 1, 'category': 'service'},
+            'active': True
+        },
+        {
+            'id': 2,
+            'name': '10% desc. productos +$50',
+            'type': 'percentage',
+            'conditions': {'min_amount': 50, 'discount': 0.1},
+            'active': True
+        }
+    ]
+    
+    return Response({'results': promotions})

@@ -2,6 +2,9 @@ from django.db import models
 from django.conf import settings
 from apps.services_api.models import Service
 
+# Importar modelos de ganancias
+from .earnings_models import Earning, FortnightSummary
+
 class Employee(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')

@@ -58,6 +58,8 @@ INSTALLED_APPS = [
     'apps.subscriptions_api',
     'apps.audit_api',
     'apps.tenants_api',
+    'apps.payments_api',
+    'apps.notifications_api',
 ]
 
 MIDDLEWARE = [
@@ -67,9 +69,9 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'apps.roles_api.middleware.RoleDebugMiddleware',  # Middleware para depuración de roles
     'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
 ]
 
@@ -273,6 +275,16 @@ LOGGING = {
         },
     },
     'loggers': {
+        'django.request': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
+        'apps.appointments_api': {
+            'handlers': ['console'],
+            'level': 'ERROR',
+            'propagate': False,
+        },
         '': {
             'handlers': ['console'],
             'level': 'DEBUG' if DEBUG else 'INFO',

@@ -5,8 +5,7 @@ class ClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
         fields = '__all__'
-        read_only_fields = ['created_by', 'created_at', 'updated_at', 'last_visit', 'loyalty_points']
-        extra_kwargs = { 'user': {'read_only': True} }
+        read_only_fields = ['created_by', 'created_at', 'updated_at', 'last_visit', 'loyalty_points', 'user', 'tenant']
 
     def validate(self, attrs):
         email = attrs.get('email')
