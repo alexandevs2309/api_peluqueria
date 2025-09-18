@@ -12,7 +12,7 @@ from django.db.models import F
 class ProductViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, role_permission_for(['Client-Admin', 'Admin', 'Manager'])]
+    permission_classes = [IsAuthenticated, role_permission_for(['Client-Admin', 'Admin', 'Manager', 'Cajera'])]
     
     def get_serializer_context(self):
         context = super().get_serializer_context()

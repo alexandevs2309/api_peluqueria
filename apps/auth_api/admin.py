@@ -14,6 +14,9 @@ class UserRoleInlineForUser(admin.TabularInline):
 class CustomUserAdmin(BaseUserAdmin):
     list_display = ('email', 'full_name', 'is_active', 'is_staff', 'get_roles_display') 
     list_filter = ('is_active', 'is_staff', 'is_email_verified')
+    
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(is_deleted=False)
 
     search_fields = ('email', 'full_name')
     ordering = ('email',)

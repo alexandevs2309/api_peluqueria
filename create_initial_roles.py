@@ -12,6 +12,7 @@ django.setup()
 
 from apps.roles_api.models import Role
 from apps.auth_api.models import User
+from django.contrib.auth.models import Permission
 
 def create_initial_roles():
     """Crear los roles iniciales del sistema"""
@@ -41,6 +42,28 @@ def create_initial_roles():
             'name': 'Client-Staff',
             'description': 'Empleado de peluquería (peluquero, manicurista, etc.)',
             'scope': 'TENANT'
+        },
+        {
+            'name': 'Cajera',
+            'description': 'Personal de caja (solo POS y operaciones de venta)',
+            'scope': 'TENANT',
+            'permissions': [
+                'pos_api.add_sale',
+                'pos_api.change_sale', 
+                'pos_api.view_sale',
+                'pos_api.add_saledetail',
+                'pos_api.change_saledetail',
+                'pos_api.view_saledetail',
+                'pos_api.add_payment',
+                'pos_api.change_payment',
+                'pos_api.view_payment',
+                'pos_api.add_cashregister',
+                'pos_api.change_cashregister',
+                'pos_api.view_cashregister',
+                'clients_api.view_client',
+                'services_api.view_service',
+                'inventory_api.view_product'
+            ]
         }
     ]
     
@@ -54,6 +77,28 @@ def create_initial_roles():
                 'scope': role_data['scope']
             }
         )
+        
+        # Asignar permisos si están definidos
+        if 'permissions' in role_data and role_data['permissions']:
+            from django.contrib.auth.models import Permission
+            permissions_to_add = []
+            
+            for perm_codename in role_data['permissions']:
+                try:
+                    app_label, codename = perm_codename.split('.')
+                    permission = Permission.objects.get(
+                        content_type__app_label=app_label,
+                        codename=codename
+                    )
+                    permissions_to_add.append(permission)
+                except Permission.DoesNotExist:
+                    print(f"⚠️  Permiso no encontrado: {perm_codename}")
+                except ValueError:
+                    print(f"⚠️  Formato de permiso inválido: {perm_codename}")
+            
+            if permissions_to_add:
+                role.permissions.set(permissions_to_add)
+                print(f"✅ Permisos asignados a {role.name}: {len(permissions_to_add)}")
         
         if created:
             print(f"✅ Creado: {role.name} (scope: {role.scope})")

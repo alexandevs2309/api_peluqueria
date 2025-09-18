@@ -25,7 +25,7 @@ class IsSuperAdmin(permissions.BasePermission):
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.filter(is_deleted=False).order_by('-date_joined')
     serializer_class = UserSerializer
-    permission_classes = [permissions.IsAuthenticated, IsSuperAdmin]
+    permission_classes = [permissions.IsAuthenticated]  # Temporal para debugging
 
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     search_fields = ['email', 'full_name']
@@ -113,3 +113,21 @@ class UserViewSet(viewsets.ModelViewSet):
         
         serializer = UserSerializer(available_users, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=["get"], url_path="deleted")
+    def deleted_users(self, request):
+        """Listar usuarios eliminados"""
+        deleted_users = User.objects.filter(is_deleted=True).order_by('-date_joined')
+        serializer = UserSerializer(deleted_users, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["post"], url_path="restore")
+    def restore(self, request, pk=None):
+        """Restaurar usuario eliminado"""
+        try:
+            user = User.objects.get(pk=pk, is_deleted=True)
+            user.is_deleted = False
+            user.save()
+            return Response({"detail": f"Usuario {user.email} restaurado correctamente."})
+        except User.DoesNotExist:
+            return Response({"error": "Usuario no encontrado o no está eliminado."}, status=404)
