@@ -114,15 +114,28 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'])
     def open_register(self, request):
-        # Verificar que no hay caja abierta
-        open_register = CashRegister.objects.filter(
+        today = timezone.localdate()
+        
+        # Cerrar cualquier caja abierta anterior (por seguridad)
+        CashRegister.objects.filter(
             user=request.user, 
             is_open=True
+        ).update(
+            is_open=False,
+            closed_at=timezone.now(),
+            final_cash=0
+        )
+        
+        # Verificar que no hay caja abierta hoy
+        open_register = CashRegister.objects.filter(
+            user=request.user, 
+            is_open=True,
+            opened_at__date=today
         ).first()
         
         if open_register:
             return Response(
-                {'error': 'Ya tienes una caja abierta'}, 
+                {'error': 'Ya tienes una caja abierta hoy'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -136,9 +149,12 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def current_register(self, request):
+        # Solo buscar cajas abiertas del día actual
+        today = timezone.localdate()
         register = CashRegister.objects.filter(
             user=request.user, 
-            is_open=True
+            is_open=True,
+            opened_at__date=today
         ).first()
         
         if not register:
@@ -270,8 +286,6 @@ def dashboard_stats(request):
 @api_view(['GET'])
 def active_promotions(request):
     """Promociones activas - placeholder"""
-    # Por ahora retornamos promociones hardcodeadas
-    # En el futuro se puede crear un modelo Promotion
     promotions = [
         {
             'id': 1,
@@ -290,3 +304,81 @@ def active_promotions(request):
     ]
     
     return Response({'results': promotions})
+
+@api_view(['GET'])
+def pos_categories(request):
+    """Categorías para filtros del POS"""
+    try:
+        from apps.inventory_api.models import Product
+        
+        # Obtener categorías de productos (Service no tiene category)
+        product_categories = list(Product.objects.filter(
+            is_active=True,
+            category__isnull=False
+        ).exclude(category='').values_list('category', flat=True).distinct())
+        
+        # Categorías base
+        categories = [{'name': 'Todas', 'value': ''}]
+        
+        # Agregar categorías de productos
+        for cat in sorted(product_categories):
+            categories.append({'name': cat, 'value': cat})
+        
+        # Agregar categorías estáticas para servicios si no existen
+        service_cats = ['Corte', 'Barba', 'Tinte', 'Tratamiento']
+        existing_values = [c['value'] for c in categories]
+        
+        for cat in service_cats:
+            if cat not in existing_values:
+                categories.append({'name': cat, 'value': cat})
+        
+        return Response({'results': categories})
+    except Exception as e:
+        # Fallback en caso de error
+        categories = [
+            {'name': 'Todas', 'value': ''},
+            {'name': 'Corte', 'value': 'Corte'},
+            {'name': 'Barba', 'value': 'Barba'},
+            {'name': 'Productos', 'value': 'Productos'}
+        ]
+        return Response({'results': categories})
+
+@api_view(['GET'])
+def pos_config(request):
+    """Configuración del POS (colores, iconos, denominaciones)"""
+    config = {
+        'category_colors': {
+            'Corte': '#3B82F6',
+            'Barba': '#10B981', 
+            'Tinte': '#8B5CF6',
+            'Tratamiento': '#F59E0B',
+            'Manicure': '#EF4444',
+            'Pedicure': '#06B6D4',
+            'Productos': '#6B7280',
+            'default': '#9CA3AF'
+        },
+        'category_icons': {
+            'Corte': 'pi-scissors',
+            'Barba': 'pi-user',
+            'Tinte': 'pi-palette', 
+            'Tratamiento': 'pi-heart',
+            'Manicure': 'pi-star',
+            'Pedicure': 'pi-circle',
+            'Productos': 'pi-shopping-bag',
+            'default': 'pi-tag'
+        },
+        'cash_denominations': [
+            {'value': 100, 'count': 0, 'total': 0},
+            {'value': 50, 'count': 0, 'total': 0},
+            {'value': 20, 'count': 0, 'total': 0},
+            {'value': 10, 'count': 0, 'total': 0},
+            {'value': 5, 'count': 0, 'total': 0},
+            {'value': 1, 'count': 0, 'total': 0},
+            {'value': 0.25, 'count': 0, 'total': 0},
+            {'value': 0.10, 'count': 0, 'total': 0},
+            {'value': 0.05, 'count': 0, 'total': 0},
+            {'value': 0.01, 'count': 0, 'total': 0}
+        ]
+    }
+    
+    return Response(config)

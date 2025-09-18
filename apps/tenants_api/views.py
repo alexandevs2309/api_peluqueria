@@ -6,6 +6,14 @@ from django.contrib.contenttypes.models import ContentType
 from apps.audit_api.models import AuditLog
 User = get_user_model()
 
+class IsSuperAdmin(permissions.BasePermission):
+    def has_permission(self, request, view):
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.roles.filter(name='Super-Admin').exists()
+        )
+
 class TenantViewSet(viewsets.ModelViewSet):
     """
     ViewSet para manejar tenants:
@@ -15,7 +23,7 @@ class TenantViewSet(viewsets.ModelViewSet):
     """
     queryset = Tenant.objects.all()
     serializer_class = TenantSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsSuperAdmin]
     pagination_class = None  # Disable pagination for tenants list
 
     def get_permissions(self):
@@ -64,10 +72,8 @@ class TenantViewSet(viewsets.ModelViewSet):
         tenant.is_active = True
         tenant.save()
         self._create_audit_log(request.user, "Activated tenant", tenant)
-        return response.Response(
-            {"status": "tenant activated"},
-            status=status.HTTP_200_OK
-        )
+        serializer = self.get_serializer(tenant)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)
 
     @decorators.action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
@@ -80,10 +86,8 @@ class TenantViewSet(viewsets.ModelViewSet):
         tenant.is_active = False
         tenant.save()
         self._create_audit_log(request.user, "Deactivated tenant", tenant)
-        return response.Response(
-            {"status": "tenant deactivated"},
-            status=status.HTTP_200_OK
-        )
+        serializer = self.get_serializer(tenant)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)
 
     @decorators.action(detail=True, methods=["get"])
     def stats(self, request, pk=None):

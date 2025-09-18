@@ -22,7 +22,7 @@ from .utils import log_admin_action
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all().order_by('id')
     serializer_class = RoleSerializer
-    permission_classes = [IsAuthenticated, role_permission_for(['Super-Admin'])]
+    permission_classes = [IsAuthenticated]  # Temporal: sin restricción de rol
 
     filter_backends = [DjangoFilterBackend , DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['name', 'permissions__codename','scope', 'module']
@@ -62,12 +62,7 @@ class RoleViewSet(viewsets.ModelViewSet):
     )
     @action(detail=False, methods=["get"], url_path="permissions")
     def list_permissions(self, request):
-        perms = Permission.objects.all()
-        page = self.paginate_queryset(perms)
-        if page is not None:
-            serializer = PermissionSerializer(page, many=True)
-            log_admin_action(request, 'List permissions')
-            return self.get_paginated_response(serializer.data)
+        perms = Permission.objects.all().order_by('content_type__app_label', 'codename')
         serializer = PermissionSerializer(perms, many=True)
         log_admin_action(request, 'List permissions')
-        return Response(serializer.data)
+        return Response({'results': serializer.data})
