@@ -3,6 +3,10 @@ import os
 import sys
 import environ
 from pathlib import Path
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+from sentry_sdk.integrations.celery import CeleryIntegration
+from sentry_sdk.integrations.redis import RedisIntegration
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,6 +17,22 @@ env = environ.Env(
 )
 environ.Env.read_env()
 SECRET_KEY = env('SECRET_KEY')
+
+# Sentry configuration
+SENTRY_DSN = env('SENTRY_DSN', default=None)
+if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(transaction_style='url'),
+            CeleryIntegration(),
+            RedisIntegration(),
+        ],
+        traces_sample_rate=0.1,
+        send_default_pii=False,
+        environment=env('SENTRY_ENVIRONMENT', default='development'),
+        release=env('SENTRY_RELEASE', default='1.0.0'),
+    )
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)
@@ -258,7 +278,7 @@ else:
     
 
 # Security settings
-# SECURE_SSL_REDIRECT = not DEBUG
+SECURE_SSL_REDIRECT = not DEBUG
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0

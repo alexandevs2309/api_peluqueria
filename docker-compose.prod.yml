@@ -1,8 +1,3 @@
-## 📦 `docker-compose.prod.yml`
-
-Este archivo extiende tu `docker-compose.yml` para un entorno de producción:
-
-
 version: '3.8'
 
 services:
