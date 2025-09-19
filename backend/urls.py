@@ -14,6 +14,16 @@ from apps.settings_api.views import SystemSettingsRetrieveUpdateView, SystemSett
 def health_check(request):
     return JsonResponse({"status": "ok"})
 
+def sentry_test(request):
+    """Endpoint para probar Sentry - solo en DEBUG"""
+    from django.conf import settings
+    if not settings.DEBUG:
+        return JsonResponse({"error": "Not available in production"}, status=403)
+    
+    # Generar error de prueba
+    division_by_zero = 1 / 0
+    return JsonResponse({"status": "This should not be reached"})
+
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include([
@@ -40,6 +50,7 @@ urlpatterns = [
         path('notifications/', include('apps.notifications_api.urls')),
 
         path("healthz/", health_check, name="health_check"),
+        path("sentry-test/", sentry_test, name="sentry_test"),
     ])),
 ]
 
