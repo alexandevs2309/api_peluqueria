@@ -76,15 +76,31 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
         model = SystemSettings
         fields = [
             "id",
+            # Configuración General
             "platform_name",
             "support_email",
-            "maintenance_mode",
-            "default_currency",
+            # Configuración de Clientes
             "max_tenants",
-            "backup_frequency",
+            "trial_days",
+            "default_currency",
+            # Configuración de Plataforma
+            "platform_domain",
+            "supported_languages",
+            "platform_commission_rate",
+            # Límites por Plan
+            "basic_plan_max_employees",
+            "premium_plan_max_employees",
+            "enterprise_plan_max_employees",
+            # Integraciones Globales
+            "stripe_enabled",
+            "paypal_enabled",
+            "twilio_enabled",
+            "sendgrid_enabled",
+            "aws_s3_enabled",
+            # Preferencias del Sistema
+            "maintenance_mode",
             "email_notifications",
             "auto_suspend_expired",
-            "trial_days",
             "created_at",
             "updated_at",
         ]

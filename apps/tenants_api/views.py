@@ -1,9 +1,10 @@
-from rest_framework import viewsets, permissions, decorators, response, status
+from rest_framework import viewsets, permissions, decorators, response, status, serializers
 from django.contrib.auth import get_user_model
 from .models import Tenant
 from .serializers import TenantSerializer
 from django.contrib.contenttypes.models import ContentType
 from apps.audit_api.models import AuditLog
+from apps.settings_api.utils import validate_tenant_limit
 User = get_user_model()
 
 class IsSuperAdmin(permissions.BasePermission):
@@ -23,7 +24,7 @@ class TenantViewSet(viewsets.ModelViewSet):
     """
     queryset = Tenant.objects.all()
     serializer_class = TenantSerializer
-    permission_classes = [IsSuperAdmin]
+    permission_classes = [permissions.IsAuthenticated]  # Cambiar a IsAuthenticated
     pagination_class = None  # Disable pagination for tenants list
 
     def get_permissions(self):
@@ -44,6 +45,11 @@ class TenantViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
+        if not validate_tenant_limit():
+            raise serializers.ValidationError({
+                'error': 'Límite de clientes alcanzado',
+                'message': 'No se pueden crear más clientes. Contacte al administrador.'
+            })
         tenant = serializer.save(owner=self.request.user)
 
         AuditLog.objects.create(

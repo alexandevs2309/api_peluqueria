@@ -15,7 +15,7 @@ class ReportsView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
-        report_type = request.query_params.get('type')
+        report_type = request.query_params.get('type', 'dashboard')  # Default a dashboard
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         
@@ -23,12 +23,18 @@ class ReportsView(APIView):
         if not start_date:
             start_date = timezone.now() - timedelta(days=30)
         else:
-            start_date = datetime.fromisoformat(start_date)
+            try:
+                start_date = datetime.fromisoformat(start_date)
+            except ValueError:
+                start_date = timezone.now() - timedelta(days=30)
             
         if not end_date:
             end_date = timezone.now()
         else:
-            end_date = datetime.fromisoformat(end_date)
+            try:
+                end_date = datetime.fromisoformat(end_date)
+            except ValueError:
+                end_date = timezone.now()
 
         if report_type == 'dashboard':
             return self.dashboard_report(start_date, end_date)
@@ -55,7 +61,8 @@ class ReportsView(APIView):
         elif report_type == 'inventory':
             return self.inventory_report()
         else:
-            return Response({'error': 'Tipo de reporte no válido'}, status=status.HTTP_400_BAD_REQUEST)
+            # Si no se especifica tipo o es inválido, devolver dashboard por defecto
+            return self.dashboard_report(start_date, end_date)
 
     def sales_report(self, start_date, end_date):
         sales = Sale.objects.filter(
@@ -409,7 +416,7 @@ class ReportsView(APIView):
         from apps.subscriptions_api.models import UserSubscription, SubscriptionPlan
         
         plan_usage = SubscriptionPlan.objects.annotate(
-            active_subscriptions=Count('usersubscription', filter=models.Q(usersubscription__is_active=True))
+            active_subscriptions=Count('user_subscriptions', filter=models.Q(user_subscriptions__is_active=True))
         ).values('name', 'active_subscriptions')
         
         return Response({

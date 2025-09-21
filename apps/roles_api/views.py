@@ -26,7 +26,7 @@ class RoleViewSet(viewsets.ModelViewSet):
 
     filter_backends = [DjangoFilterBackend , DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['name', 'permissions__codename','scope', 'module']
-    pagination_class = PageNumberPagination
+    pagination_class = None  # Desactivar paginación
     ordering_fields = ['id', 'name' , 'module']
     search_fields = ['name', 'description','module']
     ordering = ['id']

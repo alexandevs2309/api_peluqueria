@@ -3,6 +3,7 @@ from .models import Setting, SettingAuditLog, Branch, SystemSettings
 from .serializers import SettingSerializer, SettingExportSerializer, SettingAuditLogSerializer, BranchSerializer, SystemSettingsSerializer
 from django.core.cache import cache
 from django.db import transaction
+from .utils import clear_system_config_cache
 
 class SettingRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     queryset = Setting.objects.all()
@@ -81,6 +82,10 @@ class SystemSettingsRetrieveUpdateView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return SystemSettings.get_settings()
+    
+    def perform_update(self, serializer):
+        serializer.save()
+        clear_system_config_cache()
 
 class SystemSettingsResetView(views.APIView):
     """Vista para restablecer configuraciones a valores por defecto"""
@@ -89,6 +94,7 @@ class SystemSettingsResetView(views.APIView):
     def post(self, request, *args, **kwargs):
         # Eliminar configuración existente y crear una nueva con valores por defecto
         SystemSettings.objects.all().delete()
+        clear_system_config_cache()
         settings = SystemSettings.get_settings()
         serializer = SystemSettingsSerializer(settings)
         return response.Response(serializer.data, status=status.HTTP_200_OK)

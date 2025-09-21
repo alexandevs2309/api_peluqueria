@@ -8,6 +8,7 @@ from apps.tenants_api.mixins import TenantFilterMixin, TenantPermissionMixin
 from apps.tenants_api.models import Tenant
 from apps.roles_api.permissions import IsActiveAndRolePermission, role_permission_for
 from apps.subscriptions_api.utils import get_user_active_subscription
+from apps.settings_api.utils import validate_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule
 from apps.auth_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
@@ -47,14 +48,20 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         # SuperAdmin puede crear para cualquier tenant
         if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
             tenant = user.tenant or Tenant.objects.first()
-            serializer.save(tenant=tenant)
-            return
+        else:
+            if not user.tenant:
+                raise ValidationError("Usuario sin tenant asignado")
+            tenant = user.tenant
             
-        # Usar tenant del usuario directamente
-        if not user.tenant:
-            raise ValidationError("Usuario sin tenant asignado")
-
-        serializer.save(tenant=user.tenant)
+        # Validar límite de empleados según el plan
+        plan_type = getattr(tenant, 'plan_type', 'basic')  # Asumir basic si no existe
+        if not validate_employee_limit(tenant, plan_type):
+            raise ValidationError({
+                'error': 'Límite de empleados alcanzado',
+                'message': f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
+            })
+            
+        serializer.save(tenant=tenant)
 
     @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, role_permission_for(['Admin'])])
     def assign_service(self, request, pk=None):

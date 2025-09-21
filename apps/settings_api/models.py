@@ -57,28 +57,46 @@ class SettingAuditLog(models.Model):
 
 class SystemSettings(models.Model):
     """Configuraciones globales del sistema SaaS"""
+    # Configuración General
     platform_name = models.CharField(_("Nombre de la plataforma"), max_length=255, default="BarberSaaS")
     support_email = models.EmailField(_("Email de soporte"), default="soporte@barbersaas.com")
-    maintenance_mode = models.BooleanField(_("Modo mantenimiento"), default=False)
-    default_currency = models.CharField(_("Moneda por defecto"), max_length=10, default="USD")
+    
+    # Configuración de Clientes
     max_tenants = models.PositiveIntegerField(_("Máximo de clientes"), default=100)
-    backup_frequency = models.CharField(
-        _("Frecuencia de respaldo"), 
-        max_length=20, 
-        choices=[
-            ('daily', 'Diario'),
-            ('weekly', 'Semanal'),
-            ('monthly', 'Mensual')
-        ],
-        default='daily'
-    )
-    email_notifications = models.BooleanField(_("Notificaciones por email"), default=True)
-    auto_suspend_expired = models.BooleanField(_("Suspender automáticamente vencidos"), default=True)
     trial_days = models.PositiveIntegerField(
         _("Días de prueba"), 
         default=7,
         validators=[MinValueValidator(0), MaxValueValidator(365)]
     )
+    default_currency = models.CharField(_("Moneda por defecto"), max_length=10, default="USD")
+    
+    # Configuración de Plataforma
+    platform_domain = models.CharField(_("Dominio principal"), max_length=255, blank=True)
+    supported_languages = models.JSONField(_("Idiomas habilitados"), default=list)
+    platform_commission_rate = models.DecimalField(
+        _("Comisión de plataforma (%)"),
+        max_digits=5,
+        decimal_places=2,
+        default=5.00,
+        validators=[MinValueValidator(0), MaxValueValidator(50)]
+    )
+    
+    # Límites por Plan
+    basic_plan_max_employees = models.PositiveIntegerField(_("Plan básico - máx. empleados"), default=5)
+    premium_plan_max_employees = models.PositiveIntegerField(_("Plan premium - máx. empleados"), default=25)
+    enterprise_plan_max_employees = models.PositiveIntegerField(_("Plan enterprise - máx. empleados"), default=999)
+    
+    # Integraciones Globales
+    stripe_enabled = models.BooleanField(_("Stripe habilitado"), default=True)
+    paypal_enabled = models.BooleanField(_("PayPal habilitado"), default=False)
+    twilio_enabled = models.BooleanField(_("SMS (Twilio) habilitado"), default=False)
+    sendgrid_enabled = models.BooleanField(_("Email (SendGrid) habilitado"), default=True)
+    aws_s3_enabled = models.BooleanField(_("Almacenamiento (AWS S3) habilitado"), default=True)
+    
+    # Preferencias del Sistema
+    maintenance_mode = models.BooleanField(_("Modo mantenimiento"), default=False)
+    email_notifications = models.BooleanField(_("Notificaciones por email"), default=True)
+    auto_suspend_expired = models.BooleanField(_("Suspender automáticamente vencidos"), default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -103,13 +121,23 @@ class SystemSettings(models.Model):
             defaults={
                 'platform_name': 'BarberSaaS',
                 'support_email': 'soporte@barbersaas.com',
-                'maintenance_mode': False,
-                'default_currency': 'USD',
                 'max_tenants': 100,
-                'backup_frequency': 'daily',
+                'trial_days': 7,
+                'default_currency': 'USD',
+                'platform_domain': '',
+                'supported_languages': ['es', 'en'],
+                'platform_commission_rate': 5.00,
+                'basic_plan_max_employees': 5,
+                'premium_plan_max_employees': 25,
+                'enterprise_plan_max_employees': 999,
+                'stripe_enabled': True,
+                'paypal_enabled': False,
+                'twilio_enabled': False,
+                'sendgrid_enabled': True,
+                'aws_s3_enabled': True,
+                'maintenance_mode': False,
                 'email_notifications': True,
-                'auto_suspend_expired': True,
-                'trial_days': 7
+                'auto_suspend_expired': True
             }
         )
         return settings
