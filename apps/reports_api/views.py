@@ -413,14 +413,23 @@ class ReportsView(APIView):
         })
 
     def plan_usage_report(self):
-        from apps.subscriptions_api.models import UserSubscription, SubscriptionPlan
+        from apps.subscriptions_api.models import SubscriptionPlan
+        from apps.tenants_api.models import Tenant
         
-        plan_usage = SubscriptionPlan.objects.annotate(
-            active_subscriptions=Count('user_subscriptions', filter=models.Q(user_subscriptions__is_active=True))
-        ).values('name', 'active_subscriptions')
+        # Contar tenants activos por plan (no user subscriptions)
+        plan_usage = []
+        for plan in SubscriptionPlan.objects.all():
+            tenant_count = Tenant.objects.filter(
+                subscription_plan=plan, 
+                is_active=True
+            ).count()
+            plan_usage.append({
+                'name': plan.name,
+                'active_tenants': tenant_count
+            })
         
         return Response({
-            'plan_usage': list(plan_usage)
+            'plan_usage': plan_usage
         })
 
     def user_activity_report(self):

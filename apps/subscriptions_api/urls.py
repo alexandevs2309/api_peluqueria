@@ -7,6 +7,7 @@ from .views import (
     UserSubscriptionViewSet,
     SubscriptionAuditLogViewSet,
 )
+from .registration_views import register_with_plan
 
 router = DefaultRouter()
 router.register(r'plans', SubscriptionPlanViewSet, basename='subscription-plan')
@@ -17,4 +18,5 @@ urlpatterns = [
     path("", include(router.urls)),
     path("me/active/", MyActiveSubscriptionView.as_view(), name="my-active-subscription"),
     path("me/entitlements/", MyEntitlementsView.as_view(), name="my-entitlements"),
+    path("register/", register_with_plan, name="register-with-plan"),
 ]

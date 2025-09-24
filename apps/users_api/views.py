@@ -101,15 +101,15 @@ class UserViewSet(viewsets.ModelViewSet):
             is_deleted=False
         ).exclude(id__in=existing_employee_users)
         
-        # Si no es SuperAdmin, filtrar por tenant
-        if not request.user.roles.filter(name='Super-Admin').exists():
-            if hasattr(request.user, 'tenant') and request.user.tenant:
-                # Solo usuarios del mismo tenant o sin tenant
-                available_users = available_users.filter(
-                    models.Q(tenant=request.user.tenant) | models.Q(tenant__isnull=True)
-                )
-            else:
-                available_users = available_users.none()
+        # Excluir roles administrativos que no deben ser empleados
+        admin_roles = ['Super-Admin', 'Soporte']
+        available_users = available_users.exclude(
+            roles__name__in=admin_roles
+        )
+        
+        # Si el usuario tiene tenant, solo mostrar usuarios del mismo tenant
+        if hasattr(request.user, 'tenant') and request.user.tenant:
+            available_users = available_users.filter(tenant=request.user.tenant)
         
         serializer = UserSerializer(available_users, many=True)
         return Response(serializer.data)
