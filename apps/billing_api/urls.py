@@ -1,11 +1,6 @@
-from django.urls import path, include
-from rest_framework.routers import DefaultRouter
-from .views import InvoiceViewSet, PaymentAttemptViewSet
-
-router = DefaultRouter()
-router.register(r'invoices', InvoiceViewSet, basename='invoice')
-router.register(r'payment-attempts', PaymentAttemptViewSet, basename='payment-attempt')
+from django.urls import path
+from .webhooks import stripe_webhook
 
 urlpatterns = [
-    path("", include(router.urls)),
+    path('webhooks/stripe/', stripe_webhook, name='stripe_webhook'),
 ]

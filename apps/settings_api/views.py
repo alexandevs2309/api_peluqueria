@@ -4,6 +4,7 @@ from .serializers import SettingSerializer, SettingExportSerializer, SettingAudi
 from django.core.cache import cache
 from django.db import transaction
 from .utils import clear_system_config_cache
+from .integration_service import IntegrationService
 
 class SettingRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     queryset = Setting.objects.all()
