@@ -21,13 +21,10 @@ def create_trial_subscription(tenant, plan):
 
 def get_user_active_subscription(user):
     """Obtener suscripción activa del usuario"""
-    from .models import Subscription
+    from .models import UserSubscription
     
-    if not user.tenant:
-        return None
-        
-    return Subscription.objects.filter(
-        tenant=user.tenant,
+    return UserSubscription.objects.filter(
+        user=user,
         is_active=True
     ).first()
 

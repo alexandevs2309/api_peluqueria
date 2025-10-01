@@ -187,22 +187,46 @@ class MyEntitlementsView(APIView):
         
         sub = get_user_active_subscription(request.user)
         if not sub:
-            # Usuario sin suscripción - plan gratuito básico
+            # Usuario sin suscripción - verificar si tiene tenant con plan
+            employee_count = 0
+            try:
+                if hasattr(request.user, "tenant") and request.user.tenant is not None:
+                    from apps.employees_api.models import Employee
+                    employee_count = Employee.objects.filter(tenant=request.user.tenant).count()
+                    
+                    # Si el tenant tiene un plan, usar ese plan
+                    if request.user.tenant.subscription_plan:
+                        plan = request.user.tenant.subscription_plan
+                        return Response({
+                            "plan": plan.name,
+                            "plan_display": getattr(plan, 'get_name_display', lambda: plan.name)(),
+                            "features": plan.features or {},
+                            "limits": {"max_employees": plan.max_employees},
+                            "usage": {"employees": employee_count},
+                            "duration_month": getattr(plan, 'duration_month', 1)
+                        })
+            except Exception:
+                employee_count = 0
+            
+            # Plan gratuito básico
             return Response({
                 "plan": "free",
                 "plan_display": "Plan Gratuito",
                 "features": {},
                 "limits": {"max_employees": 1},
-                "usage": {"employees": 0},
+                "usage": {"employees": employee_count},
                 "duration_month": 0
             })
 
         plan = sub.plan
         # Calcula usage de empleados
         employee_count = 0
-        if hasattr(request.user, "tenant") and request.user.tenant is not None:
-            from apps.employees_api.models import Employee
-            employee_count = Employee.objects.filter(tenant=request.user.tenant).count()
+        try:
+            if hasattr(request.user, "tenant") and request.user.tenant is not None:
+                from apps.employees_api.models import Employee
+                employee_count = Employee.objects.filter(tenant=request.user.tenant).count()
+        except Exception:
+            employee_count = 0
         
         usage = {
             "employees": employee_count

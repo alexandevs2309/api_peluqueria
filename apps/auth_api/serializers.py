@@ -72,6 +72,7 @@ class RegisterSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    tenant_id = serializers.IntegerField(required=False)
     access = serializers.CharField(read_only=True)
     refresh = serializers.CharField(read_only=True)
 
@@ -142,3 +143,46 @@ class MFASetupSerializer(serializers.Serializer):
 
 class MFAVerifySerializer(serializers.Serializer):
     code = serializers.CharField(max_length=6)
+
+class EmployeeUserSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=6)
+    role_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True)
+    phone = serializers.CharField(required=False, allow_blank=True)
+
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'full_name', 'phone', 'password', 'role_ids']
+        read_only_fields = ['id']
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Este correo ya está registrado.")
+        return value
+
+    def create(self, validated_data):
+        role_ids = validated_data.pop('role_ids', [])
+        password = validated_data.pop('password')
+        
+        # Asignar tenant del usuario que hace la petición
+        request = self.context.get('request')
+        if request and hasattr(request.user, 'tenant') and request.user.tenant:
+            validated_data['tenant'] = request.user.tenant
+        
+        user = User.objects.create_user(
+            password=password,
+            **validated_data
+        )
+        
+        # Asignar roles
+        for role_id in role_ids:
+            try:
+                role = Role.objects.get(id=role_id, scope='TENANT')
+                UserRole.objects.create(
+                    user=user,
+                    role=role,
+                    tenant=user.tenant
+                )
+            except Role.DoesNotExist:
+                continue
+        
+        return user

@@ -6,6 +6,7 @@ from django.contrib.auth import get_user_model
 from django.db import transaction
 from apps.tenants_api.models import Tenant
 from apps.roles_api.models import Role, UserRole
+from apps.settings_api.models import Branch, Setting
 import uuid
 import secrets
 import string
@@ -21,15 +22,27 @@ def register_with_plan(request):
     """
     try:
         data = request.data
+        print(f"\n=== REGISTRO SaaS DEBUG ===")
         print(f"Datos recibidos: {data}")
+        print(f"Content-Type: {request.content_type}")
+        print(f"Method: {request.method}")
+        print(f"Headers: {dict(request.headers)}")
+        print(f"========================\n")
         
         # Validar datos requeridos
         required_fields = ['fullName', 'email', 'businessName', 'planType']
+        missing_fields = []
         for field in required_fields:
             if not data.get(field):
-                return Response({
-                    'error': f'Campo requerido: {field}'
-                }, status=status.HTTP_400_BAD_REQUEST)
+                missing_fields.append(field)
+        
+        if missing_fields:
+            print(f"Campos faltantes: {missing_fields}")
+            return Response({
+                'error': f'Campos requeridos faltantes: {", ".join(missing_fields)}',
+                'missing_fields': missing_fields,
+                'received_data': list(data.keys())
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         # Verificar que el email no exista
         if User.objects.filter(email=data['email']).exists():
@@ -52,7 +65,17 @@ def register_with_plan(request):
             user.save()
             print(f"Usuario creado: {user.id}")
             
-            # 2. Crear tenant
+            # 2. Obtener el plan de suscripción
+            from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
+            try:
+                subscription_plan = SubscriptionPlan.objects.get(name=data['planType'])
+                print(f"Plan encontrado: {subscription_plan.name}")
+            except SubscriptionPlan.DoesNotExist:
+                return Response({
+                    'error': f'Plan no válido: {data["planType"]}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 3. Crear tenant con plan
             subdomain = generate_unique_subdomain(data['businessName'], user.id)
             print(f"Creando tenant con subdomain: {subdomain}")
             tenant = Tenant.objects.create(
@@ -61,22 +84,53 @@ def register_with_plan(request):
                 owner=user,
                 contact_email=data['email'],
                 contact_phone=data.get('phone', ''),
-                plan_type=data['planType'],
-                is_active=True,
-                subscription_status='active'
+                subscription_plan=subscription_plan,  # ✅ Asignar plan objeto
+                is_active=True
             )
-            print(f"Tenant creado: {tenant.id}")
+            print(f"Tenant creado: {tenant.id} con plan: {tenant.plan_type}")
             
-            # 3. Asignar tenant al usuario
+            # 4. Crear suscripción del usuario
+            user_subscription = UserSubscription.objects.create(
+                user=user,
+                plan=subscription_plan,
+                is_active=True,
+                auto_renew=True
+            )
+            print(f"Suscripción creada: {user_subscription.id}")
+            
+            # 5. Asignar tenant al usuario
             user.tenant = tenant
             user.save()
             
-            # 4. Asignar rol
+            # 6. Asignar rol
             admin_role = Role.objects.get(name='Client-Admin')
             UserRole.objects.create(user=user, role=admin_role)
             print(f"Rol asignado")
+
+            # 7. Crear sucursal principal por defecto
+            default_branch = Branch.objects.create(
+                tenant=tenant,
+                name='Sucursal Principal',
+                address=data.get('address', 'Dirección por defecto'),
+                is_main=True,
+                is_active=True
+            )
+            print(f"Sucursal creada correctamente: {default_branch.id}")
             
-            # 5. Simular envío de email
+            # 8. Crear configuración inicial para esa sucursal
+            Setting.objects.create(
+                branch=default_branch,
+                business_name=tenant.name,
+                business_email=tenant.contact_email,
+                phone_number=tenant.contact_phone,
+                address=tenant.address,
+                currency='USD',
+                timezone='America/Santo_Domingo'
+            )
+            print(f'Configuración por defecto creada para sucursal: {default_branch.id}')
+
+
+            # 9. Simular envío de email
             email_result = send_welcome_email(user, password, tenant)
             
             return Response({

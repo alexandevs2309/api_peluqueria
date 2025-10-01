@@ -50,7 +50,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Multitenancy: Usuario pertenece a un tenant
     tenant = models.ForeignKey(
         'tenants_api.Tenant', 
-        on_delete=models.CASCADE, 
+        on_delete=models.SET_NULL, 
         null=True, 
         blank=True,
         related_name='users'

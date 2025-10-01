@@ -30,7 +30,7 @@ class Payment(models.Model):
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    subscription = models.ForeignKey(UserSubscription, on_delete=models.CASCADE, null=True, blank=True)
+    subscription = models.ForeignKey(UserSubscription, on_delete=models.SET_NULL, null=True, blank=True)
     provider = models.ForeignKey(PaymentProvider, on_delete=models.PROTECT)
     
     amount = models.DecimalField(max_digits=10, decimal_places=2)

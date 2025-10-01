@@ -20,8 +20,15 @@ from drf_spectacular.utils import extend_schema
 from .serializers import (
     ActiveSessionSerializer, RegisterSerializer, LoginSerializer,
     PasswordChangeSerializer, PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer
+    PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
+    EmployeeUserSerializer
 )
+from rest_framework import viewsets
+from rest_framework.decorators import action
+from apps.tenants_api.models import Tenant
+from apps.subscriptions_api.models import SubscriptionPlan
+from apps.roles_api.models import Role, UserRole
+import re
 from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
 from django.utils.timezone import now
@@ -40,6 +47,53 @@ class RegisterView(generics.CreateAPIView):
 
     def perform_create(self, serializer):
         user = serializer.save()
+        
+        # Crear tenant automáticamente para el usuario
+        try:
+            # Obtener plan básico por defecto
+            basic_plan = SubscriptionPlan.objects.filter(name__icontains='basic').first()
+            if not basic_plan:
+                basic_plan = SubscriptionPlan.objects.first()
+            
+            # Crear subdomain único
+            subdomain = re.sub(r'[^a-zA-Z0-9]', '', user.full_name.lower())[:50]
+            if not subdomain:
+                subdomain = 'barbershop'
+            
+            counter = 1
+            original_subdomain = subdomain
+            while Tenant.objects.filter(subdomain=subdomain).exists():
+                subdomain = f'{original_subdomain}{counter}'
+                counter += 1
+            
+            # Crear tenant
+            tenant = Tenant.objects.create(
+                name=f'Barbería de {user.full_name}',
+                subdomain=subdomain,
+                owner=user,
+                subscription_plan=basic_plan,
+                is_active=True
+            )
+            
+            # Asignar tenant al usuario
+            user.tenant = tenant
+            user.save()
+            
+            # Asignar rol Client-Admin
+            client_admin_role = Role.objects.get(name='Client-Admin')
+            UserRole.objects.create(
+                user=user,
+                role=client_admin_role,
+                tenant=tenant
+            )
+            
+            print(f'Usuario {user.email} creado con tenant {tenant.name} y rol Client-Admin')
+                
+        except Exception as e:
+            print(f'Error creando tenant y rol: {e}')
+            import traceback
+            traceback.print_exc()
+        
         email_subject = "Verifica tu correo"
         email_body = f"Hola {user.full_name}, verifica tu correo en: http://localhost:4200/verify-email/{user.email_verification_token}/"
         email_from = "no-reply@peluqueria.com"
@@ -80,6 +134,30 @@ class LoginView(generics.GenericAPIView):
             raise
         
         user = serializer.validated_data['user']
+        tenant_id = request.data.get('tenant_id')
+
+        # Validación de tenant
+        if not user.tenant:
+            LoginAudit.objects.create(
+                user=user,
+                ip_address=get_client_ip(request),
+                user_agent=get_user_agent(request),
+                successful=False,
+                message="Usuario sin tenant asignado",
+                timestamp=now()
+            )
+            return Response({"detail": "Usuario no tiene tenant asignado."}, status=status.HTTP_403_FORBIDDEN)
+
+        if tenant_id and str(user.tenant_id) != str(tenant_id):
+            LoginAudit.objects.create(
+                user=user,
+                ip_address=get_client_ip(request),
+                user_agent=get_user_agent(request),
+                successful=False,
+                message=f"Intento de acceso a tenant incorrecto: {tenant_id}",
+                timestamp=now()
+            )
+            return Response({"detail": "Acceso denegado al tenant especificado."}, status=status.HTTP_403_FORBIDDEN)
 
         if not user.is_active:
             LoginAudit.objects.create(
@@ -96,6 +174,9 @@ class LoginView(generics.GenericAPIView):
             return Response({"detail": "Se requiere verificación MFA.", "email": user.email}, status=status.HTTP_200_OK)
 
         refresh = RefreshToken.for_user(user)
+        # Agregar tenant_id al token
+        refresh['tenant_id'] = user.tenant_id
+        refresh['tenant_name'] = user.tenant.name
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
         jti = get_client_jti(access_token)
@@ -124,13 +205,14 @@ class LoginView(generics.GenericAPIView):
             message="Inicio de sesión exitoso",
             timestamp=now()
         )
-
+        
         response = Response({
             'user': {
                 'email': user.email,
                 'full_name': user.full_name,
                 'is_superuser': user.is_superuser,
-                'tenant_id': user.tenant_id if user.tenant else None,
+                'tenant_id': user.tenant_id,
+                'tenant_name': user.tenant.name,
                 'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
             },
             'access': access_token,
@@ -516,3 +598,73 @@ class MFALoginVerifyView(APIView):
             return response
         except User.DoesNotExist:
             return Response({"error": "Usuario no encontrado."}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all()
+    permission_classes = [IsAuthenticated]
+
+    def get_serializer_class(self):
+        if self.action in ['create']:
+            return EmployeeUserSerializer
+        return RegisterSerializer
+
+    def create(self, request, *args, **kwargs):
+        print(f"UserViewSet.create - Data received: {request.data}")
+        serializer = self.get_serializer(data=request.data)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            print(f"UserViewSet.create - Validation error: {e.detail}")
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = serializer.save()
+            print(f"UserViewSet.create - User created: {user.email}")
+            return Response({
+                'id': user.id,
+                'email': user.email,
+                'full_name': user.full_name
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            print(f"UserViewSet.create - Error creating user: {str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return User.objects.all()
+        elif user.tenant:
+            return User.objects.filter(tenant=user.tenant)
+        return User.objects.none()
+
+    @action(detail=False, methods=['get'])
+    def available_for_employee(self, request):
+        """Usuarios disponibles para ser empleados"""
+        users = self.get_queryset().filter(tenant__isnull=False)
+        return Response([{
+            'id': user.id,
+            'email': user.email,
+            'full_name': user.full_name,
+            'tenant_id': user.tenant_id,
+            'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
+        } for user in users])
+    
+    @action(detail=False, methods=['get'])
+    def tenant_info(self, request):
+        """Información del tenant del usuario actual"""
+        if not request.user.tenant:
+            return Response({'error': 'Usuario sin tenant asignado'}, status=404)
+        
+        tenant = request.user.tenant
+        return Response({
+            'id': tenant.id,
+            'name': tenant.name,
+            'subdomain': tenant.subdomain,
+            'is_active': tenant.is_active,
+            'subscription_plan': {
+                'name': tenant.subscription_plan.name,
+                'max_users': tenant.subscription_plan.max_users
+            } if tenant.subscription_plan else None
+        })

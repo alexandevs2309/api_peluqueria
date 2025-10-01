@@ -12,7 +12,7 @@ from apps.roles_api.models import Role
 User = get_user_model()
 
 class Sale(models.Model):
-    user = models.ForeignKey(User, on_delete=models.PROTECT, related_name='sales')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     date_time = models.DateTimeField(default=timezone.now)
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -70,7 +70,7 @@ class Payment(models.Model):
     amount = models.DecimalField(max_digits=10, decimal_places=2)
 
 class CashRegister(models.Model):
-    user = models.ForeignKey(User, on_delete=models.PROTECT, related_name='cash_registers')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cash_registers')
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
     initial_cash = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
