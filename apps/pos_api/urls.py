@@ -1,5 +1,5 @@
 from rest_framework.routers import DefaultRouter
-from .views import SaleViewSet, CashRegisterViewSet, daily_summary, dashboard_stats, active_promotions, pos_categories, pos_config
+from .views import SaleViewSet, CashRegisterViewSet, daily_summary, dashboard_stats, active_promotions, pos_categories, pos_config, earnings_my_earnings, earnings_current_fortnight
 from django.urls import path, include
 
 router = DefaultRouter()
@@ -13,4 +13,6 @@ urlpatterns = [
     path('promotions/active/', active_promotions, name='active-promotions'),
     path('categories/', pos_categories, name='pos-categories'),
     path('config/', pos_config, name='pos-config'),
+    path('earnings/my_earnings/', earnings_my_earnings, name='earnings-my-earnings'),
+    path('earnings/current_fortnight/', earnings_current_fortnight, name='earnings-current-fortnight'),
 ]

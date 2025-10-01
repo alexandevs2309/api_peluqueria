@@ -1,9 +1,13 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 from .views import (
     RegisterView, LoginView, LogoutView,
-    ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView
+    ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView, UserViewSet
 )
 from .permissions_check import UserPermissionsView
+
+router = DefaultRouter()
+router.register(r'users', UserViewSet, basename='user')
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name='register'),
@@ -19,5 +23,5 @@ urlpatterns = [
     path('mfa/verify/', MFAVerifyView.as_view(), name='mfa-verify'),
     path('mfa/login-verify/', MFALoginVerifyView.as_view(), name='mfa-login-verify'),
     path('permissions/', UserPermissionsView.as_view(), name='user-permissions'),
-
+    path('', include(router.urls)),
 ]

@@ -7,7 +7,8 @@ from .views import (
     BranchListCreateView,
     SettingListCreateView,
     SystemSettingsRetrieveUpdateView,
-    SystemSettingsResetView
+    SystemSettingsResetView,
+    branches_list
 )
 from .integration_views import IntegrationStatusView, IntegrationTestView
 from rest_framework.routers import DefaultRouter
@@ -23,4 +24,5 @@ urlpatterns = [
     path('settings/', SettingListCreateView.as_view(), name='setting-list-create'),
     path('integrations/status/', IntegrationStatusView.as_view(), name='integration-status'),
     path('integrations/test/', IntegrationTestView.as_view(), name='integration-test'),
+    path('branches/', branches_list, name='branches-list'),
 ]

@@ -4,8 +4,11 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.translation import gettext_lazy as _
 
 class Branch(models.Model):
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='branches', null=True, blank=True)
     name = models.CharField(max_length=255)
     address = models.TextField(blank=True, null=True)
+    is_main = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
 
     def __str__(self):
         return self.name

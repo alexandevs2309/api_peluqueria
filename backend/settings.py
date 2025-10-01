@@ -70,7 +70,7 @@ INSTALLED_APPS = [
     'apps.pos_api',
 
     'apps.billing_api',
-    'apps.users_api',
+    
 
     'apps.reports_api',
     'apps.settings_api',
@@ -90,6 +90,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
+    'apps.auth_api.tenant_middleware.TenantIsolationMiddleware',  # Validación de tenant isolation
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
@@ -222,6 +223,12 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 AUTH_USER_MODEL = 'auth_api.User'
+
+# Authentication backends
+AUTHENTICATION_BACKENDS = [
+    'apps.roles_api.backends.RoleBasedPermissionBackend',  # Backend personalizado para roles
+    'django.contrib.auth.backends.ModelBackend',  # Backend por defecto de Django
+]
 
 
 # Internationalization

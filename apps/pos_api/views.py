@@ -6,8 +6,9 @@ from .models import Sale, CashRegister
 from .serializers import SaleSerializer, CashRegisterSerializer
 from django.db.models import Sum
 from decimal import Decimal, InvalidOperation
+from apps.auth_api.mixins import TenantFilterMixin, TenantRequiredMixin
 
-class SaleViewSet(viewsets.ModelViewSet):
+class SaleViewSet(TenantFilterMixin, TenantRequiredMixin, viewsets.ModelViewSet):
     queryset = Sale.objects.all()
     serializer_class = SaleSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -198,10 +199,39 @@ class SaleViewSet(viewsets.ModelViewSet):
 
    
 
-class CashRegisterViewSet(viewsets.ModelViewSet):
+class CashRegisterViewSet(TenantFilterMixin, TenantRequiredMixin, viewsets.ModelViewSet):
     queryset = CashRegister.objects.all()
     serializer_class = CashRegisterSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = self.request.user
+        
+        if user.is_superuser:
+            return qs
+        elif user.tenant:
+            return qs.filter(user__tenant=user.tenant)
+        else:
+            return qs.none()
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
+
+    @action(detail=False, methods=['get'])
+    def current(self, request):
+        """Obtener la caja abierta actual del usuario"""
+        today = timezone.localdate()
+        register = CashRegister.objects.filter(
+            user=request.user, 
+            is_open=True,
+            opened_at__date=today
+        ).first()
+        
+        if not register:
+            return Response({'error': 'No hay caja abierta'}, status=status.HTTP_404_NOT_FOUND)
+            
+        return Response(CashRegisterSerializer(register).data)
 
     @action(detail=True, methods=['post'])
     def close(self, request, pk=None):
@@ -227,7 +257,12 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
 @api_view(['GET'])  
 def daily_summary(request):
         today = timezone.localdate()
-        sales = Sale.objects.filter(user=request.user, date_time__date=today)
+        if request.user.is_superuser:
+            sales = Sale.objects.filter(user=request.user, date_time__date=today)
+        elif request.user.tenant:
+            sales = Sale.objects.filter(user__tenant=request.user.tenant, date_time__date=today)
+        else:
+            sales = Sale.objects.none()
 
         total = sales.aggregate(total=Sum('total'))['total'] or 0
         paid = sales.aggregate(paid=Sum('paid'))['paid'] or 0
@@ -254,12 +289,100 @@ def daily_summary(request):
         })
 
 @api_view(['GET'])
+def earnings_my_earnings(request):
+    """Ganancias del empleado actual"""
+    from datetime import datetime, timedelta
+    from django.db.models import Sum
+    
+    today = timezone.now().date()
+    start_of_month = today.replace(day=1)
+    
+    if request.user.is_superuser:
+        sales = Sale.objects.filter(
+            user=request.user,
+            date_time__date__gte=start_of_month,
+            date_time__date__lte=today
+        )
+    elif request.user.tenant:
+        sales = Sale.objects.filter(
+            user__tenant=request.user.tenant,
+            user=request.user,
+            date_time__date__gte=start_of_month,
+            date_time__date__lte=today
+        )
+    else:
+        sales = Sale.objects.none()
+    
+    total_earnings = sales.aggregate(total=Sum('total'))['total'] or 0
+    commission_rate = 0.15  # 15% comisión por defecto
+    commission = float(total_earnings) * commission_rate
+    
+    return Response({
+        'period': f'{start_of_month} - {today}',
+        'total_sales': float(total_earnings),
+        'commission_rate': commission_rate,
+        'commission': commission,
+        'sales_count': sales.count()
+    })
+
+@api_view(['GET'])
+def earnings_current_fortnight(request):
+    """Ganancias de la quincena actual"""
+    from datetime import datetime, timedelta
+    from django.db.models import Sum
+    
+    today = timezone.now().date()
+    
+    if today.day <= 15:
+        start_fortnight = today.replace(day=1)
+        end_fortnight = today.replace(day=15)
+    else:
+        start_fortnight = today.replace(day=16)
+        if today.month == 12:
+            end_fortnight = today.replace(year=today.year+1, month=1, day=1) - timedelta(days=1)
+        else:
+            end_fortnight = today.replace(month=today.month+1, day=1) - timedelta(days=1)
+    
+    if request.user.is_superuser:
+        sales = Sale.objects.filter(
+            user=request.user,
+            date_time__date__gte=start_fortnight,
+            date_time__date__lte=min(end_fortnight, today)
+        )
+    elif request.user.tenant:
+        sales = Sale.objects.filter(
+            user__tenant=request.user.tenant,
+            user=request.user,
+            date_time__date__gte=start_fortnight,
+            date_time__date__lte=min(end_fortnight, today)
+        )
+    else:
+        sales = Sale.objects.none()
+    
+    total_earnings = sales.aggregate(total=Sum('total'))['total'] or 0
+    commission_rate = 0.15
+    commission = float(total_earnings) * commission_rate
+    
+    return Response({
+        'period': f'{start_fortnight} - {min(end_fortnight, today)}',
+        'total_sales': float(total_earnings),
+        'commission_rate': commission_rate,
+        'commission': commission,
+        'sales_count': sales.count()
+    })
+
+@api_view(['GET'])
 def dashboard_stats(request):
     """Estadísticas para el dashboard del POS"""
     from .models import SaleDetail
     
     today = timezone.localdate()
-    sales = Sale.objects.filter(user=request.user, date_time__date=today)
+    if request.user.is_superuser:
+        sales = Sale.objects.filter(user=request.user, date_time__date=today)
+    elif request.user.tenant:
+        sales = Sale.objects.filter(user__tenant=request.user.tenant, date_time__date=today)
+    else:
+        sales = Sale.objects.none()
     
     total_sales = sales.aggregate(total=Sum('total'))['total'] or 0
     total_transactions = sales.count()

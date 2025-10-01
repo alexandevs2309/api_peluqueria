@@ -25,7 +25,7 @@ class Tenant(models.Model):
     address = models.TextField(blank=True, null=True)
 
     plan_type = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
-    subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.PROTECT, null=True, blank=True)
+    subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.SET_NULL, null=True, blank=True)
     subscription_status = models.CharField(max_length=20, choices=SUBSCRIPTION_STATUS, default="trial")
     trial_end_date = models.DateField(null=True, blank=True)
     billing_info = models.JSONField(default=dict, blank=True)
