@@ -23,6 +23,7 @@ from .serializers import (
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
     EmployeeUserSerializer
 )
+from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from apps.tenants_api.models import Tenant
@@ -117,47 +118,40 @@ class LoginView(generics.GenericAPIView):
 
     @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
+        # Rate limit por tenant
+        tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        if tenant_subdomain:
+            from django_ratelimit.core import is_ratelimited
+            if is_ratelimited(request, group='tenant_login', key=lambda r: tenant_subdomain, rate='20/m', method='POST'):
+                return Response({"detail": "Demasiados intentos de login para este tenant."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
             email = request.data.get('email')
-            user = User.objects.filter(email=email).first()
+
+            tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else None
+            if tenant_subdomain:
+                try:
+                    tenant = Tenant.objects.get(subdomain=tenant_subdomain)
+                    user = User.objects.filter(email=email, tenant=tenant).first()
+                except (Tenant.DoesNotExist, User.DoesNotExist):
+                    user = None
+            else:
+                user = User.objects.filter(email=email).first()
+            
             LoginAudit.objects.create(
                 user=user,
                 ip_address=get_client_ip(request),
                 user_agent=get_user_agent(request),
                 successful=False,
-                message="Credenciales inválidas",
+                message=f"Credenciales inválidas - Tenant: {tenant_subdomain or 'unknown'}",
                 timestamp=now()
             )
             raise
         
         user = serializer.validated_data['user']
-        tenant_id = request.data.get('tenant_id')
-
-        # Validación de tenant
-        if not user.tenant:
-            LoginAudit.objects.create(
-                user=user,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                successful=False,
-                message="Usuario sin tenant asignado",
-                timestamp=now()
-            )
-            return Response({"detail": "Usuario no tiene tenant asignado."}, status=status.HTTP_403_FORBIDDEN)
-
-        if tenant_id and str(user.tenant_id) != str(tenant_id):
-            LoginAudit.objects.create(
-                user=user,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                successful=False,
-                message=f"Intento de acceso a tenant incorrecto: {tenant_id}",
-                timestamp=now()
-            )
-            return Response({"detail": "Acceso denegado al tenant especificado."}, status=status.HTTP_403_FORBIDDEN)
+        tenant = serializer.validated_data['tenant']
 
         if not user.is_active:
             LoginAudit.objects.create(
@@ -171,12 +165,15 @@ class LoginView(generics.GenericAPIView):
             return Response({"detail": "Cuenta inactiva. Contacte al administrador."}, status=status.HTTP_403_FORBIDDEN)
 
         if user.mfa_enabled:
-            return Response({"detail": "Se requiere verificación MFA.", "email": user.email}, status=status.HTTP_200_OK)
+            return Response({
+                "detail": "Se requiere verificación MFA.",
+                "email": user.email,
+                "tenant": {"id": tenant.id, "subdomain": tenant.subdomain}
+            }, status=status.HTTP_200_OK)
 
         refresh = RefreshToken.for_user(user)
-        # Agregar tenant_id al token
-        refresh['tenant_id'] = user.tenant_id
-        refresh['tenant_name'] = user.tenant.name
+        refresh['tenant_id'] = tenant.id
+        refresh['tenant_subdomain'] = tenant.subdomain
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
         jti = get_client_jti(access_token)
@@ -187,7 +184,8 @@ class LoginView(generics.GenericAPIView):
             user_agent=get_user_agent(request),
             token_jti=jti,
             refresh_token=refresh_token,
-            is_active=True
+            is_active=True,
+            tenant=tenant
         )
 
         AccessLog.objects.create(
@@ -205,39 +203,43 @@ class LoginView(generics.GenericAPIView):
             message="Inicio de sesión exitoso",
             timestamp=now()
         )
-        
-        response = Response({
+
+        response_data = {
             'user': {
+                'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name,
-                'is_superuser': user.is_superuser,
-                'tenant_id': user.tenant_id,
-                'tenant_name': user.tenant.name,
-                'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
+                'roles': [r.name for r in user.roles.all()],
+            },
+            'tenant': {
+                'id': tenant.id,
+                'name': tenant.name,
+                'subdomain': tenant.subdomain,
             },
             'access': access_token,
             'refresh': refresh_token
-        })
+        }
 
-        response.set_cookie(
-            'access_token',
-            value=access_token,
-            httponly=True,
-            secure=not settings.DEBUG,
-            samesite='Strict',
-            max_age=15 * 60,
-            path='/'
-        )
-        response.set_cookie(
-            'refresh_token',
-            value=refresh_token,
-            httponly=True,
-            secure=not settings.DEBUG,
-            samesite='Strict',
-            max_age=24 * 60 * 60,
-            path='/'
-        )
-
+        # response.set_cookie(
+        #     'access_token',
+        #     value=access_token,
+        #     httponly=True,
+        #     secure=not settings.DEBUG,
+        #     samesite='Strict',
+        #     max_age=15 * 60,
+        #     path='/'
+        # )
+        # response.set_cookie(
+        #     'refresh_token',
+        #     value=refresh_token,
+        #     httponly=True,
+        #     secure=not settings.DEBUG,
+        #     samesite='Strict',
+        #     max_age=24 * 60 * 60,
+        #     path='/'
+        # )
+        response = Response(response_data)
+        response.set_cookie('tenant_id', str(tenant.id), httponly=False, secure=not settings.DEBUG, samesite='Strict')
         return response
 
 class LogoutView(APIView):
@@ -522,82 +524,90 @@ class MFALoginVerifyView(APIView):
         serializer = MFAVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = request.data.get('email')
+        tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        
+
+        if not tenant_subdomain:
+            return Response({"error": "Tenant requerido."}, status=status.HTTP_400_BAD_REQUEST)
         try:
-            user = User.objects.get(email=email)
-            totp = pyotp.TOTP(user.mfa_secret)
-            if not totp.verify(serializer.validated_data['code']):
-                LoginAudit.objects.create(
-                    user=user,
-                    ip_address=get_client_ip(request),
-                    user_agent=get_user_agent(request),
-                    successful=False,
-                    message="Código MFA inválido",
-                    timestamp=now()
-                )
-                return Response({"error": "Código MFA inválido."}, status=status.HTTP_400_BAD_REQUEST)
+            tenant = Tenant.objects.get(subdomain=tenant_subdomain)
+            user = User.objects.get(email=email, tenant=tenant)
+        except (Tenant.DoesNotExist, User.DoesNotExist):
+            return Response({"error": "Usuario o tenant no encontrado."}, status=status.HTTP_400_BAD_REQUEST)
 
-            refresh = RefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
-            refresh_token = str(refresh)
-            jti = get_client_jti(access_token)
-
-            ActiveSession.objects.create(
-                user=user,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                token_jti=jti,
-                refresh_token=refresh_token,
-                is_active=True
-            )
-
-            AccessLog.objects.create(
-                user=user,
-                event_type='LOGIN_MFA',
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                timestamp=now()
-            )
+        totp = pyotp.TOTP(user.mfa_secret)
+        if not totp.verify(serializer.validated_data['code']):
             LoginAudit.objects.create(
                 user=user,
                 ip_address=get_client_ip(request),
                 user_agent=get_user_agent(request),
-                successful=True,
-                message="Inicio de sesión con MFA exitoso",
+                successful=False,
+                message="Código MFA inválido",
                 timestamp=now()
             )
+            return Response({"error": "Código MFA inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
-            response = Response({
-                'user': {
-                    'email': user.email,
-                    'full_name': user.full_name,
-                    'is_superuser': user.is_superuser
-                },
-                'access': access_token,
-                'refresh': refresh_token
-            })
+        refresh = RefreshToken.for_user(user)
+        access_token = str(refresh.access_token)
+        refresh_token = str(refresh)
+        jti = get_client_jti(access_token)
 
-            response.set_cookie(
-                'access_token',
-                value=access_token,
-                httponly=True,
-                secure=not settings.DEBUG,
-                samesite='Strict',
-                max_age=15 * 60,
-                path='/'
-            )
-            response.set_cookie(
-                'refresh_token',
-                value=refresh_token,
-                httponly=True,
-                secure=not settings.DEBUG,
-                samesite='Strict',
-                max_age=24 * 60 * 60,
-                path='/'
-            )
+        ActiveSession.objects.create(
+            user=user,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            token_jti=jti,
+            refresh_token=refresh_token,
+            is_active=True,
+            tenant=tenant
+        )
 
-            return response
-        except User.DoesNotExist:
-            return Response({"error": "Usuario no encontrado."}, status=status.HTTP_400_BAD_REQUEST)
+        AccessLog.objects.create(
+            user=user,
+            event_type='LOGIN_MFA',
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            timestamp=now()
+        )
+        LoginAudit.objects.create(
+            user=user,
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request),
+            successful=True,
+            message="Inicio de sesión con MFA exitoso",
+            timestamp=now()
+        )
+
+        response = Response({
+            'user': {
+                'email': user.email,
+                'full_name': user.full_name,
+                'is_superuser': user.is_superuser
+            },
+            'access': access_token,
+            'refresh': refresh_token
+        })
+
+        response.set_cookie(
+            'access_token',
+            value=access_token,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite='Strict',
+            max_age=15 * 60,
+            path='/'
+        )
+        response.set_cookie(
+            'refresh_token',
+            value=refresh_token,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite='Strict',
+            max_age=24 * 60 * 60,
+            path='/'
+        )
+
+        return response
 
 
 
@@ -650,21 +660,3 @@ class UserViewSet(viewsets.ModelViewSet):
             'tenant_id': user.tenant_id,
             'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
         } for user in users])
-    
-    @action(detail=False, methods=['get'])
-    def tenant_info(self, request):
-        """Información del tenant del usuario actual"""
-        if not request.user.tenant:
-            return Response({'error': 'Usuario sin tenant asignado'}, status=404)
-        
-        tenant = request.user.tenant
-        return Response({
-            'id': tenant.id,
-            'name': tenant.name,
-            'subdomain': tenant.subdomain,
-            'is_active': tenant.is_active,
-            'subscription_plan': {
-                'name': tenant.subscription_plan.name,
-                'max_users': tenant.subscription_plan.max_users
-            } if tenant.subscription_plan else None
-        })

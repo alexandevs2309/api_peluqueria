@@ -1,188 +1,123 @@
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
-from django.contrib.auth import authenticate
-from .models import User, ActiveSession
-from apps.roles_api.models import Role , UserRole
-from rest_framework_simplejwt.tokens import RefreshToken
-from django.utils.translation import gettext_lazy as _
+from django.contrib.auth import get_user_model
+from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
-from django.contrib.auth.password_validation import validate_password
-from django.contrib.auth.tokens import default_token_generator
-from django.contrib.auth import get_user_model
-from apps.roles_api.models import Role, UserRole
+from .models import ActiveSession
+from apps.tenants_api.models import Tenant
 
 User = get_user_model()
-
-class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
-    password2 = serializers.CharField(write_only=True, min_length=8)
-
-
-    class Meta:
-        model = User
-        fields = ['email', 'full_name', 'phone', 'password', 'password2']
-
-    def validate(self, data):
-        if data['password'] != data['password2']:
-            raise serializers.ValidationError("Las contraseñas no coinciden.")
-        return data
-
-    def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Este correo ya está registrado.")
-        return value
-
-    def validate_phone(self, value):
-        if not value.isdigit():
-            raise serializers.ValidationError("El teléfono debe contener solo números.")
-        if len(value) < 10:
-            raise serializers.ValidationError("El número de teléfono es muy corto.")
-        return value
-
-    def validate_full_name(self, value):
-        if len(value) < 3:
-            raise serializers.ValidationError("El nombre completo es muy corto.")
-        return value
-
-    
-
-    def create(self, validated_data):
-        validated_data.pop('password2')
-        
-
-        user = User.objects.create_user(
-            email=validated_data['email'],
-            password=validated_data['password'],
-            full_name=validated_data.get('full_name'),
-            phone=validated_data.get('phone')
-           
-        )
-        try:
-            client_role = Role.objects.get(name='Client') # Asegúrate de que este rol exista en tu DB
-            UserRole.objects.create(user=user, role=client_role)
-        except Role.DoesNotExist:
-            print("Advertencia: El rol 'Client' no existe. Asegúrate de crearlo en la base de datos.")
-            
-
-        user.email_verification_token = default_token_generator.make_token(user)
-        user.save()
-        return user
-    
-
-class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField(write_only=True)
-    tenant_id = serializers.IntegerField(required=False)
-    access = serializers.CharField(read_only=True)
-    refresh = serializers.CharField(read_only=True)
-
-    def validate(self, data):
-        user = authenticate(email=data['email'], password=data['password'])
-        if not user:
-            raise serializers.ValidationError(_('Credenciales inválidas.'))
-        if not user.is_active:
-            raise serializers.ValidationError(_('Esta cuenta está desactivada.'))
-       
-        refresh = RefreshToken.for_user(user)
-        self.user = user
-        return {
-            'user': user,
-            'email': user.email,
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-        }
-
-class PasswordChangeSerializer(serializers.Serializer):
-    old_password = serializers.CharField(required=True, write_only=True)
-    new_password = serializers.CharField(required=True, write_only=True, min_length=8, validators=[validate_password])
-    new_password2 = serializers.CharField(required=True, write_only=True, min_length=8)
-
-    def validate(self, data):
-        if data['new_password'] != data['new_password2']:
-            raise serializers.ValidationError("Las contraseñas no coinciden.")
-        return data
-
- 
-
-class PasswordResetRequestSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-
-    def validate_email(self, value):
-        return value
-
-class PasswordResetConfirmSerializer(serializers.Serializer):
-    uid = serializers.CharField()
-    token = serializers.CharField()
-    new_password = serializers.CharField(validators=[validate_password], write_only=True)
-
-    def validate(self, attrs):
-        try:
-            uid = force_str(urlsafe_base64_decode(attrs['uid']))
-            self.user = User.objects.get(pk=uid)
-        except (User.DoesNotExist, ValueError, TypeError, OverflowError):
-            raise serializers.ValidationError("Token inválido.")
-
-        if not default_token_generator.check_token(self.user, attrs['token']):
-            raise serializers.ValidationError("Token inválido o expirado.")
-
-        return attrs
-
-    def save(self):
-        self.user.set_password(self.validated_data['new_password'])
-        self.user.save()
-        return self.user
 
 class ActiveSessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = ActiveSession
-        fields = ['id', 'ip_address', 'user_agent', 'token_jti', 'created_at', 'last_seen', 'is_active']
+        fields = ['id', 'ip_address', 'user_agent', 'created_at', 'last_seen', 'is_active']
 
-class MFASetupSerializer(serializers.Serializer):
-    qr_code = serializers.CharField(read_only=True)
-    secret = serializers.CharField(read_only=True)
-
-class MFAVerifySerializer(serializers.Serializer):
-    code = serializers.CharField(max_length=6)
-
-class EmployeeUserSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=6)
-    role_ids = serializers.ListField(child=serializers.IntegerField(), write_only=True)
-    phone = serializers.CharField(required=False, allow_blank=True)
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+    tenant_subdomain = serializers.CharField(required=False)
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'phone', 'password', 'role_ids']
-        read_only_fields = ['id']
-
-    def validate_email(self, value):
-        if User.objects.filter(email=value).exists():
-            raise serializers.ValidationError("Este correo ya está registrado.")
-        return value
+        fields = ['email', 'full_name', 'phone', 'password', 'tenant_subdomain']
 
     def create(self, validated_data):
-        role_ids = validated_data.pop('role_ids', [])
-        password = validated_data.pop('password')
-        
-        # Asignar tenant del usuario que hace la petición
-        request = self.context.get('request')
-        if request and hasattr(request.user, 'tenant') and request.user.tenant:
-            validated_data['tenant'] = request.user.tenant
-        
-        user = User.objects.create_user(
-            password=password,
-            **validated_data
-        )
-        
-        # Asignar roles
-        for role_id in role_ids:
+        tenant_subdomain = validated_data.pop('tenant_subdomain', None)
+        tenant = None
+        if tenant_subdomain:
             try:
-                role = Role.objects.get(id=role_id, scope='TENANT')
-                UserRole.objects.create(
-                    user=user,
-                    role=role,
-                    tenant=user.tenant
-                )
-            except Role.DoesNotExist:
-                continue
-        
+                tenant = Tenant.objects.get(subdomain=tenant_subdomain)
+            except Tenant.DoesNotExist:
+                raise serializers.ValidationError("Tenant no encontrado.")
+        user = User.objects.create_user(**validated_data)
+        if tenant:
+            user.tenant = tenant
+            user.save()
         return user
+
+class LoginSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    password = serializers.CharField()
+    tenant_subdomain = serializers.CharField(required=False)
+
+    def validate(self, data):
+        email = data.get('email')
+        password = data.get('password')
+        tenant_subdomain = data.get('tenant_subdomain')
+
+        if tenant_subdomain:
+            try:
+                tenant = Tenant.objects.get(subdomain=tenant_subdomain)
+                user = User.objects.get(email=email, tenant=tenant)
+            except (Tenant.DoesNotExist, User.DoesNotExist):
+                raise serializers.ValidationError("Credenciales inválidas.")
+        else:
+            user = User.objects.filter(email=email).first()
+            if not user:
+                raise serializers.ValidationError("Credenciales inválidas.")
+            tenant = user.tenant
+
+        if not user.check_password(password):
+            raise serializers.ValidationError("Credenciales inválidas.")
+
+        data['user'] = user
+        data['tenant'] = tenant
+        return data
+
+class PasswordChangeSerializer(serializers.Serializer):
+    old_password = serializers.CharField()
+    new_password = serializers.CharField(min_length=8)
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(min_length=8)
+
+    def validate(self, data):
+        try:
+            uid = force_str(urlsafe_base64_decode(data['uid']))
+            user = User.objects.get(pk=uid)
+        except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+            raise serializers.ValidationError("Token inválido.")
+
+        if not default_token_generator.check_token(user, data['token']):
+            raise serializers.ValidationError("Token inválido.")
+
+        data['user'] = user
+        return data
+
+    def save(self):
+        user = self.validated_data['user']
+        user.set_password(self.validated_data['new_password'])
+        user.save()
+        return user
+
+class MFASetupSerializer(serializers.Serializer):
+    pass
+
+class MFAVerifySerializer(serializers.Serializer):
+    code = serializers.CharField(min_length=6, max_length=6)
+
+class EmployeeUserSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, min_length=8)
+
+    class Meta:
+        model = User
+        fields = ['email', 'full_name', 'phone', 'password', 'tenant']
+
+    def create(self, validated_data):
+        return User.objects.create_user(**validated_data)
+
+class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+    @classmethod
+    def get_token(cls, user):
+        token = super().get_token(user)
+        # Add custom claims
+        if user.tenant:
+            token['tenant_id'] = user.tenant.id
+            token['tenant_subdomain'] = user.tenant.subdomain
+        return token

@@ -1,18 +1,28 @@
-from django.http import JsonResponse
+from django.http import JsonResponse, HttpResponseForbidden
 from django.utils.deprecation import MiddlewareMixin
 from .models import Tenant
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
+from django.conf import settings
+
+from django.contrib.gis.geoip2 import GeoIP2
+from apps.auth_api.utils import get_client_ip
 
 class TenantMiddleware(MiddlewareMixin):
     """
-    Middleware para manejar multitenancy basado en el usuario autenticado
+    Middleware para manejar multitenancy basado en JWT claims o usuario autenticado
     """
     
     def process_request(self, request):
-        # Solo aplicar a rutas de API que no sean admin
-        if not request.path.startswith('/api/') or request.path.startswith('/api/admin/'):
+        # Excluir admin de Django
+        if request.path.startswith('/admin/'):
             return None
-            
-        # Rutas que no requieren tenant
+        
+        # Solo aplicar a rutas API
+        if not request.path.startswith('/api/'):
+            return None
+        
+        # Rutas exentas
         exempt_paths = [
             '/api/auth/',
             '/api/schema/',
@@ -20,33 +30,56 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/healthz/',
             '/api/system-settings/',
         ]
-        
         for exempt_path in exempt_paths:
             if request.path.startswith(exempt_path):
                 return None
         
-        # Si el usuario está autenticado, asignar su tenant
-        if hasattr(request, 'user') and request.user.is_authenticated:
-            # Super-Admin puede acceder a todo
-            if request.user.roles.filter(name='Super-Admin').exists():
-                request.tenant = None  # Sin restricción de tenant
-                return None
-                
-            # Usuarios normales deben tener tenant
-            if hasattr(request.user, 'tenant') and request.user.tenant:
-                request.tenant = request.user.tenant
-                return None
-            else:
-                # Usuario sin tenant - solo para rutas específicas
-                if request.path.startswith('/api/subscriptions/me/'):
+        # Intentar obtener tenant desde JWT claims
+        try:
+            auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+            if auth_header.startswith('Bearer '):
+                token_str = auth_header.split(' ')[1]
+                jwt_auth = JWTAuthentication()
+                validated_token = jwt_auth.get_validated_token(token_str)
+                tenant_id = validated_token.get('tenant_id')
+                if tenant_id:
+                    tenant = Tenant.objects.get(id=tenant_id)
+                    request.tenant = tenant
+                else:
                     request.tenant = None
-                    return None
-                    
-                return JsonResponse({
-                    'error': 'Usuario sin tenant asignado',
-                    'code': 'NO_TENANT'
-                }, status=403)
+            else:
+                request.tenant = None
+        except (InvalidToken, TokenError, Tenant.DoesNotExist):
+            return HttpResponseForbidden("Token o tenant inválido.")
         
-        # Usuario no autenticado
-        request.tenant = None
+        # Si no tenant desde JWT, fallback a usuario
+        if not request.tenant:
+            if hasattr(request, 'user') and request.user.is_authenticated:
+                if request.user.roles.filter(name='Super-Admin').exists():
+                    request.tenant = None
+                elif hasattr(request.user, 'tenant') and request.user.tenant:
+                    request.tenant = request.user.tenant
+                else:
+                    if request.path.startswith('/api/subscriptions/me/'):
+                        request.tenant = None
+                    else:
+                        return JsonResponse({
+                            'error': 'Usuario sin tenant asignado',
+                            'code': 'NO_TENANT'
+                        }, status=403)
+            else:
+                request.tenant = None
+        
+        # Geolock opcional
+        if getattr(settings, 'GEO_LOCK_ENABLED', False) and request.tenant:
+            client_ip = get_client_ip(request)
+            try:
+                geo = GeoIP2()
+                country = geo.country(client_ip)['country_code']
+                if country != request.tenant.country:
+                    return HttpResponseForbidden("Acceso denegado por geolock.")
+            except Exception:
+                # En caso de error en geolocalización, permitir acceso
+                pass
+        
         return None

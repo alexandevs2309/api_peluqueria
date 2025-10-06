@@ -1,6 +1,8 @@
 from rest_framework import serializers
-from  django.utils.timezone import now
-from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan
+from django.core.exceptions import ValidationError
+from django.utils.timezone import now
+from apps.tenants_api.models import Tenant
+from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, SubscriptionAuditLog
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     class Meta:
@@ -44,28 +46,23 @@ class SubscriptionAuditLogSerializer(serializers.ModelSerializer):
         fields = ['id', 'user', 'action', 'description', 'created_at']
         read_only_fields = fields
 
+class OnboardingSerializer(serializers.Serializer):
+    salon_name = serializers.CharField(min_length=3)
+    owner_name = serializers.CharField()
+    owner_email = serializers.EmailField()
+    plan_id = serializers.IntegerField()
+    password = serializers.CharField(min_length=8)
+    stripe_customer_id = serializers.CharField()
+    country = serializers.CharField(required=False, allow_blank=True)
 
-class EntitlementsSerializer(serializers.Serializer):
-    plan = serializers.CharField()
-    plan_display = serializers.CharField()
-    features = serializers.JSONField()
-    limits = serializers.DictField()
-    usage = serializers.DictField()
-    duration_month = serializers.IntegerField()
-    
-    def validate_limits(self, value):
-        """Validar que los límites sean válidos"""
-        if 'max_employees' in value and value['max_employees'] < 0:
-            raise serializers.ValidationError("max_employees debe ser positivo")
+    def validate_owner_email(self, value):
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        if User.objects.filter(email=value).exists():
+            raise ValidationError("El email ya está registrado.")
         return value
 
-class EmployeeLimitValidationSerializer(serializers.Serializer):
-    current_employees = serializers.IntegerField(min_value=0)
-    max_allowed = serializers.IntegerField(min_value=0)
-    
-    def validate(self, data):
-        if data['current_employees'] > data['max_allowed'] and data['max_allowed'] > 0:
-            raise serializers.ValidationError(
-                f"Límite de empleados excedido. Máximo permitido: {data['max_allowed']}"
-            )
-        return data
+    def validate_plan_id(self, value):
+        if not SubscriptionPlan.objects.filter(id=value, is_active=True).exists():
+            raise ValidationError("Plan no válido o inactivo.")
+        return value

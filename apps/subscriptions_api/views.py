@@ -1,14 +1,23 @@
 from rest_framework import viewsets
 from rest_framework.response import Response
 from rest_framework import status
-from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan
-from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer
+from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan, Subscription
+from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer, OnboardingSerializer
 from .permissions import IsSuperuserOrReadOnly
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from django.utils import timezone
 from rest_framework.views import APIView
 from .utils import get_user_active_subscription, log_subscription_event
+from django.db import transaction
+from django.conf import settings
+from stripe.error import StripeError
+import stripe
+from apps.tenants_api.models import Tenant
+from apps.auth_api.models import User
+from apps.roles_api.models import Role, UserRole
+
+stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 
 
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
@@ -243,3 +252,67 @@ class MyEntitlementsView(APIView):
             "duration_month": getattr(plan, 'duration_month', 1),
         }
         return Response(data)
+
+class OnboardingView(APIView):
+    permission_classes = []
+
+    @transaction.atomic
+    def post(self, request):
+        serializer = OnboardingSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        try:
+            # 1. Crear Tenant
+            tenant = Tenant.objects.create(
+                name=data['salon_name'],
+                subdomain=data['salon_name'].lower().replace(' ', '')[:20],
+                owner=None,  # se asigna luego
+                country=data.get('country', None),
+                is_active=True
+            )
+
+            # 2. Crear User ClientAdmin
+            user = User.objects.create(
+                email=data['owner_email'],
+                full_name=data['owner_name'],
+                tenant=tenant,
+                role='ClientAdmin',
+                is_active=True
+            )
+            user.set_password(data['password'])
+            user.save()
+
+            # Asignar owner tenant
+            tenant.owner = user
+            tenant.save()
+
+            # 3. Crear suscripción Stripe
+            plan = SubscriptionPlan.objects.get(id=data['plan_id'])
+            stripe_subscription = stripe.Subscription.create(
+                customer=data['stripe_customer_id'],
+                items=[{'price': plan.name}],  # Asumir plan.name es price id
+                expand=['latest_invoice.payment_intent']
+            )
+
+            # 4. Crear Subscription local
+            subscription = Subscription.objects.create(
+                tenant=tenant,
+                plan=plan,
+                stripe_subscription_id=stripe_subscription.id,
+                is_active=True
+            )
+
+            # 5. Asignar rol ClientAdmin
+            admin_role = Role.objects.get(name='Client-Admin')
+            UserRole.objects.create(user=user, role=admin_role)
+
+            return Response({'detail': 'Onboarding completado exitosamente.'}, status=status.HTTP_201_CREATED)
+
+        except StripeError as e:
+            transaction.set_rollback(True)
+            return Response({'error': 'Error en Stripe: ' + str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            transaction.set_rollback(True)
+            return Response({'error': 'Error interno: ' + str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -6,9 +6,8 @@ from .models import Sale, CashRegister
 from .serializers import SaleSerializer, CashRegisterSerializer
 from django.db.models import Sum
 from decimal import Decimal, InvalidOperation
-from apps.auth_api.mixins import TenantFilterMixin, TenantRequiredMixin
 
-class SaleViewSet(TenantFilterMixin, TenantRequiredMixin, viewsets.ModelViewSet):
+class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.all()
     serializer_class = SaleSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -199,7 +198,7 @@ class SaleViewSet(TenantFilterMixin, TenantRequiredMixin, viewsets.ModelViewSet)
 
    
 
-class CashRegisterViewSet(TenantFilterMixin, TenantRequiredMixin, viewsets.ModelViewSet):
+class CashRegisterViewSet(viewsets.ModelViewSet):
     queryset = CashRegister.objects.all()
     serializer_class = CashRegisterSerializer
     permission_classes = [permissions.IsAuthenticated]

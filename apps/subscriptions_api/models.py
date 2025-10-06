@@ -62,13 +62,17 @@ class UserSubscription(models.Model):
         return f"{self.user.email} -> {self.plan.name}"
 
 class Subscription(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE)
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT)
+    stripe_subscription_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    
+
+    class Meta:
+        unique_together = ('tenant', 'plan')
+
     def __str__(self):
-        return f"{self.user.email} - {self.plan.name}"
+        return f"{self.tenant.name} - {self.plan.name} - {self.stripe_subscription_id}"
 
 class SubscriptionAuditLog(models.Model):
     ACTION_CHOICES = [

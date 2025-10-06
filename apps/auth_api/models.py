@@ -49,12 +49,19 @@ class User(AbstractBaseUser, PermissionsMixin):
     
     # Multitenancy: Usuario pertenece a un tenant
     tenant = models.ForeignKey(
-        'tenants_api.Tenant', 
-        on_delete=models.SET_NULL, 
-        null=True, 
+        'tenants_api.Tenant',
+        on_delete=models.SET_NULL,
+        null=True,
         blank=True,
         related_name='users'
     )
+
+    ROLE_CHOICES = [
+        ('SuperAdmin', 'Super Admin'),
+        ('ClientAdmin', 'Client Admin'),
+        ('ClientStaff', 'Client Staff'),
+    ]
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, blank=True, null=True)
 
     roles = models.ManyToManyField(
         'roles_api.Role',
@@ -71,8 +78,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     class Meta:
         indexes = [
             models.Index(fields=['email']),
-           
+            models.Index(fields=['email', 'tenant']),
         ]
+
+    def save(self, *args, **kwargs):
+        # Enforce tenant for ClientAdmin and ClientStaff
+        if self.role in ['ClientAdmin', 'ClientStaff'] and not self.tenant:
+            raise ValueError("ClientAdmin and ClientStaff must have a tenant assigned.")
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return self.email
@@ -124,6 +137,7 @@ class AccessLog(models.Model):
 
 class ActiveSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sessions_active")
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, null=True, blank=True)
     ip_address = models.GenericIPAddressField(blank=True, null=True)
     user_agent = models.TextField(blank=True , null=True) 
     token_jti = models.CharField(max_length=255, unique=True)

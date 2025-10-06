@@ -157,9 +157,13 @@ def create_audit_log(user, action, description, content_object=None,
     
     if content_object:
         # Para GenericForeignKey, necesitamos establecer content_type y object_id explícitamente
-        from django.contrib.contenttypes.models import ContentType
-        kwargs['content_type'] = ContentType.objects.get_for_model(content_object)
-        
+        try:
+            from django.contrib.contenttypes.models import ContentType
+            kwargs['content_type'] = ContentType.objects.get_for_model(content_object)
+        except Exception:
+            # Si la tabla contenttypes no existe aún (durante migraciones), saltar
+            kwargs['content_type'] = None
+
         # Manejar diferentes tipos de objetos que pueden no tener un atributo 'id' estándar
         if hasattr(content_object, 'id'):
             kwargs['object_id'] = content_object.id
