@@ -1,3 +1,4 @@
+import sys
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
@@ -6,9 +7,14 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+
 @receiver(post_save)
 def audit_log_on_save(sender, instance, created, **kwargs):
     """Registra automáticamente todas las operaciones de guardado de modelos"""
+    # 🚫 Evitar ejecución durante migraciones o comandos especiales
+    if any(cmd in sys.argv for cmd in ['makemigrations', 'migrate', 'collectstatic', 'test', 'flush']):
+        return
+
     # Saltar modelos del sistema y el propio modelo de auditoría
     if sender._meta.app_label in ['auth', 'admin', 'contenttypes', 'sessions', 'audit_api']:
         return
@@ -39,9 +45,14 @@ def audit_log_on_save(sender, instance, created, **kwargs):
         extra_data={'changes': changes}
     )
 
+
 @receiver(post_delete)
 def audit_log_on_delete(sender, instance, **kwargs):
     """Registra automáticamente todas las operaciones de eliminación de modelos"""
+    # 🚫 Evitar ejecución durante migraciones o comandos especiales
+    if any(cmd in sys.argv for cmd in ['makemigrations', 'migrate', 'collectstatic', 'test', 'flush']):
+        return
+
     if sender._meta.app_label in ['auth', 'admin', 'contenttypes', 'sessions', 'audit_api']:
         return
     

@@ -17,12 +17,13 @@ class Tenant(models.Model):
         ("cancelled", "Cancelled"),
     ]
 
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=100, unique=True)
     subdomain = models.CharField(max_length=50, unique=True)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="owned_tenants")
     contact_email = models.EmailField(blank=True, null=True)
     contact_phone = models.CharField(max_length=20, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
+    country = models.CharField(max_length=2, blank=True, null=True)  # ISO country code
 
     plan_type = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.SET_NULL, null=True, blank=True)

@@ -3,9 +3,10 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     MyEntitlementsView,
     MyActiveSubscriptionView,
-    SubscriptionPlanViewSet, 
+    SubscriptionPlanViewSet,
     UserSubscriptionViewSet,
     SubscriptionAuditLogViewSet,
+    OnboardingView,
 )
 from .registration_views import register_with_plan
 
@@ -19,4 +20,5 @@ urlpatterns = [
     path("me/active/", MyActiveSubscriptionView.as_view(), name="my-active-subscription"),
     path("me/entitlements/", MyEntitlementsView.as_view(), name="my-entitlements"),
     path("register/", register_with_plan, name="register-with-plan"),
+    path("onboard/", OnboardingView.as_view(), name="onboarding"),
 ]

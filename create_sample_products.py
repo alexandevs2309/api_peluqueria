@@ -10,16 +10,34 @@ django.setup()
 
 from apps.inventory_api.models import Product
 from apps.tenants_api.models import Tenant
+from django.contrib.auth import get_user_model
+
+User = get_user_model()
 
 def create_sample_products():
     # Obtener el primer tenant (o crear uno si no existe)
     tenant = Tenant.objects.first()
     if not tenant:
+        # Crear usuario demo primero
+        demo_user = User.objects.create_user(
+            email='demo@barberia.com',
+            password='demo123',
+            full_name='Usuario Demo'
+        )
+        
+        # Crear tenant con owner
         tenant = Tenant.objects.create(
             name="Barbería Demo",
-            subdomain="demo"
+            subdomain="demo",
+            owner=demo_user
         )
+        
+        # Asignar tenant al usuario
+        demo_user.tenant = tenant
+        demo_user.save()
+        
         print(f"✅ Tenant creado: {tenant.name}")
+        print(f"✅ Usuario demo creado: {demo_user.email}")
 
     products_data = [
         {

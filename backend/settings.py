@@ -42,9 +42,9 @@ ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost'])
 # Application definition
 
 INSTALLED_APPS = [
+    'django.contrib.contenttypes',
     'django.contrib.admin',
     'django.contrib.auth',
-    'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
@@ -90,7 +90,6 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
-    'apps.auth_api.tenant_middleware.TenantIsolationMiddleware',  # Validación de tenant isolation
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
@@ -123,6 +122,10 @@ REST_FRAMEWORK = {
     },
 }
 
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef')
+
+GEO_LOCK_ENABLED = True
+
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),  # 8 horas para sesión normal
@@ -133,6 +136,7 @@ SIMPLE_JWT = {
     'SIGNING_KEY': SECRET_KEY,
     'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
     'TOKEN_BLACKLIST_ENABLED': True,
+    'TOKEN_OBTAIN_SERIALIZER': 'apps.auth_api.serializers.CustomTokenObtainPairSerializer',
 }
 
 CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:4200'])
