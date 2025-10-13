@@ -84,5 +84,52 @@ class Tenant(models.Model):
                 
         super().save(*args, **kwargs)
     
+    def has_feature(self, feature_name):
+        """Check if tenant has access to specific feature"""
+        if not self.subscription_plan:
+            return False
+        features = self.subscription_plan.features or {}
+        return features.get(feature_name, False)
+    
+    def can_add_user(self):
+        """Check if tenant can add more users"""
+        if self.max_users == 0:  # Unlimited
+            return True
+        current_users = self.users.filter(is_active=True).count()
+        return current_users < self.max_users
+    
+    def can_add_employee(self):
+        """Check if tenant can add more employees"""
+        if self.max_employees == 0:  # Unlimited
+            return True
+        current_employees = self.users.filter(
+            is_active=True, 
+            role='ClientStaff'
+        ).count()
+        return current_employees < self.max_employees
+    
+    def get_user_usage(self):
+        """Get current user usage stats"""
+        current_users = self.users.filter(is_active=True).count()
+        return {
+            'current': current_users,
+            'limit': self.max_users,
+            'unlimited': self.max_users == 0,
+            'percentage': (current_users / self.max_users * 100) if self.max_users > 0 else 0
+        }
+    
+    def get_employee_usage(self):
+        """Get current employee usage stats"""
+        current_employees = self.users.filter(
+            is_active=True, 
+            role='ClientStaff'
+        ).count()
+        return {
+            'current': current_employees,
+            'limit': self.max_employees,
+            'unlimited': self.max_employees == 0,
+            'percentage': (current_employees / self.max_employees * 100) if self.max_employees > 0 else 0
+        }
+
     def __str__(self):
         return f"{self.name} ({self.subdomain})"

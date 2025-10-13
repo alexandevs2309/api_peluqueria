@@ -5,10 +5,24 @@ from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, SubscriptionAuditLog
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
+    features_list = serializers.SerializerMethodField()
+    
     class Meta:
         model = SubscriptionPlan
-        fields = '__all__'
-        read_only_fields = ['id','created_at', 'updated_at']
+        fields = [
+            'id', 'name', 'description', 'price', 'duration_month', 'is_active',
+            'max_employees', 'max_users', 'allows_multiple_branches', 'features',
+            'features_list', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'name', 'created_at', 'updated_at']
+    
+    def get_features_list(self, obj):
+        """Convert features dict to list for frontend"""
+        if not obj.features:
+            return []
+        if isinstance(obj.features, dict):
+            return [key.replace('_', ' ').title() for key, value in obj.features.items() if value]
+        return obj.features if isinstance(obj.features, list) else []
 
 class UserSubscriptionSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)

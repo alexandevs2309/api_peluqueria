@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Setting, SettingAuditLog, Branch, SystemSettings
+from .models import Setting, Branch, SystemSettings
 
 class BranchSerializer(serializers.ModelSerializer):
     class Meta:
@@ -60,16 +60,7 @@ class SettingExportSerializer(serializers.ModelSerializer):
         model = Setting
         exclude = ["id", "created_at", "updated_at", "logo"]
 
-class SettingAuditLogSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SettingAuditLog
-        fields = [
-            "id",
-            "setting",
-            "changed_by",
-            "changed_at",
-            "change_summary",
-        ]
+
 
 class SystemSettingsSerializer(serializers.ModelSerializer):
     class Meta:

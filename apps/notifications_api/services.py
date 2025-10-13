@@ -122,7 +122,7 @@ class NotificationService:
         """
         try:
             # Integración con Twilio u otro proveedor SMS
-            logger.info(f"SMS would be sent to {notification.recipient.username}: {notification.message[:50]}...")
+            logger.info(f"SMS would be sent to {notification.recipient.email}: {notification.message[:50]}...")
 
             NotificationLog.objects.create(
                 notification=notification,
@@ -151,7 +151,7 @@ class NotificationService:
         """
         try:
             # Integración con Firebase Cloud Messaging
-            logger.info(f"Push notification would be sent to {notification.recipient.username}")
+            logger.info(f"Push notification would be sent to {notification.recipient.email}")
 
             NotificationLog.objects.create(
                 notification=notification,

@@ -18,20 +18,23 @@ class AuditLogMiddleware(MiddlewareMixin):
             if request.method == 'POST':
                 if 'login' in request.path.lower():
                     action = 'LOGIN' if response.status_code == 200 else 'LOGIN_FAILED'
+                    from .utils import get_client_ip
+                    client_ip = get_client_ip(request)
+                    
                     if request.user.is_authenticated:
                         create_audit_log(
                             user=request.user,
                             action=action,
-                            description=f"Login attempt from {request.META.get('REMOTE_ADDR')}",
-                            ip_address=request.META.get('REMOTE_ADDR'),
-                            user_agent=request.META.get('HTTP_USER_AGENT', 'Unknown')
+                            description=f"Login attempt from {client_ip}",
+                            request=request,
+                            source='AUTH'
                         )
                     else:
                         create_audit_log(
                             user=None,
                             action=action,
-                            description=f"Login attempt from {request.META.get('REMOTE_ADDR')}",
-                            ip_address=request.META.get('REMOTE_ADDR'),
-                            user_agent=request.META.get('HTTP_USER_AGENT', 'Unknown')
+                            description=f"Login attempt from {client_ip}",
+                            request=request,
+                            source='AUTH'
                         )
         return response

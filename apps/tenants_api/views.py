@@ -24,13 +24,15 @@ class TenantViewSet(viewsets.ModelViewSet):
     """
     queryset = Tenant.objects.all()
     serializer_class = TenantSerializer
-    permission_classes = [permissions.IsAuthenticated]  # Cambiar a IsAuthenticated
+    permission_classes = [IsSuperAdmin]  # SOLO SuperAdmin
     pagination_class = None  # Disable pagination for tenants list
 
-    def get_permissions(self):
-        if self.action in ['activate', 'deactivate']:
-            return [permissions.IsAdminUser()]
-        return [permission() for permission in self.permission_classes]
+    def get_queryset(self):
+        # SuperAdmin ve todos los tenants
+        if self.request.user.roles.filter(name='Super-Admin').exists():
+            return Tenant.objects.all()
+        # Otros usuarios no tienen acceso
+        return Tenant.objects.none()
 
     def _create_audit_log(self, user, action, target):
         AuditLog.objects.create(

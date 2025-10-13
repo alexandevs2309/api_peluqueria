@@ -30,6 +30,13 @@ class AuditLog(models.Model):
         ('MFA_ENABLE', 'Activación de MFA'),
         ('MFA_DISABLE', 'Desactivación de MFA'),
         ('ADMIN_ACTION', 'Acción administrativa'),
+        ('INTEGRATION_ERROR', 'Error de integración'),
+        ('PERFORMANCE_ALERT', 'Alerta de rendimiento'),
+        ('SYSTEM_ERROR', 'Error del sistema'),
+        ('STRIPE_ERROR', 'Error de Stripe'),
+        ('PAYPAL_ERROR', 'Error de PayPal'),
+        ('TWILIO_ERROR', 'Error de Twilio'),
+        ('SENDGRID_ERROR', 'Error de SendGrid'),
     ]
     
     user = models.ForeignKey(
@@ -101,6 +108,8 @@ class AuditLog(models.Model):
             ('SUBSCRIPTIONS', 'Suscripciones'),
             ('USERS', 'Usuarios'),
             ('SYSTEM', 'Sistema'),
+            ('INTEGRATIONS', 'Integraciones'),
+            ('PERFORMANCE', 'Rendimiento'),
         ],
         default='SYSTEM',
         help_text="Origen del log"

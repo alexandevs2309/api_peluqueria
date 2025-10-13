@@ -140,18 +140,32 @@ def migrate_existing_logs():
     
     return migrated_count
 
+def get_client_ip(request):
+    """Obtiene la IP real del cliente considerando proxies"""
+    x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(',')[0].strip()
+    else:
+        ip = request.META.get('REMOTE_ADDR')
+    return ip
+
 def create_audit_log(user, action, description, content_object=None, 
                     ip_address=None, user_agent='', source='SYSTEM', 
-                    extra_data=None):
+                    extra_data=None, request=None):
     """
     Función helper para crear logs de auditoría de forma unificada
     """
+    # Si se pasa request, extraer IP y user agent automáticamente
+    if request:
+        ip_address = ip_address or get_client_ip(request)
+        user_agent = user_agent or request.META.get('HTTP_USER_AGENT', '')
+    
     kwargs = {
         'user': user,
         'action': action,
         'description': description,
         'ip_address': ip_address,
-        'user_agent': user_agent or '',  # Asegurar que user_agent no sea None
+        'user_agent': user_agent or '',
         'source': source,
     }
     

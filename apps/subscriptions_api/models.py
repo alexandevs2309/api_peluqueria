@@ -8,6 +8,7 @@ from dateutil.relativedelta import relativedelta
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
+        ('free', 'Plan Gratuito'),
         ('basic', 'Plan Básico'),
         ('standard', 'Plan Estándar'),
         ('premium', 'Plan Premium'),
@@ -21,6 +22,7 @@ class SubscriptionPlan(models.Model):
     is_active = models.BooleanField(default=True)
     max_employees = models.PositiveIntegerField(default=0)
     max_users = models.PositiveIntegerField(default=0)
+    allows_multiple_branches = models.BooleanField(default=False, help_text="Permite múltiples sucursales")
     features = JSONField(default=dict)
 
     created_at = models.DateTimeField(auto_now_add=True)

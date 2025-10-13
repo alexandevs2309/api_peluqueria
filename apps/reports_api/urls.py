@@ -6,4 +6,7 @@ urlpatterns = [
     path('employees/', views.employee_report, name='employee-report'),
     path('sales/', views.sales_report, name='sales-report'),
     path('dashboard/', views.dashboard_stats, name='dashboard-stats'),
+    
+    # SuperAdmin reports
+    path('admin/', views.AdminReportsView.as_view(), name='admin-reports'),
 ]

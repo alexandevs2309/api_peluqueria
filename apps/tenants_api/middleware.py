@@ -29,6 +29,7 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/docs/',
             '/api/healthz/',
             '/api/system-settings/',
+            '/api/subscriptions/plans/',  # Allow subscription plans access
         ]
         for exempt_path in exempt_paths:
             if request.path.startswith(exempt_path):
@@ -71,15 +72,23 @@ class TenantMiddleware(MiddlewareMixin):
                 request.tenant = None
         
         # Geolock opcional
-        if getattr(settings, 'GEO_LOCK_ENABLED', False) and request.tenant:
+        if getattr(settings, 'GEO_LOCK_ENABLED', False) and request.tenant and request.tenant.country:
             client_ip = get_client_ip(request)
             try:
                 geo = GeoIP2()
                 country = geo.country(client_ip)['country_code']
                 if country != request.tenant.country:
-                    return HttpResponseForbidden("Acceso denegado por geolock.")
-            except Exception:
-                # En caso de error en geolocalización, permitir acceso
+                    return JsonResponse({
+                        'error': 'Geographic access denied',
+                        'code': 'GEO_BLOCKED',
+                        'allowed_country': request.tenant.country,
+                        'detected_country': country
+                    }, status=403)
+            except Exception as e:
+                # Log error pero permitir acceso en caso de fallo de geolocalización
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f'GeoIP error for IP {client_ip}: {str(e)}')
                 pass
         
         return None

@@ -1,28 +1,13 @@
 from django.urls import path
-from .views import (
-    SettingRetrieveUpdateView,
-    SettingExportView,
-    SettingImportView,
-    SettingAuditLogListView,
-    BranchListCreateView,
-    SettingListCreateView,
-    SystemSettingsRetrieveUpdateView,
-    SystemSettingsResetView,
-    branches_list
-)
 from .integration_views import IntegrationStatusView, IntegrationTestView
-from rest_framework.routers import DefaultRouter
-
-
+from .admin_views import SaasMetricsView, SystemMonitorView, test_integration_service
 
 urlpatterns = [
-    path('', SettingRetrieveUpdateView.as_view(), name='setting-detail'),
-    path('export/', SettingExportView.as_view(), name='setting-export'),
-    path('import/', SettingImportView.as_view(), name='setting-import'),
-    path('audit-logs/', SettingAuditLogListView.as_view(), name='setting-audit'),
-    path('branches/', BranchListCreateView.as_view(), name='branch-list-create'),
-    path('settings/', SettingListCreateView.as_view(), name='setting-list-create'),
     path('integrations/status/', IntegrationStatusView.as_view(), name='integration-status'),
     path('integrations/test/', IntegrationTestView.as_view(), name='integration-test'),
-    path('branches/', branches_list, name='branches-list'),
+    
+    # SuperAdmin endpoints
+    path('admin/metrics/', SaasMetricsView.as_view(), name='admin-saas-metrics'),
+    path('admin/system-monitor/', SystemMonitorView.as_view(), name='admin-system-monitor'),
+    path('admin/test-service/', test_integration_service, name='admin-test-service'),
 ]
