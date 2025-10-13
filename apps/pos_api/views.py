@@ -11,6 +11,27 @@ class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.all()
     serializer_class = SaleSerializer
     permission_classes = [permissions.IsAuthenticated]
+    
+    def _create_employee_earning(self, sale, employee_user):
+        """Crea ganancia automática para el empleado"""
+        from apps.employees_api.models import Employee
+        from apps.employees_api.tasks import create_earning_from_sale
+        
+        try:
+            employee = Employee.objects.get(user=employee_user, tenant=sale.user.tenant)
+            
+            # Obtener porcentaje de comisión (por defecto 50%)
+            commission_percentage = 50
+            
+            # Crear ganancia de forma asíncrona
+            create_earning_from_sale.delay(
+                sale_id=sale.id,
+                employee_id=employee.id,
+                percentage=commission_percentage
+            )
+            
+        except Employee.DoesNotExist:
+            pass
 
     def perform_create(self, serializer):
         # Validar que hay una caja abierta
@@ -77,13 +98,28 @@ class SaleViewSet(viewsets.ModelViewSet):
             try:
                 appointment = Appointment.objects.get(id=appointment_id)
                 appointment.status = "completed"
+                appointment.sale = sale  # Vincular venta con cita
                 appointment.save()
                 
                 # Actualizar última visita del cliente
                 if appointment.client:
                     appointment.client.last_visit = timezone.now()
                     appointment.client.save()
+                    
+                # Crear ganancia automática para el empleado
+                self._create_employee_earning(sale, appointment.stylist)
+                    
             except Appointment.DoesNotExist:
+                pass
+        
+        # Si no hay cita pero hay empleado asignado, crear ganancia
+        employee_id = self.request.data.get('employee_id')
+        if employee_id and not appointment_id:
+            from apps.employees_api.models import Employee
+            try:
+                employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
+                self._create_employee_earning(sale, employee.user)
+            except Employee.DoesNotExist:
                 pass
        
             

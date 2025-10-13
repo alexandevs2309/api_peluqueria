@@ -15,7 +15,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
 )
-environ.Env.read_env()
+environ.Env.read_env(BASE_DIR / '.env')
 SECRET_KEY = env('SECRET_KEY')
 
 # Sentry configuration
@@ -90,11 +90,32 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
+    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',  # Validación de suscripciones
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
 ]
 
+
+# Rate limiting configuration by environment
+if DEBUG:
+    # Development: More permissive limits
+    THROTTLE_RATES = {
+        'user': '2000/hour',
+        'anon': '500/hour', 
+        'login': '20/min',
+        'register': '10/hour',
+        'password_reset': '10/hour',
+    }
+else:
+    # Production: Strict security limits
+    THROTTLE_RATES = {
+        'user': '1000/hour',
+        'anon': '100/hour',
+        'login': '5/min',
+        'register': '3/hour',
+        'password_reset': '3/hour',
+    }
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
@@ -116,13 +137,11 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.AnonRateThrottle',
     ],
-    'DEFAULT_THROTTLE_RATES': {
-        'user': '1000/day',
-        'anon': '50/hour',
-    },
+    'DEFAULT_THROTTLE_RATES': THROTTLE_RATES,
 }
 
-STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef')
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef'),
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_1234567890abcdef'),
 
 GEO_LOCK_ENABLED = True
 
@@ -205,6 +224,15 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'America/Santo_Domingo'
 
+# Celery Beat Schedule
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-expired-trials': {
+        'task': 'apps.subscriptions_api.tasks.cleanup_expired_trials',
+        'schedule': crontab(hour=2, minute=0),  # Diario a las 2:00 AM
+    },
+}
+
 
 
 
@@ -276,16 +304,21 @@ if "pytest" in sys.modules:
     CELERY_TASK_EAGER_PROPAGATES = True
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 else:
-
-    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-
-    # EMAIL_BACKEND = env('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
-
-    EMAIL_HOST = env('EMAIL_HOST', default='smtp.example.com')
-    EMAIL_PORT = env.int('EMAIL_PORT', default=587)
-    EMAIL_USE_TLS = True
-    EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='your-email@example.com')
-    EMAIL_HOST_PASSWORD = env('EMAIL_HOST_PASSWORD', default='your-email-password')
+    # SendGrid configuration
+    SENDGRID_API_KEY = env('SENDGRID_API_KEY', default='')
+    DEFAULT_FROM_EMAIL = env('SENDGRID_FROM_EMAIL', default='desarrollojavascript00@gmail.com')
+    
+    if SENDGRID_API_KEY and SENDGRID_API_KEY.startswith('SG.'):
+        # Use SMTP with SendGrid
+        EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+        EMAIL_HOST = 'smtp.sendgrid.net'
+        EMAIL_PORT = 587
+        EMAIL_USE_TLS = True
+        EMAIL_HOST_USER = 'apikey'
+        EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
+    else:
+        # Fallback to console for development
+        EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
     
 
 # Security settings

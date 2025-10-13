@@ -73,6 +73,22 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         """Retorna la lista de fuentes disponibles"""
         sources = AuditLog._meta.get_field('source').choices
         return Response([{'value': source[0], 'label': source[1]} for source in sources])
+    
+    @staticmethod
+    def log_integration_error(service, error_message):
+        """Método estático para registrar errores de integración"""
+        action_map = {
+            'stripe': 'STRIPE_ERROR',
+            'paypal': 'PAYPAL_ERROR', 
+            'twilio': 'TWILIO_ERROR',
+            'sendgrid': 'SENDGRID_ERROR',
+        }
+        
+        AuditLog.objects.create(
+            action=action_map.get(service.lower(), 'INTEGRATION_ERROR'),
+            description=f"Error en {service}: {error_message}",
+            source='INTEGRATIONS'
+        )
 
 # Vista auxiliar para crear logs (útil para migración)
 class AuditLogCreateView(viewsets.ViewSet):

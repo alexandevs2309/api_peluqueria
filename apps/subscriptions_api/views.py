@@ -16,6 +16,7 @@ import stripe
 from apps.tenants_api.models import Tenant
 from apps.auth_api.models import User
 from apps.roles_api.models import Role, UserRole
+from rest_framework.throttling import UserRateThrottle
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 
@@ -26,7 +27,57 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     filterset_fields = ['is_active']
     search_fields = ['name', ]
-    ordering_fields = ['price', 'duration_days']
+    ordering_fields = ['price', 'duration_month']
+    
+    def get_permissions(self):
+        # Solo SuperAdmin puede crear/eliminar planes
+        if self.action in ['create', 'destroy']:
+            from apps.tenants_api.views import IsSuperAdmin
+            return [IsSuperAdmin()]
+        return super().get_permissions()
+    
+    def update(self, request, *args, **kwargs):
+        print(f"DEBUG: Update data received: {request.data}")
+        
+        # Bloquear solo las características
+        blocked_fields = ['features', 'name']
+        if hasattr(request.data, '_mutable'):
+            request.data._mutable = True
+        
+        # Filtrar campos bloqueados
+        for field in blocked_fields:
+            if field in request.data:
+                del request.data[field]
+                
+        print(f"DEBUG: Filtered data: {request.data}")
+        try:
+            return super().update(request, *args, **kwargs)
+        except Exception as e:
+            print(f"DEBUG: Update error: {str(e)}")
+            print(f"DEBUG: Error type: {type(e)}")
+            import traceback
+            print(f"DEBUG: Full traceback: {traceback.format_exc()}")
+            
+            # Devolver error más específico
+            from rest_framework.response import Response
+            return Response({
+                'error': str(e),
+                'type': str(type(e)),
+                'detail': 'Error updating subscription plan'
+            }, status=400)
+    
+    def partial_update(self, request, *args, **kwargs):
+        # Bloquear solo las características
+        blocked_fields = ['features', 'name']
+        if hasattr(request.data, '_mutable'):
+            request.data._mutable = True
+            
+        # Filtrar campos bloqueados
+        for field in blocked_fields:
+            if field in request.data:
+                del request.data[field]
+                
+        return super().partial_update(request, *args, **kwargs)
     
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -183,15 +234,15 @@ class MyEntitlementsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Para Super-Admin, devolver entitlements ilimitados
+        # Para Super-Admin, devolver entitlements limitados (no exponer capacidades)
         if request.user.roles.filter(name='Super-Admin').exists():
             return Response({
-                "plan": "Super-Admin",
-                "plan_display": "Administrador del Sistema",
-                "features": {"unlimited": True},
-                "limits": {"max_employees": 0},  # 0 = ilimitado
+                "plan": "admin",
+                "plan_display": "Plan Administrativo",
+                "features": {"management": True},
+                "limits": {"max_employees": 999},  # No exponer "unlimited"
                 "usage": {"employees": 0},
-                "duration_month": 0
+                "duration_month": 12
             })
         
         sub = get_user_active_subscription(request.user)
@@ -254,10 +305,18 @@ class MyEntitlementsView(APIView):
         return Response(data)
 
 class OnboardingView(APIView):
-    permission_classes = []
+    permission_classes = [IsAuthenticated]  # Requiere autenticación
+    throttle_classes = [UserRateThrottle]   # Rate limiting
 
     @transaction.atomic
     def post(self, request):
+        # Solo SuperAdmin puede hacer onboarding
+        if not request.user.roles.filter(name='Super-Admin').exists():
+            return Response({
+                'error': 'Permission denied',
+                'message': 'Only Super-Admin can perform onboarding'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
         serializer = OnboardingSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

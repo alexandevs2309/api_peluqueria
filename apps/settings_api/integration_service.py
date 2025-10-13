@@ -12,9 +12,25 @@ class IntegrationService:
     
     @staticmethod
     def is_stripe_enabled():
-        """Verificar si Stripe está habilitado"""
+        """Verificar si Stripe está habilitado y configurado correctamente"""
         system_settings = IntegrationService.get_system_settings()
-        return system_settings.stripe_enabled and bool(os.getenv('STRIPE_SECRET_KEY'))
+        secret_key = os.getenv('STRIPE_SECRET_KEY')
+        public_key = os.getenv('STRIPE_PUBLIC_KEY')
+        
+        if not system_settings.stripe_enabled:
+            return False
+            
+        if not secret_key or not public_key:
+            return False
+            
+        # Validar formato de claves Stripe
+        if not secret_key.startswith('sk_'):
+            return False
+            
+        if not public_key.startswith('pk_'):
+            return False
+            
+        return True
     
     @staticmethod
     def is_paypal_enabled():
@@ -32,9 +48,31 @@ class IntegrationService:
     
     @staticmethod
     def is_sendgrid_enabled():
-        """Verificar si SendGrid (Email) está habilitado"""
+        """Verificar si SendGrid (Email) está habilitado y configurado correctamente"""
         system_settings = IntegrationService.get_system_settings()
-        return system_settings.sendgrid_enabled and bool(os.getenv('SENDGRID_API_KEY'))
+        api_key = os.getenv('SENDGRID_API_KEY')
+        
+        if not system_settings.sendgrid_enabled:
+            return False
+            
+        if not api_key:
+            return False
+            
+        # Validar formato de API key
+        if not api_key.startswith('SG.'):
+            return False
+            
+        # Test SMTP connection
+        try:
+            from django.core.mail import get_connection
+            connection = get_connection()
+            connection.open()
+            connection.close()
+            return True
+        except Exception as e:
+            from apps.audit_api.views import AuditLogViewSet
+            AuditLogViewSet.log_integration_error('SendGrid', str(e))
+            return False
     
     @staticmethod
     def is_aws_s3_enabled():
@@ -69,11 +107,27 @@ class IntegrationService:
     def send_email(to_email, subject, message):
         """Enviar email si SendGrid está habilitado"""
         if not IntegrationService.is_sendgrid_enabled():
-            raise Exception("SendGrid no está habilitado")
+            raise Exception("SendGrid no está configurado - Falta SENDGRID_API_KEY")
         
-        # TODO: Implementar envío real con SendGrid
-        print(f"Email a {to_email}: {subject} - {message}")
-        return True
+        try:
+            # Usar Django mail backend (SMTP)
+            from django.core.mail import send_mail
+            from django.conf import settings
+            
+            send_mail(
+                subject=subject,
+                message=message,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[to_email],
+                html_message=message,
+                fail_silently=False
+            )
+            return True
+                
+        except Exception as e:
+            from apps.audit_api.views import AuditLogViewSet
+            AuditLogViewSet.log_integration_error('SendGrid', f"Error enviando email: {str(e)}")
+            raise Exception(f"Error enviando email: {str(e)}")
     
     @staticmethod
     def upload_to_s3(file, bucket, key):

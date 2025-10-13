@@ -57,6 +57,8 @@ class LoginSerializer(serializers.Serializer):
             if not user:
                 raise serializers.ValidationError("Credenciales inválidas.")
             tenant = user.tenant
+            if not tenant and user.role != 'SuperAdmin':
+                raise serializers.ValidationError("Usuario sin tenant asignado.")
 
         if not user.check_password(password):
             raise serializers.ValidationError("Credenciales inválidas.")
@@ -111,6 +113,13 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         return User.objects.create_user(**validated_data)
+
+class UserListSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source='tenant.name', read_only=True)
+    
+    class Meta:
+        model = User
+        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant_name', 'is_active', 'date_joined', 'last_login']
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod

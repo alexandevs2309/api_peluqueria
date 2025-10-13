@@ -7,10 +7,13 @@ class MaintenanceModeMiddleware(MiddlewareMixin):
     """Middleware para manejar el modo mantenimiento"""
     
     def process_request(self, request):
-        # Permitir acceso a admin y health checks
+        # Permitir acceso a admin, health checks y landing
         if (request.path.startswith('/admin/') or 
             request.path.startswith('/api/healthz/') or
-            request.path.startswith('/api/system-settings/')):
+            request.path.startswith('/api/system-settings/') or
+            request.path.startswith('/landing') or
+            request.path.startswith('/pages/landing') or
+            request.path.startswith('/api/auth/register')):
             return None
             
         try:

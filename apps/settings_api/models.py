@@ -4,18 +4,33 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.translation import gettext_lazy as _
 
 class Branch(models.Model):
-    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='branches', null=True, blank=True)
+    """Sucursales - Solo para planes Enterprise/Multi-Branch"""
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='branches')
     name = models.CharField(max_length=255)
     address = models.TextField(blank=True, null=True)
     is_main = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'name'], name='unique_branch_per_tenant')
+        ]
+
+    def save(self, *args, **kwargs):
+        # Verificar que el tenant tenga un plan que permita múltiples sucursales
+        subscription = self.tenant.subscription_set.filter(is_active=True).first()
+        if subscription and not subscription.plan.allows_multiple_branches:
+            if Branch.objects.filter(tenant=self.tenant).exists() and not self.pk:
+                raise ValueError(_("Su plan actual no permite múltiples sucursales"))
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        return self.name
+        return f"{self.name} ({self.tenant.name})"
 
 class Setting(models.Model):
-    branch = models.ForeignKey(Branch, on_delete=models.CASCADE, null=False, blank=False, verbose_name=_("Sucursal"))
-    business_name = models.CharField(_("Nombre del negocio"), max_length=255 , blank=False, null=False)
+    """Configuraciones por sucursal - Solo para planes Enterprise"""
+    branch = models.OneToOneField(Branch, on_delete=models.CASCADE, related_name='settings')
+    business_name = models.CharField(_("Nombre del negocio"), max_length=255)
     business_email = models.EmailField(_("Email de contacto"), blank=True, null=True)
     phone_number = models.CharField(_("Teléfono"), max_length=50, blank=True, null=True)
     address = models.TextField(_("Dirección"), blank=True, null=True)
@@ -31,32 +46,12 @@ class Setting(models.Model):
     business_hours = models.JSONField(_("Horario de atención"), default=dict, blank=True)
     preferences = models.JSONField(_("Preferencias generales"), default=dict, blank=True)
     logo = models.ImageField(_("Logo del negocio"), upload_to="settings/logo/", blank=True, null=True)
-    theme = models.CharField(_("Tema visual"), max_length=50, default="light")  # light / dark / custom
+    theme = models.CharField(_("Tema visual"), max_length=50, default="light")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["branch"], name="unique_setting_per_branch")
-        ]
-
-
-    def save(self, *args, **kwargs):
-        if not self.pk and Setting.objects.filter(branch=self.branch).exists():
-            raise ValueError(_("Solo puede existir un Setting por sucursal"))
-        super().save(*args, **kwargs)
-
     def __str__(self):
-        return f"{self.business_name} ({self.branch or 'General'})"
-
-class SettingAuditLog(models.Model):
-    setting = models.ForeignKey(Setting, on_delete=models.CASCADE)
-    changed_by = models.ForeignKey(django_settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
-    changed_at = models.DateTimeField(auto_now_add=True)
-    change_summary = models.JSONField()
-
-    def __str__(self):
-        return f"Cambio en {self.setting} por {self.changed_by} el {self.changed_at}"
+        return f"{self.business_name} - {self.branch.name}"
 
 class SystemSettings(models.Model):
     """Configuraciones globales del sistema SaaS"""

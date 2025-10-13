@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import LimitOffsetPagination
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.core.mail import send_mail
@@ -21,7 +22,7 @@ from .serializers import (
     ActiveSessionSerializer, RegisterSerializer, LoginSerializer,
     PasswordChangeSerializer, PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
-    EmployeeUserSerializer
+    EmployeeUserSerializer, UserListSerializer
 )
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import viewsets
@@ -32,6 +33,7 @@ from apps.roles_api.models import Role, UserRole
 import re
 from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
+from .anti_fraud import AntiFraudValidator
 from django.utils.timezone import now
 import pyotp
 import qrcode
@@ -41,20 +43,50 @@ from base64 import b64encode
 
 User = get_user_model()
 
+class RegisterThrottle(AnonRateThrottle):
+    scope = 'register'
+
+class LoginThrottle(AnonRateThrottle):
+    scope = 'login'
+
+class PasswordResetThrottle(AnonRateThrottle):
+    scope = 'password_reset'
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
+    throttle_classes = [RegisterThrottle]
 
     def perform_create(self, serializer):
+        # Obtener datos para validación
+        email = serializer.validated_data['email']
+        ip_address = get_client_ip(self.request)
+        
+        # Validación anti-fraude ANTES de crear tenant
+        is_fraud, reason, blocked_until = AntiFraudValidator.check_email_fraud(email, ip_address)
+        if is_fraud:
+            error_messages = {
+                'EMAIL_ALREADY_USED_FREE': 'Este email ya fue usado para una cuenta gratuita',
+                'IP_LIMIT_EXCEEDED': 'Límite de cuentas gratuitas alcanzado desde esta IP',
+                'EMAIL_LIMIT_EXCEEDED': 'Este email ya tiene una cuenta gratuita'
+            }
+            raise ValidationError({
+                'email': error_messages.get(reason, 'No se puede crear la cuenta'),
+                'code': reason,
+                'blocked_until': blocked_until.isoformat() if blocked_until else None
+            })
+        
         user = serializer.save()
         
         # Crear tenant automáticamente para el usuario
         try:
-            # Obtener plan básico por defecto
-            basic_plan = SubscriptionPlan.objects.filter(name__icontains='basic').first()
-            if not basic_plan:
-                basic_plan = SubscriptionPlan.objects.first()
+            # Obtener plan FREE por defecto para nuevos registros
+            free_plan = SubscriptionPlan.objects.filter(name='free').first()
+            if not free_plan:
+                free_plan = SubscriptionPlan.objects.filter(name='basic').first()
+            if not free_plan:
+                free_plan = SubscriptionPlan.objects.first()
             
             # Crear subdomain único
             subdomain = re.sub(r'[^a-zA-Z0-9]', '', user.full_name.lower())[:50]
@@ -67,12 +99,20 @@ class RegisterView(generics.CreateAPIView):
                 subdomain = f'{original_subdomain}{counter}'
                 counter += 1
             
+            # Crear nombre de tenant único
+            tenant_name = f'Barbería de {user.full_name}'
+            counter = 1
+            original_name = tenant_name
+            while Tenant.objects.filter(name=tenant_name).exists():
+                tenant_name = f'{original_name} {counter}'
+                counter += 1
+            
             # Crear tenant
             tenant = Tenant.objects.create(
-                name=f'Barbería de {user.full_name}',
+                name=tenant_name,
                 subdomain=subdomain,
                 owner=user,
-                subscription_plan=basic_plan,
+                subscription_plan=free_plan,
                 is_active=True
             )
             
@@ -87,6 +127,10 @@ class RegisterView(generics.CreateAPIView):
                 role=client_admin_role,
                 tenant=tenant
             )
+            
+            # Registrar en sistema anti-fraude si es plan FREE
+            if free_plan and free_plan.name == 'free':
+                AntiFraudValidator.record_free_signup(user.email, get_client_ip(self.request))
             
             print(f'Usuario {user.email} creado con tenant {tenant.name} y rol Client-Admin')
                 
@@ -105,16 +149,13 @@ class RegisterView(generics.CreateAPIView):
         else:
             send_email_async.delay(email_subject, email_body, email_from, email_to)
         
-        if settings.DEBUG:
-            return Response({
-                "detail": "Usuario registrado. Revisa la consola para el correo de verificación.",
-                "email_verification_token": user.email_verification_token
-            }, status=status.HTTP_201_CREATED)
-        return Response({"detail": "Usuario registrado. Revisa tu correo para verificar."}, status=status.HTTP_201_CREATED)
+        # No devolver Response desde perform_create, solo procesar
+        # La respuesta se maneja automáticamente por CreateAPIView
 
 class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
+    throttle_classes = [LoginThrottle]
 
     @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
@@ -153,6 +194,9 @@ class LoginView(generics.GenericAPIView):
         user = serializer.validated_data['user']
         tenant = serializer.validated_data['tenant']
 
+        if not tenant and user.role != 'SuperAdmin':
+            return Response({"detail": "Usuario sin tenant asignado. Contacte al administrador."}, status=status.HTTP_400_BAD_REQUEST)
+
         if not user.is_active:
             LoginAudit.objects.create(
                 user=user,
@@ -172,8 +216,9 @@ class LoginView(generics.GenericAPIView):
             }, status=status.HTTP_200_OK)
 
         refresh = RefreshToken.for_user(user)
-        refresh['tenant_id'] = tenant.id
-        refresh['tenant_subdomain'] = tenant.subdomain
+        if tenant:
+            refresh['tenant_id'] = tenant.id
+            refresh['tenant_subdomain'] = tenant.subdomain
         access_token = str(refresh.access_token)
         refresh_token = str(refresh)
         jti = get_client_jti(access_token)
@@ -204,21 +249,27 @@ class LoginView(generics.GenericAPIView):
             timestamp=now()
         )
 
+        user_role = user.role or 'ClientStaff'
+        if not user_role and user.roles.exists():
+            user_role = user.roles.first().name
+        
         response_data = {
             'user': {
                 'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name,
-                'roles': [r.name for r in user.roles.all()],
-            },
-            'tenant': {
-                'id': tenant.id,
-                'name': tenant.name,
-                'subdomain': tenant.subdomain,
+                'role': user_role,
             },
             'access': access_token,
             'refresh': refresh_token
         }
+        
+        if tenant:
+            response_data['tenant'] = {
+                'id': tenant.id,
+                'name': tenant.name,
+                'subdomain': tenant.subdomain,
+            }
 
         # response.set_cookie(
         #     'access_token',
@@ -239,42 +290,49 @@ class LoginView(generics.GenericAPIView):
         #     path='/'
         # )
         response = Response(response_data)
-        response.set_cookie('tenant_id', str(tenant.id), httponly=False, secure=not settings.DEBUG, samesite='Strict')
+        if tenant:
+            response.set_cookie('tenant_id', str(tenant.id), httponly=False, secure=not settings.DEBUG, samesite='Strict')
         return response
 
 class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
-        refresh_token = request.COOKIES.get('refresh_token')
-        if not refresh_token:
-            return Response({"error": "No se proporcionó token de actualización."}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            token = RefreshToken(refresh_token)
-            token.blacklist()
-            jti = get_client_jti(refresh_token)
-
+        # Try to get refresh_token from cookies first, then from body
+        refresh_token = request.COOKIES.get('refresh_token') or request.data.get('refresh_token')
+        
+        # Always return success response
+        response = Response({"detail": "Sesión cerrada exitosamente."}, status=status.HTTP_200_OK)
+        response.delete_cookie('access_token')
+        response.delete_cookie('refresh_token')
+        
+        if refresh_token:
             try:
-                session = ActiveSession.objects.get(refresh_token=refresh_token, user=request.user)
-                session.expire_session()
-            except ActiveSession.DoesNotExist:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+                
+                # Try to find and expire session
+                try:
+                    session = ActiveSession.objects.get(refresh_token=refresh_token)
+                    session.expire_session()
+                    
+                    # Log successful logout if we have a user
+                    if hasattr(request, 'user') and request.user.is_authenticated:
+                        AccessLog.objects.create(
+                            user=request.user,
+                            event_type='LOGOUT',
+                            ip_address=get_client_ip(request),
+                            user_agent=get_user_agent(request),
+                            timestamp=now()
+                        )
+                except ActiveSession.DoesNotExist:
+                    pass
+                    
+            except TokenError:
+                # Token invalid/expired, but still return success
                 pass
-
-            AccessLog.objects.create(
-                user=request.user,
-                event_type='LOGOUT',
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
-                timestamp=now()
-            )
-
-            response = Response({"detail": "Sesión cerrada exitosamente."}, status=status.HTTP_200_OK)
-            response.delete_cookie('access_token')
-            response.delete_cookie('refresh_token')
-            return response
-        except TokenError:
-            return Response({"error": "Token inválido o expirado."}, status=status.HTTP_400_BAD_REQUEST)
+        
+        return response
 
 class ChangePasswordView(generics.UpdateAPIView):
     serializer_class = PasswordChangeSerializer
@@ -323,6 +381,7 @@ class ChangePasswordView(generics.UpdateAPIView):
 
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetThrottle]
 
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -614,31 +673,73 @@ class MFALoginVerifyView(APIView):
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     permission_classes = [IsAuthenticated]
+    serializer_class = UserListSerializer
+    
+    def destroy(self, request, *args, **kwargs):
+        """Override destroy to add logging and proper deletion"""
+        instance = self.get_object()
+        print(f"Attempting to delete user: {instance.email} (ID: {instance.id})")
+        
+        # Check if user can be deleted
+        if instance.is_superuser and User.objects.filter(is_superuser=True).count() <= 1:
+            return Response({
+                'error': 'Cannot delete the last superuser'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Log the deletion
+            AccessLog.objects.create(
+                user=request.user,
+                event_type='USER_DELETED',
+                ip_address=get_client_ip(request),
+                user_agent=get_user_agent(request),
+                timestamp=now()
+            )
+            
+            # Perform the deletion
+            self.perform_destroy(instance)
+            print(f"User {instance.email} deleted successfully")
+            
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        except Exception as e:
+            print(f"Error deleting user: {str(e)}")
+            return Response({
+                'error': f'Failed to delete user: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
+    def perform_destroy(self, instance):
+        """Actually delete the user instance"""
+        instance.delete()
+    
     def get_serializer_class(self):
         if self.action in ['create']:
             return EmployeeUserSerializer
-        return RegisterSerializer
+        return UserListSerializer
 
     def create(self, request, *args, **kwargs):
-        print(f"UserViewSet.create - Data received: {request.data}")
+        # Check user limits for non-superadmin
+        if not request.user.is_superuser and request.user.tenant:
+            if not request.user.tenant.can_add_user():
+                return Response({
+                    'error': 'User limit reached for your plan',
+                    'current': request.user.tenant.get_user_usage()['current'],
+                    'limit': request.user.tenant.max_users
+                }, status=status.HTTP_403_FORBIDDEN)
+        
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
-            print(f"UserViewSet.create - Validation error: {e.detail}")
             return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
         
         try:
             user = serializer.save()
-            print(f"UserViewSet.create - User created: {user.email}")
             return Response({
                 'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name
             }, status=status.HTTP_201_CREATED)
         except Exception as e:
-            print(f"UserViewSet.create - Error creating user: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def get_queryset(self):
