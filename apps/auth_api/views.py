@@ -39,6 +39,7 @@ import pyotp
 import qrcode
 from io import BytesIO
 from base64 import b64encode
+from .authentication import DualJWTAuthentication
 
 
 User = get_user_model()
@@ -761,3 +762,19 @@ class UserViewSet(viewsets.ModelViewSet):
             'tenant_id': user.tenant_id,
             'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
         } for user in users])
+
+
+class VerifyAuthView(APIView):
+    """Verificar autenticación con cookies httpOnly"""
+    authentication_classes = [DualJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        return Response({
+            'authenticated': True,
+            'user': {
+                'id': request.user.id,
+                'email': request.user.email,
+                'role': request.user.role
+            }
+        })

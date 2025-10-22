@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.utils import timezone
 from apps.tenants_api.models import Tenant
 from apps.roles_api.models import Role, UserRole
 from apps.settings_api.models import Branch, Setting
@@ -53,17 +54,21 @@ def register_with_plan(request):
         # Crear tenant y usuario en una transacción
         with transaction.atomic():
             # 1. Crear usuario primero
+            # Generar contraseña aleatoria segura
             password = generate_random_password()
+            print(f"Generando contraseña aleatoria: {password}")
+            
             print(f"Creando usuario: {data['email']}")
             user = User.objects.create(
                 email=data['email'],
                 full_name=data['fullName'],
                 phone=data.get('phone', ''),
+                role='Client-Admin',
                 is_active=True
             )
             user.set_password(password)
             user.save()
-            print(f"Usuario creado: {user.id}")
+            print(f"Usuario creado: {user.id} con rol: {user.role}")
             
             # 2. Obtener el plan de suscripción
             from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
@@ -75,7 +80,7 @@ def register_with_plan(request):
                     'error': f'Plan no válido: {data["planType"]}'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # 3. Crear tenant con plan
+            # 3. Crear tenant con plan (herencia automática en save())
             subdomain = generate_unique_subdomain(data['businessName'], user.id)
             print(f"Creando tenant con subdomain: {subdomain}")
             tenant = Tenant.objects.create(
@@ -84,28 +89,35 @@ def register_with_plan(request):
                 owner=user,
                 contact_email=data['email'],
                 contact_phone=data.get('phone', ''),
-                subscription_plan=subscription_plan,  # ✅ Asignar plan objeto
+                address=data.get('address', ''),
+                subscription_plan=subscription_plan,  # ✅ Herencia automática en save()
                 is_active=True
             )
             print(f"Tenant creado: {tenant.id} con plan: {tenant.plan_type}")
+            print(f"Status: {tenant.subscription_status}, Trial end: {tenant.trial_end_date}")
             
-            # 4. Crear suscripción del usuario
+            # 4. Crear suscripción del usuario con trial
+            trial_end = timezone.now() + timezone.timedelta(days=7)
             user_subscription = UserSubscription.objects.create(
                 user=user,
                 plan=subscription_plan,
+                start_date=timezone.now(),
+                end_date=trial_end,
                 is_active=True,
-                auto_renew=True
+                auto_renew=False  # No auto-renew durante trial
             )
-            print(f"Suscripción creada: {user_subscription.id}")
+            print(f"Suscripción trial creada: {user_subscription.id} hasta {trial_end}")
             
-            # 5. Asignar tenant al usuario
+
+            
+            # 6. Asignar tenant al usuario
             user.tenant = tenant
             user.save()
             
-            # 6. Asignar rol
+            # 7. Asignar rol
             admin_role = Role.objects.get(name='Client-Admin')
             UserRole.objects.create(user=user, role=admin_role)
-            print(f"Rol asignado")
+            print(f"Rol Client-Admin asignado al usuario")
 
             # 7. Crear sucursal principal por defecto
             default_branch = Branch.objects.create(
@@ -139,7 +151,10 @@ def register_with_plan(request):
                 'account': {
                     'business_name': tenant.name,
                     'plan': tenant.plan_type,
-                    'tenant_id': tenant.id
+                    'tenant_id': tenant.id,
+                    'subscription_status': tenant.subscription_status,
+                    'trial_end_date': tenant.trial_end_date,
+                    'trial_days_remaining': (tenant.trial_end_date - timezone.now().date()).days if tenant.trial_end_date else None
                 },
                 'credentials': {
                     'email': user.email,

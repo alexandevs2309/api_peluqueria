@@ -99,19 +99,19 @@ MIDDLEWARE = [
 
 # Rate limiting configuration by environment
 if DEBUG:
-    # Development: More permissive limits
+    # Development: Reasonable limits that don't interfere with testing
     THROTTLE_RATES = {
-        'user': '2000/hour',
-        'anon': '500/hour', 
-        'login': '20/min',
-        'register': '10/hour',
-        'password_reset': '10/hour',
+        'user': '1000/hour',
+        'anon': '200/hour', 
+        'login': '10/min',  # Más estricto pero usable en dev
+        'register': '5/hour',  # Previene spam en dev
+        'password_reset': '5/hour',
     }
 else:
     # Production: Strict security limits
     THROTTLE_RATES = {
-        'user': '1000/hour',
-        'anon': '100/hour',
+        'user': '500/hour',
+        'anon': '50/hour',
         'login': '5/min',
         'register': '3/hour',
         'password_reset': '3/hour',
@@ -119,7 +119,8 @@ else:
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.auth_api.authentication.DualJWTAuthentication',  # Soporta localStorage Y cookies
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Fallback
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -207,6 +208,7 @@ CACHES = {
         'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'PASSWORD': env('REDIS_PASSWORD', default=''),
         }
     }
 }
@@ -328,6 +330,12 @@ CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
+
+# Basic security headers (safe for development)
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = 'DENY'
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # Logging
 LOGGING = {
