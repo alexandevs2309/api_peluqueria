@@ -30,6 +30,10 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     ordering_fields = ['price', 'duration_month']
     
     def get_permissions(self):
+        # Permitir acceso público para listar planes
+        if self.action == 'list':
+            from rest_framework.permissions import AllowAny
+            return [AllowAny()]
         # Solo SuperAdmin puede crear/eliminar planes
         if self.action in ['create', 'destroy']:
             from apps.tenants_api.views import IsSuperAdmin
@@ -257,13 +261,24 @@ class MyEntitlementsView(APIView):
                     # Si el tenant tiene un plan, usar ese plan
                     if request.user.tenant.subscription_plan:
                         plan = request.user.tenant.subscription_plan
+                        tenant = request.user.tenant
+                        
+                        # Calcular días restantes de trial
+                        trial_days_remaining = None
+                        if tenant.subscription_status == 'trial' and tenant.trial_end_date:
+                            trial_days_remaining = (tenant.trial_end_date - timezone.now().date()).days
+                        
                         return Response({
                             "plan": plan.name,
                             "plan_display": getattr(plan, 'get_name_display', lambda: plan.name)(),
                             "features": plan.features or {},
                             "limits": {"max_employees": plan.max_employees},
                             "usage": {"employees": employee_count},
-                            "duration_month": getattr(plan, 'duration_month', 1)
+                            "duration_month": getattr(plan, 'duration_month', 1),
+                            "subscription_status": tenant.subscription_status,
+                            "trial_end_date": tenant.trial_end_date,
+                            "trial_days_remaining": trial_days_remaining,
+                            "is_trial": tenant.subscription_status == 'trial'
                         })
             except Exception:
                 employee_count = 0
@@ -294,6 +309,12 @@ class MyEntitlementsView(APIView):
         limits = {
             "max_employees": plan.max_employees,  # 0 = ilimitado
         }
+        # Información del tenant para trial
+        tenant = request.user.tenant
+        trial_days_remaining = None
+        if tenant and tenant.subscription_status == 'trial' and tenant.trial_end_date:
+            trial_days_remaining = (tenant.trial_end_date - timezone.now().date()).days
+        
         data = {
             "plan": plan.name,
             "plan_display": getattr(plan, 'get_name_display', lambda: plan.name)(),
@@ -301,6 +322,10 @@ class MyEntitlementsView(APIView):
             "limits": limits,
             "usage": usage,
             "duration_month": getattr(plan, 'duration_month', 1),
+            "subscription_status": tenant.subscription_status if tenant else 'active',
+            "trial_end_date": tenant.trial_end_date if tenant else None,
+            "trial_days_remaining": trial_days_remaining,
+            "is_trial": tenant.subscription_status == 'trial' if tenant else False
         }
         return Response(data)
 

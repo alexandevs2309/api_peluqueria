@@ -30,6 +30,8 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/healthz/',
             '/api/system-settings/',
             '/api/subscriptions/plans/',  # Allow subscription plans access
+            '/api/subscriptions/register/',  # Allow registration
+            '/api/settings/contact/',  # Allow contact forms
         ]
         for exempt_path in exempt_paths:
             if request.path.startswith(exempt_path):

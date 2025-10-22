@@ -16,6 +16,9 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             '/api/docs/',
             '/api/healthz/',
             '/admin/',
+            '/api/subscriptions/plans/',
+            '/api/subscriptions/register/',
+            '/api/settings/contact/',
         ]
         
         for exempt_path in exempt_paths:
