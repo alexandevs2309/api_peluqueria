@@ -8,7 +8,6 @@ from dateutil.relativedelta import relativedelta
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
-        ('free', 'Plan Gratuito'),
         ('basic', 'Plan Básico'),
         ('standard', 'Plan Estándar'),
         ('premium', 'Plan Premium'),

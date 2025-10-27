@@ -400,3 +400,22 @@ class OnboardingView(APIView):
         except Exception as e:
             transaction.set_rollback(True)
             return Response({'error': 'Error interno: ' + str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def activate_subscription(self, request):
+        """Activar suscripción después de pago"""
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'No tenant found'}, status=400)
+        
+        # Aquí validarías el pago con Stripe/PayPal
+        # payment_verified = validate_payment(request.data)
+        
+        # Por ahora, activar directamente
+        tenant.activate_subscription()
+        
+        return Response({
+            'message': 'Subscription activated successfully',
+            'status': tenant.subscription_status,
+            'access_level': tenant.get_access_level()
+        })

@@ -1,6 +1,7 @@
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from datetime import timedelta
 
 class Tenant(models.Model):
     PLAN_CHOICES = [
@@ -29,6 +30,7 @@ class Tenant(models.Model):
     subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.SET_NULL, null=True, blank=True)
     subscription_status = models.CharField(max_length=20, choices=SUBSCRIPTION_STATUS, default="trial")
     trial_end_date = models.DateField(null=True, blank=True)
+    trial_notifications_sent = models.JSONField(default=dict, blank=True)
     billing_info = models.JSONField(default=dict, blank=True)
     settings = models.JSONField(default=dict, blank=True)
 
@@ -49,28 +51,16 @@ class Tenant(models.Model):
             self.max_employees = plan.max_employees
             self.max_users = plan.max_users
             
-            # Lógica específica por tipo de plan
-            if plan.name == 'free':
-                # Plan Free: 7 días de prueba (duration_month = 0 significa días)
+            # TODOS los planes empiezan con trial (solo en creación)
+            if not self.pk:
                 self.subscription_status = 'trial'
-                # Para plan free, usar 7 días independientemente del duration_month
-                self.trial_end_date = timezone.now().date() + timezone.timedelta(days=7)
-            elif plan.name == 'basic':
-                # Plan Basic: Suscripción mensual activa
-                self.subscription_status = 'active'
-                self.trial_end_date = None
-            elif plan.name == 'premium':
-                # Plan Premium: Suscripción mensual activa con características premium
-                self.subscription_status = 'active'
-                self.trial_end_date = None
-            elif plan.name == 'enterprise':
-                # Plan Enterprise: Suscripción anual activa, sin límites
-                self.subscription_status = 'active'
-                self.trial_end_date = None
-            elif plan.name == 'standard':
-                # Plan Standard: Suscripción mensual activa
-                self.subscription_status = 'active'
-                self.trial_end_date = None
+                
+                if plan.name == 'enterprise':
+                    trial_days = 14
+                else:  # basic, standard, premium
+                    trial_days = 7
+                    
+                self.trial_end_date = timezone.now().date() + timedelta(days=trial_days)
             
             # Heredar todas las características del plan
             self.settings.update({
@@ -130,6 +120,61 @@ class Tenant(models.Model):
             'unlimited': self.max_employees == 0,
             'percentage': (current_employees / self.max_employees * 100) if self.max_employees > 0 else 0
         }
+
+    def is_trial_expired(self):
+        """Verificar si el trial ha expirado"""
+        return (self.subscription_status == 'trial' and 
+                self.trial_end_date and 
+                timezone.now().date() > self.trial_end_date)
+    
+    def get_trial_days_remaining(self):
+        """Obtener días restantes del trial"""
+        if self.subscription_status != 'trial' or not self.trial_end_date:
+            return 0
+        days_left = (self.trial_end_date - timezone.now().date()).days
+        return max(0, days_left)
+    
+    def check_and_suspend_expired_trial(self):
+        """Verificar y suspender trial expirado"""
+        if self.is_trial_expired():
+            self.subscription_status = 'suspended'
+            self.save()
+            return True
+        return False
+    
+    def get_access_level(self):
+        """Determinar nivel de acceso del tenant"""
+        if self.subscription_status == 'active':
+            return 'full'
+        elif self.subscription_status == 'trial':
+            return 'full' if not self.is_trial_expired() else 'grace'
+        elif self.subscription_status == 'suspended':
+            if self.trial_end_date:
+                days_since_expiry = (timezone.now().date() - self.trial_end_date).days
+                return 'grace' if days_since_expiry <= 3 else 'blocked'
+            return 'blocked'
+        return 'blocked'
+    
+    def should_send_trial_notification(self, days_before):
+        """Verificar si debe enviar notificación de trial"""
+        days_left = self.get_trial_days_remaining()
+        notification_key = f'trial_warning_{days_before}d'
+        
+        return (days_left == days_before and 
+                not self.trial_notifications_sent.get(notification_key, False))
+    
+    def mark_notification_sent(self, days_before):
+        """Marcar notificación como enviada"""
+        notification_key = f'trial_warning_{days_before}d'
+        self.trial_notifications_sent[notification_key] = True
+        self.save(update_fields=['trial_notifications_sent'])
+    
+    def activate_subscription(self):
+        """Activar suscripción (después de pago)"""
+        self.subscription_status = 'active'
+        self.trial_end_date = None
+        self.trial_notifications_sent = {}
+        self.save()
 
     def __str__(self):
         return f"{self.name} ({self.subdomain})"
