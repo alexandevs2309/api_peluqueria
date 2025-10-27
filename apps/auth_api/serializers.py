@@ -105,21 +105,56 @@ class MFAVerifySerializer(serializers.Serializer):
     code = serializers.CharField(min_length=6, max_length=6)
 
 class EmployeeUserSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = User
-        fields = ['email', 'full_name', 'phone', 'password', 'tenant']
+        fields = ['email', 'full_name', 'phone', 'password', 'tenant', 'role', 'is_active']
 
     def create(self, validated_data):
-        return User.objects.create_user(**validated_data)
+        # Asegurar que is_active sea True por defecto
+        validated_data.setdefault('is_active', True)
+        
+        # Asignar tenant automáticamente si no se especifica
+        request = self.context.get('request')
+        print(f'🔍 [SERIALIZER] Request user: {request.user if request else "No request"}')
+        print(f'🔍 [SERIALIZER] Request user tenant: {request.user.tenant if request and hasattr(request, "user") else "No tenant"}')
+        print(f'🔍 [SERIALIZER] Validated data before: {validated_data}')
+        
+        if 'tenant' not in validated_data or validated_data['tenant'] is None:
+            if request and hasattr(request, 'user') and request.user.tenant:
+                validated_data['tenant'] = request.user.tenant
+                print(f'🔍 [SERIALIZER] Tenant asignado: {request.user.tenant.id}')
+        
+        print(f'🔍 [SERIALIZER] Validated data after: {validated_data}')
+        user = User.objects.create_user(**validated_data)
+        print(f'🔍 [SERIALIZER] Usuario creado: ID={user.id}, Email={user.email}, Tenant={user.tenant_id}')
+        return user
+    
+    def update(self, instance, validated_data):
+        # No actualizar password en update
+        validated_data.pop('password', None)
+        
+        # Manejar tenant correctamente
+        tenant = validated_data.pop('tenant', None)
+        if tenant is not None:
+            instance.tenant = tenant
+        
+        # Actualizar otros campos
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        instance.save()
+        return instance
 
 class UserListSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
+    tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant_name', 'is_active', 'date_joined', 'last_login']
+        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant', 'tenant_name', 'is_active', 'date_joined', 'last_login']
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod

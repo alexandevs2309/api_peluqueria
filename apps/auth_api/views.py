@@ -713,7 +713,7 @@ class UserViewSet(viewsets.ModelViewSet):
         instance.delete()
     
     def get_serializer_class(self):
-        if self.action in ['create']:
+        if self.action in ['create', 'update', 'partial_update']:
             return EmployeeUserSerializer
         return UserListSerializer
 
@@ -735,20 +735,80 @@ class UserViewSet(viewsets.ModelViewSet):
         
         try:
             user = serializer.save()
-            return Response({
-                'id': user.id,
-                'email': user.email,
-                'full_name': user.full_name
-            }, status=status.HTTP_201_CREATED)
+            
+            # FORZAR asignación de tenant si no se asignó
+            if not user.tenant and request.user.tenant:
+                user.tenant = request.user.tenant
+                user.save()
+                print(f'🔧 [VIEWSET] Tenant forzado: {user.tenant.id} para usuario {user.id}')
+            
+            # Asignar rol si se especifica
+            if hasattr(serializer.validated_data, 'role') or 'role' in request.data:
+                role_name = serializer.validated_data.get('role') or request.data.get('role')
+                if role_name and role_name != 'SuperAdmin':
+                    try:
+                        role = Role.objects.get(name=role_name)
+                        UserRole.objects.get_or_create(
+                            user=user,
+                            role=role,
+                            tenant=user.tenant
+                        )
+                        user.role = role_name
+                        user.save()
+                    except Role.DoesNotExist:
+                        pass
+            
+            # Retornar datos completos del usuario
+            response_serializer = UserListSerializer(user)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
         except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+    
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+            user = serializer.save()
+            
+            # Actualizar rol si se especifica
+            if 'role' in request.data:
+                role_name = request.data.get('role')
+                user.role = role_name
+                user.save()
+                
+                # Manejar UserRole si no es SuperAdmin
+                if role_name and role_name != 'SuperAdmin':
+                    UserRole.objects.filter(user=user).delete()
+                    try:
+                        role = Role.objects.get(name=role_name)
+                        UserRole.objects.get_or_create(
+                            user=user,
+                            role=role,
+                            tenant=user.tenant
+                        )
+                    except Role.DoesNotExist:
+                        pass
+            
+            # Retornar datos completos del usuario
+            response_serializer = UserListSerializer(user)
+            return Response(response_serializer.data)
+            
+        except ValidationError as e:
+            print(f"Validation error: {e.detail}")
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            print(f"Update error: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser:
-            return User.objects.all()
+            return User.objects.select_related('tenant').all()
         elif user.tenant:
-            return User.objects.filter(tenant=user.tenant)
+            return User.objects.select_related('tenant').filter(tenant=user.tenant)
         return User.objects.none()
 
     @action(detail=False, methods=['get'])

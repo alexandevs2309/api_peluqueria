@@ -58,8 +58,12 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     ROLE_CHOICES = [
         ('SuperAdmin', 'Super Admin'),
-        ('ClientAdmin', 'Client Admin'),
-        ('ClientStaff', 'Client Staff'),
+        ('Client-Admin', 'Client Admin'),
+        ('Client-Staff', 'Client Staff'),
+        ('Estilista', 'Estilista'),
+        ('Cajera', 'Cajera'),
+        ('Manager', 'Manager'),
+        ('Utility', 'Utility'),
     ]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, blank=True, null=True)
 
@@ -82,9 +86,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         ]
 
     def save(self, *args, **kwargs):
-        # Enforce tenant for ClientAdmin and ClientStaff
-        if self.role in ['ClientAdmin', 'ClientStaff'] and not self.tenant:
-            raise ValueError("ClientAdmin and ClientStaff must have a tenant assigned.")
+        # Enforce tenant for client roles (all except SuperAdmin)
+        client_roles = ['Client-Admin', 'Client-Staff', 'Estilista', 'Cajera', 'Manager', 'Utility']
+        if self.role in client_roles and not self.tenant:
+            raise ValueError(f"Role {self.role} must have a tenant assigned.")
         super().save(*args, **kwargs)
 
     def __str__(self):

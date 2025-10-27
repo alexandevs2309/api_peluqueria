@@ -73,6 +73,26 @@ class TenantMiddleware(MiddlewareMixin):
             else:
                 request.tenant = None
         
+        # Verificar y manejar trial expirado
+        if request.tenant:
+            request.tenant.check_and_suspend_expired_trial()
+            access_level = request.tenant.get_access_level()
+            
+            if access_level == 'blocked':
+                return JsonResponse({
+                    'error': 'Access blocked',
+                    'code': 'SUBSCRIPTION_REQUIRED',
+                    'message': 'Your trial has expired. Please subscribe to continue using the service.',
+                    'upgrade_url': '/subscriptions/upgrade/'
+                }, status=402)
+            elif access_level == 'grace':
+                # Permitir acceso pero agregar header de advertencia
+                response = None
+                request.grace_period = True
+            
+            # Enviar notificaciones de trial
+            self.check_trial_notifications(request.tenant)
+        
         # Geolock opcional
         if getattr(settings, 'GEO_LOCK_ENABLED', False) and request.tenant and request.tenant.country:
             client_ip = get_client_ip(request)
@@ -94,3 +114,31 @@ class TenantMiddleware(MiddlewareMixin):
                 pass
         
         return None
+    
+    def check_trial_notifications(self, tenant):
+        """Verificar y enviar notificaciones de trial"""
+        if tenant.subscription_status != 'trial':
+            return
+            
+        # Notificación 3 días antes
+        if tenant.should_send_trial_notification(3):
+            self.send_trial_notification(tenant, 3)
+            tenant.mark_notification_sent(3)
+        
+        # Notificación 1 día antes
+        elif tenant.should_send_trial_notification(1):
+            self.send_trial_notification(tenant, 1)
+            tenant.mark_notification_sent(1)
+    
+    def send_trial_notification(self, tenant, days_left):
+        """Enviar notificación de trial"""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        if days_left > 0:
+            logger.info(f"TRIAL WARNING: {tenant.name} has {days_left} days left")
+        else:
+            days_since_expiry = (timezone.now().date() - tenant.trial_end_date).days if tenant.trial_end_date else 0
+            if days_since_expiry <= 3:
+                logger.info(f"GRACE PERIOD: {tenant.name} in grace period, {3 - days_since_expiry} days left")
+        # TODO: Implementar envío real de email/SMS

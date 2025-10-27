@@ -109,3 +109,27 @@ class TenantViewSet(viewsets.ModelViewSet):
             "current_users": current_users,
             # "current_employees": current_employees,
         }, status=status.HTTP_200_OK)
+    
+    @decorators.action(detail=False, methods=["get"])
+    def current(self, request):
+        """Get current user's tenant"""
+        if request.user.tenant:
+            serializer = self.get_serializer(request.user.tenant)
+            return response.Response(serializer.data)
+        return response.Response({"error": "No tenant assigned"}, status=404)
+    
+    @decorators.action(detail=False, methods=["post"])
+    def bulk_activate(self, request):
+        """Bulk activate tenants"""
+        tenant_ids = request.data.get('tenant_ids', [])
+        tenants = Tenant.objects.filter(id__in=tenant_ids)
+        tenants.update(is_active=True)
+        return response.Response({"activated": len(tenants)})
+    
+    @decorators.action(detail=False, methods=["post"])
+    def bulk_deactivate(self, request):
+        """Bulk deactivate tenants"""
+        tenant_ids = request.data.get('tenant_ids', [])
+        tenants = Tenant.objects.filter(id__in=tenant_ids)
+        tenants.update(is_active=False)
+        return response.Response({"deactivated": len(tenants)})
