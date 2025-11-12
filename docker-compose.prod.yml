@@ -3,6 +3,7 @@ version: '3.8'
 services:
   web:
     build: .
+    user: "1000:1000"
     command: gunicorn backend.wsgi:application --bind 0.0.0.0:8000
     volumes:
       - static_volume:/code/staticfiles
@@ -17,6 +18,7 @@ services:
 
   celery:
     build: .
+    user: "1000:1000"
     command: celery -A backend worker --loglevel=info
     volumes:
       - .:/code
@@ -30,6 +32,7 @@ services:
 
   celery-beat:
     build: .
+    user: "1000:1000"
     command: celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
       - .:/code

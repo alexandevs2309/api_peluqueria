@@ -90,7 +90,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
-    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',  # Validación de suscripciones
+    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',  # Validación de suscripciones y expiración
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
@@ -232,6 +232,10 @@ CELERY_BEAT_SCHEDULE = {
     'cleanup-expired-trials': {
         'task': 'apps.subscriptions_api.tasks.cleanup_expired_trials',
         'schedule': crontab(hour=2, minute=0),  # Diario a las 2:00 AM
+    },
+    'check-expired-subscriptions': {
+        'task': 'apps.subscriptions_api.tasks.check_expired_subscriptions',
+        'schedule': crontab(minute=0),  # Cada hora
     },
 }
 

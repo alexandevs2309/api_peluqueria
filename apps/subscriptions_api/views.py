@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from django.utils import timezone
 from rest_framework.views import APIView
+from django.utils import timezone
 from .utils import get_user_active_subscription, log_subscription_event
 from django.db import transaction
 from django.conf import settings
@@ -419,3 +420,59 @@ class OnboardingView(APIView):
             'status': tenant.subscription_status,
             'access_level': tenant.get_access_level()
         })
+
+class RenewSubscriptionView(APIView):
+    permission_classes = [IsAuthenticated]
+    
+    def get(self, request):
+        """Obtener información de renovación"""
+        tenant = request.user.tenant
+        if not tenant:
+            return Response({'error': 'No tenant found'}, status=400)
+        
+        # Obtener planes disponibles
+        plans = SubscriptionPlan.objects.filter(is_active=True)
+        plans_data = SubscriptionPlanSerializer(plans, many=True).data
+        
+        return Response({
+            'tenant_name': tenant.name,
+            'current_status': tenant.subscription_status,
+            'trial_end_date': tenant.trial_end_date,
+            'access_level': tenant.get_access_level(),
+            'days_in_grace': max(0, 3 - (timezone.now().date() - tenant.trial_end_date).days) if tenant.trial_end_date else 0,
+            'available_plans': plans_data
+        })
+    
+    def post(self, request):
+        """Renovar suscripción"""
+        tenant = request.user.tenant
+        if not tenant:
+            return Response({'error': 'No tenant found'}, status=400)
+        
+        plan_id = request.data.get('plan_id')
+        if not plan_id:
+            return Response({'error': 'Plan ID required'}, status=400)
+        
+        try:
+            plan = SubscriptionPlan.objects.get(id=plan_id, is_active=True)
+        except SubscriptionPlan.DoesNotExist:
+            return Response({'error': 'Invalid plan'}, status=400)
+        
+        # Simular pago exitoso (aquí integrarías con Stripe/PayPal)
+        payment_successful = True
+        
+        if payment_successful:
+            # Activar nueva suscripción
+            tenant.subscription_plan = plan
+            tenant.subscription_status = 'active'
+            tenant.trial_end_date = None
+            tenant.save()
+            
+            return Response({
+                'message': 'Subscription renewed successfully',
+                'plan': plan.name,
+                'status': tenant.subscription_status,
+                'access_level': tenant.get_access_level()
+            })
+        else:
+            return Response({'error': 'Payment failed'}, status=400)
