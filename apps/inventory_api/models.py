@@ -13,6 +13,7 @@ class Product(models.Model):
     name = models.CharField(max_length=255)
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='products')
     sku = models.CharField(max_length=100)
+    barcode = models.CharField(max_length=100, blank=True, null=True)  # Código de barras
     price = models.DecimalField(max_digits=10, decimal_places=2)
     stock = models.PositiveIntegerField(default=0)
     min_stock = models.PositiveIntegerField(default=1)
@@ -21,10 +22,13 @@ class Product(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True)
     description = models.TextField(blank=True, default='')
     category = models.CharField(max_length=100, blank=True, default='')
-    image = models.ImageField(upload_to='products/', blank=True, null=True)
+    image = models.ImageField(upload_to='', blank=True, null=True)
 
     class Meta:
-        unique_together = ('sku', 'tenant')  # SKU único por tenant
+        constraints = [
+            models.UniqueConstraint(fields=['sku', 'tenant'], name='unique_sku_per_tenant'),
+            models.UniqueConstraint(fields=['barcode', 'tenant'], name='unique_barcode_per_tenant', condition=models.Q(barcode__isnull=False))
+        ]
         indexes = [
             models.Index(fields=['tenant', 'sku']),
             models.Index(fields=['tenant', 'is_active']),

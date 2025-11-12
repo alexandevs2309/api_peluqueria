@@ -99,6 +99,20 @@ def send_trial_expiration_warnings():
     
     return f"Sent {warned_count} trial expiration warnings"
 
+@shared_task
+def check_expired_subscriptions():
+    """Verificar y desactivar suscripciones expiradas"""
+    expired_subs = UserSubscription.objects.filter(
+        is_active=True,
+        end_date__lt=timezone.now()
+    )
+    
+    count = expired_subs.count()
+    expired_subs.update(is_active=False)
+    
+    logger.info(f"Deactivated {count} expired subscriptions")
+    return f'Deactivated {count} expired subscriptions'
+
 def send_trial_expired_email(tenant):
     """Enviar email cuando el trial expira"""
     subject = f"Tu prueba gratuita ha expirado - {tenant.name}"

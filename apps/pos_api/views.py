@@ -1,9 +1,11 @@
 from rest_framework import viewsets, permissions, status, serializers
+import logging
+logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from django.utils import timezone
-from .models import Sale, CashRegister
-from .serializers import SaleSerializer, CashRegisterSerializer
+from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
+from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
 from django.db.models import Sum
 from decimal import Decimal, InvalidOperation
 
@@ -20,8 +22,9 @@ class SaleViewSet(viewsets.ModelViewSet):
         try:
             employee = Employee.objects.get(user=employee_user, tenant=sale.user.tenant)
             
-            # Obtener porcentaje de comisión (por defecto 50%)
-            commission_percentage = 50
+            # Obtener porcentaje de comisión desde configuración o usar valor por defecto
+            pos_config = PosConfiguration.objects.filter(user=employee_user).first()
+            commission_percentage = pos_config.commission_percentage if pos_config else 50
             
             # Crear ganancia de forma asíncrona
             create_earning_from_sale.delay(
@@ -33,41 +36,99 @@ class SaleViewSet(viewsets.ModelViewSet):
         except Employee.DoesNotExist:
             pass
 
-    def perform_create(self, serializer):
-        # Validar que hay una caja abierta
+    def create(self, request, *args, **kwargs):
+        logger.info(f"Creating sale for user {request.user}")
+        logger.debug(f"Sale creation data: {request.data}")
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as e:
+            logger.error(f"Error creating sale: {str(e)}")
+            raise
+
+    def _validate_cash_register(self):
+        """Validate if there's an open cash register"""
         open_register = CashRegister.objects.filter(
             user=self.request.user, 
             is_open=True
         ).first()
         
+        logger.debug(f"Open register check: {open_register is not None}")
+        
         if not open_register:
+            logger.warning(f"No open register found for user {self.request.user}")
             raise serializers.ValidationError("Debe abrir una caja antes de realizar ventas")
+        return open_register
+
+    def _calculate_sale_total(self, details):
+        """Calculate sale total from details"""
+        total = Decimal('0')
+        for detail in details:
+            total += self._validate_and_process_detail(detail)
+        return total
+
+    def _validate_and_process_detail(self, detail):
+        """Validate and process a single sale detail"""
+        try:
+            quantity = Decimal(str(detail.get('quantity', 1)))
+            if quantity <= 0:
+                raise serializers.ValidationError("La cantidad debe ser mayor a 0")
+                
+            price = Decimal(str(detail.get('price', 0)))
+            if price < 0:
+                raise serializers.ValidationError("El precio no puede ser negativo")
+
+            if detail.get('content_type') == 'product':
+                self._validate_product_stock(detail, quantity)
+                
+            return quantity * price
+            
+        except (InvalidOperation, TypeError):
+            raise serializers.ValidationError("Valores inválidos para cantidad o precio")
+
+    def perform_create(self, serializer):
+        logger.info("Processing sale creation")
+
+        # Validar caja abierta
+        open_register = self._validate_cash_register()
         
         # Calcular totales automáticamente
         details = self.request.data.get('details', [])
         total = Decimal('0')
         
         for detail in details:
-            quantity = Decimal(str(detail.get('quantity', 1)))
-            price = Decimal(str(detail.get('price', 0)))
-            total += quantity * price
-            
-            # Validar stock si es producto
-            if detail.get('content_type') == 'product':
-                from apps.inventory_api.models import Product
-                try:
-                    product = Product.objects.get(id=detail.get('object_id'))
-                    if product.stock < quantity:
-                        raise serializers.ValidationError(
-                            f"Stock insuficiente para {product.name}. Disponible: {product.stock}"
-                        )
-                except Product.DoesNotExist:
-                    raise serializers.ValidationError("Producto no encontrado")
+            try:
+                quantity = Decimal(str(detail.get('quantity', 1)))
+                if quantity <= 0:
+                    raise serializers.ValidationError(f"La cantidad debe ser mayor a 0")
+                    
+                price = Decimal(str(detail.get('price', 0)))
+                if price < 0:
+                    raise serializers.ValidationError(f"El precio no puede ser negativo")
+                    
+                total += quantity * price
+                
+                # Validar stock si es producto
+                if detail.get('content_type') == 'product':
+                    from apps.inventory_api.models import Product
+                    try:
+                        object_id = int(detail.get('object_id'))
+                        product = Product.objects.get(id=object_id)
+                        if not product.is_active:
+                            raise serializers.ValidationError(f"El producto {product.name} no está activo")
+                        if product.stock < quantity:
+                            raise serializers.ValidationError(
+                                f"Stock insuficiente para {product.name}. Disponible: {product.stock}"
+                            )
+                    except (Product.DoesNotExist, ValueError, TypeError):
+                        raise serializers.ValidationError("Producto no encontrado o ID inválido")
+            except (InvalidOperation, TypeError):
+                raise serializers.ValidationError("Valores inválidos para cantidad o precio")
         
         # Aplicar descuento
         discount = Decimal(str(self.request.data.get('discount', 0)))
         total_with_discount = total - discount
         
+        # Guardar venta
         sale = serializer.save(
             user=self.request.user,
             total=total_with_discount
@@ -141,10 +202,13 @@ class SaleViewSet(viewsets.ModelViewSet):
         if not user.is_staff and not user.is_superuser:
             qs = qs.filter(user=user)
         
-        # Filtro por teléfono del cliente
+        # Filtro por teléfono del cliente (protegido contra SQL injection)
         client_phone = self.request.query_params.get('client_phone')
         if client_phone:
-            qs = qs.filter(client__phone__icontains=client_phone)
+            # Validar formato de teléfono para prevenir SQL injection
+            import re
+            if re.match(r'^[\d\-\+\(\)\s]+$', client_phone):
+                qs = qs.filter(client__phone__icontains=client_phone)
             
         return qs
 
@@ -231,6 +295,87 @@ class SaleViewSet(viewsets.ModelViewSet):
         sale.save()
         
         return Response({'detail': 'Venta reembolsada correctamente'})
+    
+    @action(detail=True, methods=['get'])
+    def print_receipt(self, request, pk=None):
+        """Generar e imprimir recibo"""
+        sale = self.get_object()
+        
+        # Crear o actualizar recibo
+        receipt, created = Receipt.objects.get_or_create(
+            sale=sale,
+            defaults={
+                'receipt_number': f"R{sale.id:06d}",
+                'template_used': 'default'
+            }
+        )
+        
+        # Actualizar contador de impresiones
+        receipt.printed_count += 1
+        receipt.last_printed = timezone.now()
+        receipt.save()
+        
+        # Generar datos del recibo
+        receipt_data = {
+            'receipt': ReceiptSerializer(receipt).data,
+            'sale': SaleSerializer(sale).data,
+            'business_info': {
+                'name': 'Barbería App',
+                'address': 'Dirección de la barbería',
+                'phone': 'Teléfono',
+                'email': 'email@barberia.com'
+            }
+        }
+        
+        return Response(receipt_data)
+    
+    @action(detail=False, methods=['get'])
+    def search_sales(self, request):
+        """Búsqueda avanzada de ventas"""
+        queryset = self.get_queryset()
+        
+        # Filtros
+        date_from = request.query_params.get('date_from')
+        date_to = request.query_params.get('date_to')
+        client_id = request.query_params.get('client_id')
+        employee_id = request.query_params.get('employee_id')
+        payment_method = request.query_params.get('payment_method')
+        
+        if date_from:
+            try:
+                from django.utils.dateparse import parse_date
+                parsed_date = parse_date(date_from)
+                if parsed_date:
+                    queryset = queryset.filter(date_time__date__gte=parsed_date)
+            except ValueError:
+                pass
+        if date_to:
+            try:
+                from django.utils.dateparse import parse_date
+                parsed_date = parse_date(date_to)
+                if parsed_date:
+                    queryset = queryset.filter(date_time__date__lte=parsed_date)
+            except ValueError:
+                pass
+        if client_id:
+            try:
+                client_id = int(client_id)
+                queryset = queryset.filter(client_id=client_id)
+            except (ValueError, TypeError):
+                pass
+        if employee_id:
+            from apps.employees_api.models import Employee
+            try:
+                employee_id = int(employee_id)
+                employee = Employee.objects.get(id=employee_id)
+                queryset = queryset.filter(user=employee.user)
+            except (Employee.DoesNotExist, ValueError, TypeError):
+                pass
+        if payment_method:
+            queryset = queryset.filter(payment_method=payment_method)
+        
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
    
 
@@ -288,6 +433,92 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         register.final_cash = final_cash_decimal
         register.save()
         return Response(CashRegisterSerializer(register).data)
+    
+    @action(detail=True, methods=['post'])
+    def cash_count(self, request, pk=None):
+        """Arqueo de caja - conteo físico"""
+        register = self.get_object()
+        counts_data = request.data.get('counts', [])
+        
+        # Limpiar conteos anteriores
+        register.cash_counts.all().delete()
+        
+        total_counted = Decimal('0')
+        for count_data in counts_data:
+            count_data['cash_register'] = register.id
+            serializer = CashCountSerializer(data=count_data)
+            if serializer.is_valid():
+                count = serializer.save()
+                total_counted += count.total
+            else:
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Calcular diferencia
+        expected_cash = register.initial_cash + self._calculate_cash_sales(register)
+        difference = total_counted - expected_cash
+        
+        return Response({
+            'total_counted': total_counted,
+            'expected_cash': expected_cash,
+            'difference': difference,
+            'counts': CashCountSerializer(register.cash_counts.all(), many=True).data
+        })
+    
+    def _calculate_cash_sales(self, register):
+        """Calcular ventas en efectivo del día"""
+        cash_sales = Sale.objects.filter(
+            user=register.user,
+            date_time__date=register.opened_at.date(),
+            payment_method='cash'
+        ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
+        return cash_sales
+# Nuevos ViewSets
+class PromotionViewSet(viewsets.ModelViewSet):
+    queryset = Promotion.objects.all()
+    serializer_class = PromotionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return Promotion.objects.filter(is_active=True)
+    
+    @action(detail=True, methods=['post'])
+    def apply_promotion(self, request, pk=None):
+        """Aplicar promoción a una venta"""
+        promotion = self.get_object()
+        cart_total = Decimal(str(request.data.get('cart_total', 0)))
+        
+        if not promotion.is_active:
+            return Response({'error': 'Promoción no activa'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if promotion.max_uses and promotion.current_uses >= promotion.max_uses:
+            return Response({'error': 'Promoción agotada'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if cart_total < promotion.min_amount:
+            return Response({'error': f'Monto mínimo requerido: ${promotion.min_amount}'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Calcular descuento
+        discount = Decimal('0')
+        if promotion.type == 'percentage':
+            discount = cart_total * (promotion.discount_value / 100)
+        elif promotion.type == 'fixed':
+            discount = promotion.discount_value
+        
+        return Response({
+            'discount': discount,
+            'promotion_name': promotion.name,
+            'promotion_id': promotion.id
+        })
+
+class PosConfigurationViewSet(viewsets.ModelViewSet):
+    queryset = PosConfiguration.objects.all()
+    serializer_class = PosConfigurationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return PosConfiguration.objects.filter(user=self.request.user)
+    
+    def perform_create(self, serializer):
+        serializer.save(user=self.request.user)
             
 @api_view(['GET'])  
 def daily_summary(request):
@@ -500,6 +731,19 @@ def pos_categories(request):
             {'name': 'Productos', 'value': 'Productos'}
         ]
         return Response({'results': categories})
+
+@api_view(['POST'])
+def debug_sale_data(request):
+    """Endpoint temporal para debug de datos de venta"""
+    print(f"DEBUG ENDPOINT: Datos recibidos: {request.data}")
+    print(f"DEBUG ENDPOINT: Usuario: {request.user}")
+    print(f"DEBUG ENDPOINT: Headers: {dict(request.headers)}")
+    
+    return Response({
+        'received_data': request.data,
+        'user': str(request.user),
+        'authenticated': request.user.is_authenticated
+    })
 
 @api_view(['GET'])
 def pos_config(request):

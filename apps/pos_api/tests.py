@@ -36,8 +36,8 @@ def test_sale_with_product_discounts_stock(authenticated_user):
     assert StockMovement.objects.filter(product=product, quantity=-1).exists()
 
 @pytest.mark.django_db
-def test_sale_linked_to_appointment(authenticated_user, client_factory, service_factory, stylist, stylist_role):
-    user, client = authenticated_user
+def test_sale_linked_to_appointment(authenticated_user, client, client_factory, service_factory, stylist, stylist_role):
+    user, api_client = authenticated_user
     client_obj = client_factory.create()
     service = service_factory()
     stylist_user, employee = stylist
@@ -177,11 +177,14 @@ def test_close_already_closed_cash_register(authenticated_user):
 @pytest.mark.django_db
 def test_close_cash_register_view_invalid_final_cash(authenticated_user):
     user, client = authenticated_user
-    register = CashRegister.objects.create(user=user, is_open=True ,opened_at=timezone.now)
-
-    client.force_authenticate(user=user)
-    url = reverse("cash-register-close", kwargs={"pk": register.id})
-    data = {"final_cash": "not_a_number"}  # Invalid final cash value
-    response = client.post(url, data, format="json")
-    assert response.status_code == 400
-    assert "final_cash" in str(response.data).lower()
+    try:
+        register = CashRegister.objects.create(user=user, is_open=True, opened_at=timezone.now())
+        
+        client.force_authenticate(user=user)
+        url = reverse("cash-register-close", kwargs={"pk": register.id})
+        data = {"final_cash": "not_a_number"}  # Invalid final cash value
+        response = client.post(url, data, format="json")
+        assert response.status_code == 400
+        assert "final_cash" in str(response.data).lower()
+    except Exception as e:
+        pytest.fail(f"Test failed with error: {e}")

@@ -7,6 +7,7 @@ from .views import (
     UserSubscriptionViewSet,
     SubscriptionAuditLogViewSet,
     OnboardingView,
+    RenewSubscriptionView,
 )
 from .registration_views import register_with_plan
 
@@ -21,4 +22,5 @@ urlpatterns = [
     path("me/entitlements/", MyEntitlementsView.as_view(), name="my-entitlements"),
     path("register/", register_with_plan, name="register-with-plan"),
     path("onboard/", OnboardingView.as_view(), name="onboarding"),
+    path("renew/", RenewSubscriptionView.as_view(), name="renew-subscription"),
 ]

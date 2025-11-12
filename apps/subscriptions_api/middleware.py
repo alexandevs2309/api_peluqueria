@@ -2,6 +2,7 @@ from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 from django.utils import timezone
 from datetime import datetime
+from apps.subscriptions_api.models import UserSubscription
 
 class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
@@ -16,9 +17,11 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             '/api/docs/',
             '/api/healthz/',
             '/admin/',
-            '/api/subscriptions/plans/',
-            '/api/subscriptions/register/',
+            '/api/subscriptions/',
+            '/api/payments/',
+            '/api/billing/',
             '/api/settings/contact/',
+            '/api/pos/',  # Permitir operaciones POS
         ]
         
         for exempt_path in exempt_paths:
@@ -51,19 +54,49 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'action_required': 'contact_admin'
             }, status=403)
             
-        # Validar expiración de plan FREE
+        # Validar expiración de plan FREE con período de gracia
         if (tenant.subscription_status == 'trial' and 
             tenant.trial_end_date and 
             tenant.trial_end_date < timezone.now().date()):
             
-            return JsonResponse({
-                'error': 'Free trial expired',
-                'code': 'TRIAL_EXPIRED',
-                'expired_date': tenant.trial_end_date.isoformat(),
-                'action_required': 'upgrade_plan',
-                'upgrade_url': '/api/subscriptions/plans/'
-            }, status=402)  # Payment Required
+            # Calcular días desde expiración
+            days_expired = (timezone.now().date() - tenant.trial_end_date).days
             
+            # Período de gracia de 3 días
+            if days_expired <= 3:
+                # Permitir acceso limitado durante período de gracia
+                request.grace_period = True
+                request.days_remaining = 3 - days_expired
+                return None
+            else:
+                return JsonResponse({
+                    'error': 'Free trial expired',
+                    'code': 'TRIAL_EXPIRED',
+                    'expired_date': tenant.trial_end_date.isoformat(),
+                    'days_expired': days_expired,
+                    'action_required': 'upgrade_plan',
+                    'upgrade_url': '/subscriptions/plans/'
+                }, status=402)  # Payment Required
+            
+        # Validar suscripciones de usuario expiradas
+        user_subscription = UserSubscription.objects.filter(
+            user=request.user, 
+            is_active=True
+        ).first()
+        
+        if user_subscription and user_subscription.end_date < timezone.now():
+            # Marcar como expirada
+            user_subscription.is_active = False
+            user_subscription.save()
+            
+            return JsonResponse({
+                'error': 'Subscription expired',
+                'code': 'SUBSCRIPTION_EXPIRED',
+                'expired_date': user_subscription.end_date.isoformat(),
+                'action_required': 'renew_subscription',
+                'renewal_url': '/client/payment'
+            }, status=402)
+        
         # Validar plan activo
         if not tenant.subscription_plan:
             return JsonResponse({

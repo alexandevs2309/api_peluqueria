@@ -138,10 +138,56 @@ class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         from django.utils import timezone
         current_month = timezone.now().month
         
-        clients = Client.objects.filter(
+        clients = self.get_queryset().filter(
             birthday__month=current_month,
             is_active=True
         ).order_by('birthday__day')
+        
+        serializer = ClientSerializer(clients, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def birthdays_today(self, request):
+        from django.utils import timezone
+        today = timezone.now().date()
+        
+        clients = self.get_queryset().filter(
+            birthday__month=today.month,
+            birthday__day=today.day,
+            is_active=True
+        )
+        
+        serializer = ClientSerializer(clients, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def upcoming_birthdays(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        today = timezone.now().date()
+        next_week = today + timedelta(days=7)
+        
+        # Clientes con cumpleaños en los próximos 7 días
+        clients = self.get_queryset().filter(
+            birthday__month__in=[today.month, next_week.month],
+            is_active=True
+        ).extra(
+            select={
+                'days_until_birthday': """
+                    CASE 
+                        WHEN EXTRACT(month FROM birthday) = %s AND EXTRACT(day FROM birthday) >= %s THEN 
+                            EXTRACT(day FROM birthday) - %s
+                        WHEN EXTRACT(month FROM birthday) = %s THEN 
+                            EXTRACT(day FROM birthday) + (31 - %s)
+                        ELSE 999
+                    END
+                """
+            },
+            select_params=[today.month, today.day, today.day, next_week.month, today.day]
+        ).extra(
+            where=["days_until_birthday <= 7"]
+        ).order_by('days_until_birthday')
         
         serializer = ClientSerializer(clients, many=True)
         return Response(serializer.data)

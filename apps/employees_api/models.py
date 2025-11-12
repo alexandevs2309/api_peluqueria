@@ -6,12 +6,24 @@ from apps.services_api.models import Service
 from .earnings_models import Earning, FortnightSummary
 
 class Employee(models.Model):
+    PAYMENT_TYPE_CHOICES = [
+        ('fixed', 'Sueldo Fijo'),
+        ('commission', 'Comisión'),
+        ('mixed', 'Mixto (Sueldo + Comisión)')
+    ]
+    
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')
     specialty = models.CharField(max_length=100, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     hire_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    
+    # Payment configuration fields
+    payment_type = models.CharField(max_length=10, choices=PAYMENT_TYPE_CHOICES, default='commission')
+    fixed_salary = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Sueldo fijo mensual')
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text='Porcentaje de comisión (ej: 40.00 para 40%)')
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -9,17 +9,21 @@ class Command(BaseCommand):
         today = timezone.localdate()
         
         # Cerrar cajas abiertas de días anteriores
-        old_registers = CashRegister.objects.filter(
-            is_open=True,
-            opened_at__date__lt=today
-        )
-        
-        count = old_registers.count()
-        old_registers.update(
-            is_open=False,
-            closed_at=timezone.now(),
-            final_cash=0
-        )
+        try:
+            old_registers = CashRegister.objects.filter(
+                is_open=True,
+                opened_at__date__lt=today
+            )
+            
+            count = old_registers.count()
+            old_registers.update(
+                is_open=False,
+                closed_at=timezone.now(),
+                final_cash=0
+            )
+        except Exception as e:
+            self.stderr.write(self.style.ERROR(f'Error updating registers: {str(e)}'))
+            return
         
         self.stdout.write(
             self.style.SUCCESS(f'Successfully closed {count} old cash registers')

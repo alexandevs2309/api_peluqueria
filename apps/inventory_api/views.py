@@ -5,19 +5,27 @@ from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action, api_view
+from django.db.models import Q
 from rest_framework.response import Response
 from django.db.models import F
+from rest_framework import status
 
 
 class ProductViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated, role_permission_for(['Client-Admin', 'Admin', 'Manager', 'Cajera'])]
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Product.objects.filter(tenant=self.request.user.tenant)
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
+    
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user.tenant)
     
     @action(detail=False, methods=['get'])
     def low_stock(self, request):
@@ -82,6 +90,27 @@ class ProductViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
             'total_inventory_value': float(total_value),
             'low_stock_percentage': (low_stock_count / total_products * 100) if total_products > 0 else 0
         })
+    
+    @action(detail=False, methods=['get'])
+    def search_by_barcode(self, request):
+        """Buscar producto por código de barras"""
+        barcode = request.query_params.get('barcode')
+        if not barcode:
+            return Response({'error': 'Código de barras requerido'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            product = Product.objects.get(
+                barcode=barcode,
+                tenant=request.user.tenant,
+                is_active=True
+            )
+            serializer = ProductSerializer(product)
+            return Response(serializer.data)
+        except Product.DoesNotExist:
+            return Response(
+                {'error': 'Producto no encontrado'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
 
 @api_view(['GET'])
 def low_stock_alerts(request):
@@ -100,7 +129,13 @@ def low_stock_alerts(request):
 class SupplierViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
-    permission_classes = [IsAuthenticated, role_permission_for(['Client-Admin', 'Admin', 'Manager'])]
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Supplier.objects.filter(tenant=self.request.user.tenant)
+    
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user.tenant)
 
 class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = StockMovement.objects.all()
