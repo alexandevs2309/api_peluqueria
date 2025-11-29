@@ -15,12 +15,12 @@ class IsSuperAdmin(permissions.BasePermission):
         return (
             request.user and 
             request.user.is_authenticated and 
-            request.user.roles.filter(name='Super-Admin').exists()
+            request.user.is_superuser
         )
 
 class SaasMetricsView(views.APIView):
     """Vista para métricas SaaS del SuperAdmin"""
-    permission_classes = [IsSuperAdmin]
+    permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
         try:

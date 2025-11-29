@@ -13,8 +13,10 @@ from django.utils.crypto import get_random_string
 User = get_user_model()
 
 class Sale(models.Model):
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales', null=True, blank=True)
+    employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
+    period = models.ForeignKey('employees_api.FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     date_time = models.DateTimeField(default=timezone.now)
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -88,6 +90,41 @@ class CashRegister(models.Model):
     initial_cash = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     final_cash = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     is_open = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['-opened_at']
+        indexes = [
+            models.Index(fields=['user', 'opened_at']),
+            models.Index(fields=['is_open']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        # Asegurar que nunca sean null
+        if self.initial_cash is None:
+            self.initial_cash = 0.00
+        if self.final_cash is None:
+            self.final_cash = 0.00
+        super().save(*args, **kwargs)
+    
+    @property
+    def sales_amount(self):
+        """Calcular ventas del día en el mismo tenant"""
+        from django.db.models import Sum, Q
+        if not self.opened_at:
+            return 0.00
+        
+        # Incluir ventas con empleado del tenant y ventas sin empleado del usuario
+        sales_total = Sale.objects.filter(
+            Q(employee__tenant=self.user.tenant) | Q(user__tenant=self.user.tenant, employee__isnull=True),
+            date_time__date=self.opened_at.date()
+        ).aggregate(total=Sum('total'))['total'] or 0
+        
+        return float(sales_total)
+    
+    @property
+    def display_amount(self):
+        """Monto esperado en caja: inicial + ventas"""
+        return float(self.initial_cash) + self.sales_amount
 
 class CashCount(models.Model):
     """Arqueo de caja - conteo físico de dinero"""

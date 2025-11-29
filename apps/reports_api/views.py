@@ -8,13 +8,6 @@ from datetime import datetime, timedelta
 from apps.tenants_api.models import Tenant
 from apps.billing_api.models import Invoice
 from apps.auth_api.models import User
-from rest_framework import views, status
-from django.db.models import Count, Sum, Q
-from django.utils import timezone
-from datetime import datetime, timedelta
-from apps.tenants_api.models import Tenant
-from apps.billing_api.models import Invoice
-from apps.auth_api.models import User
 
 class IsSuperAdmin:
     def has_permission(self, request, view):
@@ -141,17 +134,52 @@ def dashboard_stats(request):
 def reports_by_type(request):
     """Reportes por tipo (appointments, sales, etc.)"""
     report_type = request.GET.get('type', 'general')
+    tenant = request.user.tenant
     
     if report_type == 'appointments':
-        return Response({
-            'labels': ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'],
-            'data': [0, 0, 0, 0, 0, 0]
-        })
+        from apps.appointments_api.models import Appointment
+        from django.db.models import Count
+        from datetime import datetime, timedelta
+        
+        # Últimos 6 meses de citas
+        data = []
+        labels = []
+        for i in range(6):
+            month_start = (timezone.now() - timedelta(days=30*i)).replace(day=1)
+            month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+            
+            count = Appointment.objects.filter(
+                client__tenant=tenant,
+                date_time__gte=month_start,
+                date_time__lte=month_end
+            ).count()
+            
+            data.insert(0, count)
+            labels.insert(0, month_start.strftime('%b'))
+        
+        return Response({'labels': labels, 'data': data})
+        
     elif report_type == 'sales':
-        return Response({
-            'labels': ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun'],
-            'data': [0, 0, 0, 0, 0, 0]
-        })
+        from apps.pos_api.models import Sale
+        from django.db.models import Sum
+        
+        # Últimos 6 meses de ventas
+        data = []
+        labels = []
+        for i in range(6):
+            month_start = (timezone.now() - timedelta(days=30*i)).replace(day=1)
+            month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+            
+            total = Sale.objects.filter(
+                user__tenant=tenant,
+                date_time__gte=month_start,
+                date_time__lte=month_end
+            ).aggregate(total=Sum('total'))['total'] or 0
+            
+            data.insert(0, float(total))
+            labels.insert(0, month_start.strftime('%b'))
+        
+        return Response({'labels': labels, 'data': data})
     
     return Response({'data': []})
 
@@ -243,3 +271,181 @@ class AdminReportsView(views.APIView):
                 'error': str(e),
                 'message': 'Error al generar reportes'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def appointments_calendar_data(request):
+    """Datos para calendario de citas"""
+    from apps.appointments_api.models import Appointment
+    
+    start_date = request.GET.get('start')
+    end_date = request.GET.get('end')
+    
+    if not start_date or not end_date:
+        return Response({'error': 'start y end son requeridos'}, status=400)
+    
+    try:
+        start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+    except ValueError:
+        return Response({'error': 'Formato de fecha inválido'}, status=400)
+    
+    appointments = Appointment.objects.filter(
+        client__tenant=request.user.tenant,
+        date_time__gte=start,
+        date_time__lte=end
+    ).select_related('client', 'stylist', 'service')
+    
+    events = []
+    for apt in appointments:
+        color = {
+            'scheduled': '#3498db',
+            'completed': '#2ecc71', 
+            'cancelled': '#e74c3c'
+        }.get(apt.status, '#95a5a6')
+        
+        events.append({
+            'id': apt.id,
+            'title': f"{apt.client.full_name} - {apt.service.name if apt.service else 'Sin servicio'}",
+            'start': apt.date_time.isoformat(),
+            'end': (apt.date_time + timedelta(minutes=apt.service.duration if apt.service else 30)).isoformat(),
+            'backgroundColor': color,
+            'borderColor': color,
+            'extendedProps': {
+                'client': apt.client.full_name,
+                'stylist': apt.stylist.full_name if apt.stylist else 'Sin asignar',
+                'service': apt.service.name if apt.service else 'Sin servicio',
+                'status': apt.status,
+                'phone': apt.client.phone or 'N/A'
+            }
+        })
+    
+    return Response(events)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def kpi_dashboard(request):
+    """KPIs principales para dashboard"""
+    from apps.clients_api.models import Client
+    from apps.employees_api.models import Employee
+    from apps.pos_api.models import Sale
+    from apps.appointments_api.models import Appointment
+    from django.db.models import Sum, Count, Avg
+    
+    tenant = request.user.tenant
+    today = timezone.now().date()
+    month_start = today.replace(day=1)
+    week_start = today - timedelta(days=today.weekday())
+    
+    # KPIs del mes
+    monthly_revenue = Sale.objects.filter(
+        user__tenant=tenant,
+        date_time__date__gte=month_start
+    ).aggregate(total=Sum('total'))['total'] or 0
+    
+    monthly_appointments = Appointment.objects.filter(
+        client__tenant=tenant,
+        date_time__date__gte=month_start
+    ).count()
+    
+    # KPIs de la semana
+    weekly_revenue = Sale.objects.filter(
+        user__tenant=tenant,
+        date_time__date__gte=week_start
+    ).aggregate(total=Sum('total'))['total'] or 0
+    
+    weekly_appointments = Appointment.objects.filter(
+        client__tenant=tenant,
+        date_time__date__gte=week_start
+    ).count()
+    
+    # KPIs generales
+    total_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
+    active_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
+    
+    # Ticket promedio
+    avg_ticket = Sale.objects.filter(
+        user__tenant=tenant,
+        date_time__date__gte=month_start
+    ).aggregate(avg=Avg('total'))['avg'] or 0
+    
+    return Response({
+        'monthly': {
+            'revenue': float(monthly_revenue),
+            'appointments': monthly_appointments,
+            'avg_ticket': float(avg_ticket)
+        },
+        'weekly': {
+            'revenue': float(weekly_revenue),
+            'appointments': weekly_appointments
+        },
+        'totals': {
+            'clients': total_clients,
+            'employees': active_employees
+        }
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def services_performance(request):
+    """Rendimiento de servicios"""
+    from apps.pos_api.models import SaleDetail
+    from apps.services_api.models import Service
+    from django.db.models import Sum, Count
+    
+    tenant = request.user.tenant
+    days = int(request.GET.get('days', 30))
+    start_date = timezone.now() - timedelta(days=days)
+    
+    # Top servicios por ventas
+    services_data = SaleDetail.objects.filter(
+        sale__user__tenant=tenant,
+        sale__date_time__gte=start_date,
+        content_type__model='service'
+    ).values('name').annotate(
+        total_sales=Sum('price'),
+        quantity_sold=Sum('quantity')
+    ).order_by('-total_sales')[:10]
+    
+    return Response({
+        'period_days': days,
+        'top_services': list(services_data)
+    })
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def client_analytics(request):
+    """Análisis de clientes"""
+    from apps.clients_api.models import Client
+    from apps.appointments_api.models import Appointment
+    from django.db.models import Count, Q
+    
+    tenant = request.user.tenant
+    
+    # Clientes por género
+    gender_stats = Client.objects.filter(tenant=tenant, is_active=True).values('gender').annotate(
+        count=Count('id')
+    )
+    
+    # Clientes nuevos vs recurrentes (este mes)
+    month_start = timezone.now().replace(day=1)
+    new_clients = Client.objects.filter(
+        tenant=tenant,
+        created_at__gte=month_start
+    ).count()
+    
+    # Clientes con cumpleaños este mes
+    current_month = timezone.now().month
+    birthday_clients = Client.objects.filter(
+        tenant=tenant,
+        birthday__month=current_month,
+        is_active=True
+    ).count()
+    
+    return Response({
+        'gender_distribution': list(gender_stats),
+        'new_clients_this_month': new_clients,
+        'birthday_clients': birthday_clients,
+        'total_active': Client.objects.filter(tenant=tenant, is_active=True).count()
+    })

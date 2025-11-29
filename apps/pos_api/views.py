@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
-from django.db.models import Sum
+from django.db.models import Sum, Q
 from decimal import Decimal, InvalidOperation
 
 class SaleViewSet(viewsets.ModelViewSet):
@@ -84,6 +84,66 @@ class SaleViewSet(viewsets.ModelViewSet):
             
         except (InvalidOperation, TypeError):
             raise serializers.ValidationError("Valores inválidos para cantidad o precio")
+    
+    def _get_or_create_active_period(self, employee):
+        """Obtiene o crea el período activo para el empleado"""
+        from apps.employees_api.earnings_models import FortnightSummary
+        from datetime import datetime
+        
+        # Buscar cualquier período activo (no cerrado) para el empleado
+        active_period = FortnightSummary.objects.filter(
+            employee=employee,
+            closed_at__isnull=True
+        ).first()
+        
+        if active_period:
+            return active_period
+        
+        # No hay período activo, crear uno nuevo para la quincena actual o siguiente
+        today = timezone.now().date()
+        
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            last_day = (today.replace(month=today.month+1, day=1) - timezone.timedelta(days=1)).day
+            end_date = today.replace(day=last_day)
+        
+        year = start_date.year
+        month = start_date.month
+        fortnight_in_month = 1 if start_date.day <= 15 else 2
+        fortnight_number = (month - 1) * 2 + fortnight_in_month
+        
+        # Verificar si ya existe un período cerrado para esta quincena
+        existing_closed = FortnightSummary.objects.filter(
+            employee=employee,
+            fortnight_year=year,
+            fortnight_number=fortnight_number,
+            closed_at__isnull=False
+        ).exists()
+        
+        if existing_closed:
+            # Si ya hay un período cerrado para esta quincena, crear el siguiente
+            if fortnight_number < 24:  # No es la última quincena del año
+                fortnight_number += 1
+            else:
+                # Es la última quincena del año, crear la primera del siguiente año
+                year += 1
+                fortnight_number = 1
+        
+        # Usar get_or_create para evitar duplicados
+        period, created = FortnightSummary.objects.get_or_create(
+            employee=employee,
+            fortnight_year=year,
+            fortnight_number=fortnight_number,
+            defaults={
+                'total_earnings': 0,
+                'total_services': 0,
+                'is_paid': False
+            }
+        )
+        return period
 
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
@@ -128,9 +188,26 @@ class SaleViewSet(viewsets.ModelViewSet):
         discount = Decimal(str(self.request.data.get('discount', 0)))
         total_with_discount = total - discount
         
-        # Guardar venta
+        # Determinar el empleado para la venta
+        sale_employee = None
+        employee_id = self.request.data.get('employee_id')
+        if employee_id:
+            from apps.employees_api.models import Employee
+            try:
+                sale_employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
+            except Employee.DoesNotExist:
+                pass
+        
+        # Obtener o crear período activo para el empleado
+        active_period = None
+        if sale_employee:
+            active_period = self._get_or_create_active_period(sale_employee)
+        
+        # Guardar venta - asignar al empleado que realizó el servicio
         sale = serializer.save(
-            user=self.request.user,
+            user=self.request.user,  # Usuario que registra la venta
+            employee=sale_employee,  # Empleado que realizó el servicio
+            period=active_period,    # Período activo
             total=total_with_discount
         )
         
@@ -168,20 +245,15 @@ class SaleViewSet(viewsets.ModelViewSet):
                     appointment.client.save()
                     
                 # Crear ganancia automática para el empleado
-                self._create_employee_earning(sale, appointment.stylist)
+                if sale_employee:
+                    self._create_employee_earning(sale, sale_employee.user)
                     
             except Appointment.DoesNotExist:
                 pass
         
         # Si no hay cita pero hay empleado asignado, crear ganancia
-        employee_id = self.request.data.get('employee_id')
-        if employee_id and not appointment_id:
-            from apps.employees_api.models import Employee
-            try:
-                employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
-                self._create_employee_earning(sale, employee.user)
-            except Employee.DoesNotExist:
-                pass
+        elif sale_employee:
+            self._create_employee_earning(sale, sale_employee.user)
        
             
 
@@ -239,10 +311,14 @@ class SaleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        initial_cash = Decimal(str(request.data.get('initial_cash', 0)))
+        from .serializers import CashRegisterCreateSerializer
+        serializer = CashRegisterCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
         register = CashRegister.objects.create(
             user=request.user,
-            initial_cash=initial_cash
+            initial_cash=serializer.validated_data['initial_cash']
         )
         
         return Response(CashRegisterSerializer(register).data)
@@ -364,18 +440,20 @@ class SaleViewSet(viewsets.ModelViewSet):
             except (ValueError, TypeError):
                 pass
         if employee_id:
-            from apps.employees_api.models import Employee
             try:
                 employee_id = int(employee_id)
-                employee = Employee.objects.get(id=employee_id)
-                queryset = queryset.filter(user=employee.user)
-            except (Employee.DoesNotExist, ValueError, TypeError):
+                queryset = queryset.filter(employee_id=employee_id)
+            except (ValueError, TypeError):
                 pass
         if payment_method:
             queryset = queryset.filter(payment_method=payment_method)
         
+        from apps.utils.response_formatter import StandardResponse
         serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
+        return Response(StandardResponse.list_response(
+            results=serializer.data,
+            count=queryset.count()
+        ))
 
    
 
@@ -410,6 +488,14 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         
         if not register:
             return Response({'error': 'No hay caja abierta'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Asegurar valores no null
+        if register.initial_cash is None:
+            register.initial_cash = 0.00
+            register.save(update_fields=['initial_cash'])
+        if register.final_cash is None:
+            register.final_cash = 0.00
+            register.save(update_fields=['final_cash'])
             
         return Response(CashRegisterSerializer(register).data)
 
@@ -419,18 +505,14 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         if not register.is_open:
             return Response({"detail": "Caja ya está cerrada."}, status=status.HTTP_400_BAD_REQUEST)
 
-        final_cash_value = request.data.get('final_cash', 0)
-        try:
-            final_cash_decimal = Decimal(str(final_cash_value))
-        except (InvalidOperation, ValueError):
-            return Response(
-                {"final_cash": "El valor debe ser un número decimal válido."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        from .serializers import CashRegisterCloseSerializer
+        serializer = CashRegisterCloseSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
         register.is_open = False
         register.closed_at = timezone.now()
-        register.final_cash = final_cash_decimal
+        register.final_cash = serializer.validated_data['final_cash']
         register.save()
         return Response(CashRegisterSerializer(register).data)
     
@@ -465,9 +547,10 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         })
     
     def _calculate_cash_sales(self, register):
-        """Calcular ventas en efectivo del día"""
+        """Calcular ventas en efectivo del día del tenant"""
+        # Incluir ventas con empleado del tenant y ventas sin empleado del usuario
         cash_sales = Sale.objects.filter(
-            user=register.user,
+            Q(employee__tenant=register.user.tenant) | Q(user__tenant=register.user.tenant, employee__isnull=True),
             date_time__date=register.opened_at.date(),
             payment_method='cash'
         ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
@@ -524,9 +607,12 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
 def daily_summary(request):
         today = timezone.localdate()
         if request.user.is_superuser:
-            sales = Sale.objects.filter(user=request.user, date_time__date=today)
+            sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
         elif request.user.tenant:
-            sales = Sale.objects.filter(user__tenant=request.user.tenant, date_time__date=today)
+            sales = Sale.objects.filter(
+                Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
+                date_time__date=today
+            )
         else:
             sales = Sale.objects.none()
 
@@ -554,122 +640,91 @@ def daily_summary(request):
             'by_type': by_type,
         })
 
-@api_view(['GET'])
-def earnings_my_earnings(request):
-    """Ganancias del empleado actual"""
-    from datetime import datetime, timedelta
-    from django.db.models import Sum
-    
-    today = timezone.now().date()
-    start_of_month = today.replace(day=1)
-    
-    if request.user.is_superuser:
-        sales = Sale.objects.filter(
-            user=request.user,
-            date_time__date__gte=start_of_month,
-            date_time__date__lte=today
-        )
-    elif request.user.tenant:
-        sales = Sale.objects.filter(
-            user__tenant=request.user.tenant,
-            user=request.user,
-            date_time__date__gte=start_of_month,
-            date_time__date__lte=today
-        )
-    else:
-        sales = Sale.objects.none()
-    
-    total_earnings = sales.aggregate(total=Sum('total'))['total'] or 0
-    commission_rate = 0.15  # 15% comisión por defecto
-    commission = float(total_earnings) * commission_rate
-    
-    return Response({
-        'period': f'{start_of_month} - {today}',
-        'total_sales': float(total_earnings),
-        'commission_rate': commission_rate,
-        'commission': commission,
-        'sales_count': sales.count()
-    })
 
-@api_view(['GET'])
-def earnings_current_fortnight(request):
-    """Ganancias de la quincena actual"""
-    from datetime import datetime, timedelta
-    from django.db.models import Sum
-    
-    today = timezone.now().date()
-    
-    if today.day <= 15:
-        start_fortnight = today.replace(day=1)
-        end_fortnight = today.replace(day=15)
-    else:
-        start_fortnight = today.replace(day=16)
-        if today.month == 12:
-            end_fortnight = today.replace(year=today.year+1, month=1, day=1) - timedelta(days=1)
-        else:
-            end_fortnight = today.replace(month=today.month+1, day=1) - timedelta(days=1)
-    
-    if request.user.is_superuser:
-        sales = Sale.objects.filter(
-            user=request.user,
-            date_time__date__gte=start_fortnight,
-            date_time__date__lte=min(end_fortnight, today)
-        )
-    elif request.user.tenant:
-        sales = Sale.objects.filter(
-            user__tenant=request.user.tenant,
-            user=request.user,
-            date_time__date__gte=start_fortnight,
-            date_time__date__lte=min(end_fortnight, today)
-        )
-    else:
-        sales = Sale.objects.none()
-    
-    total_earnings = sales.aggregate(total=Sum('total'))['total'] or 0
-    commission_rate = 0.15
-    commission = float(total_earnings) * commission_rate
-    
-    return Response({
-        'period': f'{start_fortnight} - {min(end_fortnight, today)}',
-        'total_sales': float(total_earnings),
-        'commission_rate': commission_rate,
-        'commission': commission,
-        'sales_count': sales.count()
-    })
 
 @api_view(['GET'])
 def dashboard_stats(request):
     """Estadísticas para el dashboard del POS"""
     from .models import SaleDetail
+    from django.db.models import Count
+    from datetime import datetime, timedelta
     
     today = timezone.localdate()
     if request.user.is_superuser:
-        sales = Sale.objects.filter(user=request.user, date_time__date=today)
+        sales_today = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
+        all_sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user))
     elif request.user.tenant:
-        sales = Sale.objects.filter(user__tenant=request.user.tenant, date_time__date=today)
+        sales_today = Sale.objects.filter(
+            Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
+            date_time__date=today
+        )
+        all_sales = Sale.objects.filter(
+            Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True)
+        )
     else:
-        sales = Sale.objects.none()
+        sales_today = Sale.objects.none()
+        all_sales = Sale.objects.none()
     
-    total_sales = sales.aggregate(total=Sum('total'))['total'] or 0
-    total_transactions = sales.count()
+    total_sales = sales_today.aggregate(total=Sum('total'))['total'] or 0
+    total_transactions = sales_today.count()
     avg_ticket = total_sales / total_transactions if total_transactions > 0 else 0
     
     # Top productos vendidos hoy
-    from django.db.models import Count
+    if request.user.is_superuser:
+        product_filter = Q(sale__user=request.user) | Q(sale__employee__user=request.user)
+    elif request.user.tenant:
+        product_filter = Q(sale__employee__tenant=request.user.tenant) | Q(sale__user__tenant=request.user.tenant, sale__employee__isnull=True)
+    else:
+        product_filter = Q(pk__isnull=True)  # No results
+    
     top_products = SaleDetail.objects.filter(
-        sale__user=request.user,
+        product_filter,
         sale__date_time__date=today,
         content_type__model='product'
     ).values('name').annotate(
         sold=Sum('quantity')
     ).order_by('-sold')[:5]
     
+    # Ingresos mensuales de los últimos 6 meses
+    monthly_revenue = []
+    current_date = today.replace(day=1)
+    
+    for i in range(6):
+        month_start = current_date
+        if current_date.month == 12:
+            month_end = current_date.replace(year=current_date.year + 1, month=1, day=1) - timedelta(days=1)
+        else:
+            month_end = current_date.replace(month=current_date.month + 1, day=1) - timedelta(days=1)
+        
+        month_sales = all_sales.filter(
+            date_time__gte=month_start,
+            date_time__lt=month_end + timedelta(days=1)
+        )
+        
+        month_total = month_sales.aggregate(total=Sum('total'))['total'] or 0
+        
+        month_names = {
+            1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+            7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
+        }
+        
+        monthly_revenue.insert(0, {
+            'month': month_names[current_date.month],
+            'revenue': float(month_total)
+        })
+        
+        if current_date.month == 1:
+            current_date = current_date.replace(year=current_date.year - 1, month=12)
+        else:
+            current_date = current_date.replace(month=current_date.month - 1)
+    
     return Response({
         'total_sales': float(total_sales),
         'total_transactions': total_transactions,
         'average_ticket': float(avg_ticket),
         'top_products': list(top_products),
-        'hourly_data': []  # Placeholder para datos por hora
+        'hourly_data': [],
+        'monthly_revenue': monthly_revenue
     })
 
 @api_view(['GET'])
@@ -692,7 +747,11 @@ def active_promotions(request):
         }
     ]
     
-    return Response({'results': promotions})
+    from apps.utils.response_formatter import StandardResponse
+    return Response(StandardResponse.list_response(
+        results=promotions,
+        count=len(promotions)
+    ))
 
 @api_view(['GET'])
 def pos_categories(request):
@@ -721,7 +780,11 @@ def pos_categories(request):
             if cat not in existing_values:
                 categories.append({'name': cat, 'value': cat})
         
-        return Response({'results': categories})
+        from apps.utils.response_formatter import StandardResponse
+        return Response(StandardResponse.list_response(
+            results=categories,
+            count=len(categories)
+        ))
     except Exception as e:
         # Fallback en caso de error
         categories = [
@@ -730,7 +793,11 @@ def pos_categories(request):
             {'name': 'Barba', 'value': 'Barba'},
             {'name': 'Productos', 'value': 'Productos'}
         ]
-        return Response({'results': categories})
+        from apps.utils.response_formatter import StandardResponse
+        return Response(StandardResponse.list_response(
+            results=categories,
+            count=len(categories)
+        ))
 
 @api_view(['POST'])
 def debug_sale_data(request):

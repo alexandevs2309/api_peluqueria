@@ -195,7 +195,7 @@ class LoginView(generics.GenericAPIView):
         user = serializer.validated_data['user']
         tenant = serializer.validated_data['tenant']
 
-        if not tenant and user.role != 'SuperAdmin':
+        if not tenant and user.role != 'SuperAdmin' and not user.is_superuser:
             return Response({"detail": "Usuario sin tenant asignado. Contacte al administrador."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not user.is_active:
@@ -210,10 +210,11 @@ class LoginView(generics.GenericAPIView):
             return Response({"detail": "Cuenta inactiva. Contacte al administrador."}, status=status.HTTP_403_FORBIDDEN)
 
         if user.mfa_enabled:
+            tenant_data = {"id": tenant.id, "subdomain": tenant.subdomain} if tenant else None
             return Response({
                 "detail": "Se requiere verificación MFA.",
                 "email": user.email,
-                "tenant": {"id": tenant.id, "subdomain": tenant.subdomain}
+                "tenant": tenant_data
             }, status=status.HTTP_200_OK)
 
         refresh = RefreshToken.for_user(user)

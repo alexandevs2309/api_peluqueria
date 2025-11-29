@@ -57,7 +57,8 @@ class LoginSerializer(serializers.Serializer):
             if not user:
                 raise serializers.ValidationError("Credenciales inválidas.")
             tenant = user.tenant
-            if not tenant and user.role != 'SuperAdmin':
+            # SuperAdmin puede no tener tenant
+            if not tenant and user.role != 'SuperAdmin' and not user.is_superuser:
                 raise serializers.ValidationError("Usuario sin tenant asignado.")
 
         if not user.check_password(password):
