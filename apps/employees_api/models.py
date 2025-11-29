@@ -21,8 +21,16 @@ class Employee(models.Model):
     
     # Payment configuration fields
     payment_type = models.CharField(max_length=10, choices=PAYMENT_TYPE_CHOICES, default='commission')
-    fixed_salary = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Sueldo fijo mensual')
-    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True, help_text='Porcentaje de comisión (ej: 40.00 para 40%)')
+    fixed_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text='Sueldo fijo mensual')
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=40.00, help_text='Porcentaje de comisión (ej: 40.00 para 40%)')
+    
+    # Additional fields from API contracts
+    avatar = models.ImageField(upload_to='employees/avatars/', null=True, blank=True)
+    birth_date = models.DateField(null=True, blank=True)
+    emergency_contact = models.CharField(max_length=100, blank=True)
+    bank_account = models.CharField(max_length=50, blank=True)
+    tax_id = models.CharField(max_length=20, blank=True)
+    address = models.TextField(blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

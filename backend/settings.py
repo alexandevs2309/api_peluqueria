@@ -38,6 +38,8 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
 DEBUG = env('DEBUG', default=False)
 
 ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost'])
+if DEBUG:
+    ALLOWED_HOSTS.append('testserver')
 
 # Application definition
 
@@ -236,6 +238,19 @@ CELERY_BEAT_SCHEDULE = {
     'check-expired-subscriptions': {
         'task': 'apps.subscriptions_api.tasks.check_expired_subscriptions',
         'schedule': crontab(minute=0),  # Cada hora
+    },
+    # Nuevas tareas de notificaciones
+    'send-appointment-reminders': {
+        'task': 'apps.notifications_api.tasks.send_appointment_reminders',
+        'schedule': crontab(hour=18, minute=0),  # Diario a las 6:00 PM
+    },
+    'process-scheduled-notifications': {
+        'task': 'apps.notifications_api.tasks.process_scheduled_notifications',
+        'schedule': crontab(minute='*/15'),  # Cada 15 minutos
+    },
+    'cleanup-old-notifications': {
+        'task': 'apps.notifications_api.tasks.cleanup_old_notifications',
+        'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Domingos a las 3:00 AM
     },
 }
 

@@ -10,12 +10,21 @@ from .notifications_views import recent_earnings_notifications, mark_notificatio
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def current_fortnight(request):
-    return Response({'total': 0, 'commission': 0})
+    """Endpoint para obtener datos de quincena actual"""
+    from .earnings_views import EarningViewSet
+    viewset = EarningViewSet()
+    viewset.request = request
+    # Usar el método stats que ya existe
+    return viewset.stats(request)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def my_earnings(request):
-    return Response({'monthly': 0, 'total': 0})
+    """Endpoint que redirige al ViewSet principal"""
+    from .earnings_views import EarningViewSet
+    viewset = EarningViewSet()
+    viewset.request = request
+    return viewset.list(request)
 
 router = DefaultRouter()
 router.register(r'employees', EmployeeViewSet , basename='employee')

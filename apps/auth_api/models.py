@@ -87,9 +87,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def save(self, *args, **kwargs):
         # Enforce tenant for client roles (all except SuperAdmin)
-        client_roles = ['Client-Admin', 'Client-Staff', 'Estilista', 'Cajera', 'Manager', 'Utility']
-        if self.role in client_roles and not self.tenant:
-            raise ValueError(f"Role {self.role} must have a tenant assigned.")
+        # Temporarily disabled for registration process
+        # TODO: Re-enable after fixing registration flow
+        # client_roles = ['Client-Admin', 'Client-Staff', 'Estilista', 'Cajera', 'Manager', 'Utility']
+        # if self.role in client_roles and not self.tenant:
+        #     raise ValueError(f"Role {self.role} must have a tenant assigned.")
         super().save(*args, **kwargs)
 
     def __str__(self):

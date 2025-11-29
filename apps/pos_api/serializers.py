@@ -106,10 +106,27 @@ class SaleSerializer(serializers.ModelSerializer):
         return sale
 
 class CashRegisterSerializer(serializers.ModelSerializer):
+    sales_amount = serializers.SerializerMethodField()
+    
     class Meta:
         model = CashRegister
-        fields = ['id', 'user', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open']
-        read_only_fields = ['user', 'opened_at', 'closed_at']
+        fields = ['id', 'user', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
+        read_only_fields = ['user', 'opened_at', 'closed_at', 'sales_amount']
+    
+    def get_sales_amount(self, obj):
+        """Calcular ventas del día"""
+        from django.db.models import Sum
+        from .models import Sale
+        
+        if not obj.opened_at:
+            return 0.0
+        
+        sales_total = Sale.objects.filter(
+            user=obj.user,
+            date_time__date=obj.opened_at.date()
+        ).aggregate(total=Sum('total'))['total'] or 0
+        
+        return float(sales_total)
 
 class CashCountSerializer(serializers.ModelSerializer):
     class Meta:
@@ -120,6 +137,32 @@ class CashCountSerializer(serializers.ModelSerializer):
     def validate(self, data):
         data['total'] = data['denomination'] * data['count']
         return data
+
+class CashRegisterCreateSerializer(serializers.ModelSerializer):
+    """Serializer para crear caja registradora"""
+    initial_cash = serializers.DecimalField(max_digits=10, decimal_places=2, default=0.00, min_value=0)
+    
+    class Meta:
+        model = CashRegister
+        fields = ['initial_cash']
+    
+    def validate_initial_cash(self, value):
+        if value is None:
+            return 0.00
+        return value
+
+class CashRegisterCloseSerializer(serializers.ModelSerializer):
+    """Serializer para cerrar caja registradora"""
+    final_cash = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=0)
+    
+    class Meta:
+        model = CashRegister
+        fields = ['final_cash']
+    
+    def validate_final_cash(self, value):
+        if value is None:
+            raise serializers.ValidationError("final_cash es requerido para cerrar la caja")
+        return value
 
 class PromotionSerializer(serializers.ModelSerializer):
     class Meta:

@@ -17,7 +17,9 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             '/api/docs/',
             '/api/healthz/',
             '/admin/',
-            '/api/subscriptions/',
+            '/api/subscriptions/plans/',  # Permitir ver planes
+            '/api/subscriptions/register/',  # Permitir registro
+            '/api/subscriptions/register-with-plan/',  # Permitir registro con plan
             '/api/payments/',
             '/api/billing/',
             '/api/settings/contact/',
@@ -33,7 +35,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             return None
             
         # SuperAdmin siempre tiene acceso
-        if request.user.is_superuser or request.user.roles.filter(name='Super-Admin').exists():
+        if request.user.is_superuser or request.user.role == 'SuperAdmin' or request.user.roles.filter(name='Super-Admin').exists():
             return None
             
         # Validar tenant y plan

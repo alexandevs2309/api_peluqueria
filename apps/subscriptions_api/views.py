@@ -426,6 +426,18 @@ class RenewSubscriptionView(APIView):
     
     def get(self, request):
         """Obtener información de renovación"""
+        # SuperAdmin no necesita renovar suscripción
+        if request.user.is_superuser or request.user.role == 'SuperAdmin':
+            return Response({
+                'tenant_name': 'Sistema Administrativo',
+                'current_status': 'active',
+                'trial_end_date': None,
+                'access_level': 'full',
+                'days_in_grace': 0,
+                'available_plans': [],
+                'is_superadmin': True
+            }, status=200)
+            
         tenant = request.user.tenant
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
@@ -445,6 +457,10 @@ class RenewSubscriptionView(APIView):
     
     def post(self, request):
         """Renovar suscripción"""
+        # SuperAdmin no necesita renovar suscripción
+        if request.user.is_superuser or request.user.role == 'SuperAdmin':
+            return Response({'error': 'SuperAdmin does not need subscription renewal'}, status=400)
+            
         tenant = request.user.tenant
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)

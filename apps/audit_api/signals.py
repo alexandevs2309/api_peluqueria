@@ -2,6 +2,7 @@ import sys
 from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
+from django.db import transaction
 from .utils import create_audit_log
 from django.contrib.auth import get_user_model
 
@@ -17,6 +18,11 @@ def audit_log_on_save(sender, instance, created, **kwargs):
 
     # Saltar modelos del sistema y el propio modelo de auditoría
     if sender._meta.app_label in ['auth', 'admin', 'contenttypes', 'sessions', 'audit_api']:
+        return
+    
+    # Para User model, diferir auditoría hasta después del commit para evitar validaciones prematuras
+    if sender._meta.model_name == 'user' and created:
+        transaction.on_commit(lambda: _audit_user_creation(instance))
         return
     
     action = 'CREATE' if created else 'UPDATE'
@@ -37,13 +43,36 @@ def audit_log_on_save(sender, instance, created, **kwargs):
     elif hasattr(instance, 'user') and instance.user:
         user = instance.user
     
-    create_audit_log(
+    # Diferir auditoría hasta después del commit
+    transaction.on_commit(lambda: create_audit_log(
         user=user,
         action=action,
         description=f"{sender._meta.verbose_name} {action.lower()}d",
         content_object=instance,
         extra_data={'changes': changes}
-    )
+    ))
+
+def _audit_user_creation(user_instance):
+    """Auditar creación de usuario después del commit"""
+    try:
+        # Refrescar instancia para obtener datos actualizados
+        user_instance.refresh_from_db()
+        create_audit_log(
+            user=None,  # Usuario sistema para creación de usuarios
+            action='CREATE',
+            description=f"Usuario creado: {user_instance.email}",
+            content_object=user_instance,
+            extra_data={
+                'email': user_instance.email,
+                'role': user_instance.role,
+                'tenant_id': user_instance.tenant_id if user_instance.tenant else None
+            }
+        )
+    except Exception as e:
+        # Log error pero no fallar
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error auditando creación de usuario: {e}")
 
 
 @receiver(post_delete)
@@ -60,10 +89,11 @@ def audit_log_on_delete(sender, instance, **kwargs):
     if hasattr(instance, 'created_by') and instance.created_by:
         user = instance.created_by
     
-    create_audit_log(
+    # Diferir auditoría hasta después del commit
+    transaction.on_commit(lambda: create_audit_log(
         user=user,
         action='DELETE',
         description=f"{sender._meta.verbose_name} eliminado",
         content_object=None,
         extra_data={'deleted_object': str(instance)}
-    )
+    ))

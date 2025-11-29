@@ -31,7 +31,9 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/system-settings/',
             '/api/subscriptions/plans/',  # Allow subscription plans access
             '/api/subscriptions/register/',  # Allow registration
+            '/api/subscriptions/register-with-plan/',  # Allow registration with plan
             '/api/settings/contact/',  # Allow contact forms
+            '/api/settings/admin/',  # Allow super admin endpoints
         ]
         for exempt_path in exempt_paths:
             if request.path.startswith(exempt_path):
@@ -58,7 +60,9 @@ class TenantMiddleware(MiddlewareMixin):
         # Si no tenant desde JWT, fallback a usuario
         if not request.tenant:
             if hasattr(request, 'user') and request.user.is_authenticated:
-                if request.user.roles.filter(name='Super-Admin').exists():
+                # Permitir acceso a super admins
+                if (request.user.is_superuser or 
+                    (hasattr(request.user, 'role') and request.user.role == 'super_admin')):
                     request.tenant = None
                 elif hasattr(request.user, 'tenant') and request.user.tenant:
                     request.tenant = request.user.tenant
