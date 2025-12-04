@@ -2,14 +2,22 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db import models
+from django.http import HttpResponse
 from django.db.models import Sum, Count, Q, Prefetch
 from django.utils import timezone
+from django.db import transaction
 from datetime import datetime, timedelta
 from decimal import Decimal
 from .models import Employee
-from .earnings_models import Earning, FortnightSummary
-from django.core.cache import cache
+from .earnings_models import Earning, FortnightSummary, PeriodSummary, PayrollBatch, PayrollBatchItem
+from .earnings_serializers import (
+    PayrollBatchSerializer, PayrollBatchCreateSerializer, 
+    PayrollBatchProcessSerializer, PayrollBatchListSerializer
+)
+from .utils import compute_period_range, date_to_year_fortnight
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EarningViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
@@ -22,34 +30,43 @@ class EarningViewSet(viewsets.ViewSet):
             if not employee_id:
                 return Response({'error': 'employee_id requerido'}, status=400)
             
-            employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
+            # Validar empleado y tenant
+            employee_filter = {'id': employee_id}
+            if not request.user.is_superuser:
+                employee_filter['tenant'] = request.user.tenant
             
-            # Validar payment_type
-            if 'payment_type' in request.data:
-                payment_type = request.data['payment_type']
-                if payment_type not in ['commission', 'fixed', 'mixed']:
-                    return Response({'error': 'payment_type debe ser: commission, fixed o mixed'}, status=400)
-                employee.payment_type = payment_type
+            employee = Employee.objects.get(**employee_filter)
             
-            # Validar commission_rate
-            if 'commission_rate' in request.data:
+            # Validar salary_type (payment_type)
+            if 'payment_type' in request.data or 'salary_type' in request.data:
+                salary_type = request.data.get('salary_type') or request.data.get('payment_type')
+                if salary_type not in ['commission', 'fixed', 'mixed']:
+                    return Response({'error': 'salary_type debe ser: commission, fixed o mixed'}, status=400)
+                employee.salary_type = salary_type
+            
+            # Validar commission_percentage (commission_rate)
+            if 'commission_rate' in request.data or 'commission_percentage' in request.data:
                 try:
-                    commission_rate = float(request.data['commission_rate'])
-                    if commission_rate < 0 or commission_rate > 100:
-                        return Response({'error': 'commission_rate debe estar entre 0 y 100'}, status=400)
-                    employee.commission_rate = commission_rate
+                    commission_percentage = float(
+                        request.data.get('commission_percentage') or request.data.get('commission_rate')
+                    )
+                    if commission_percentage < 0 or commission_percentage > 100:
+                        return Response({'error': 'commission_percentage debe estar entre 0 y 100'}, status=400)
+                    employee.commission_percentage = commission_percentage
                 except (ValueError, TypeError):
-                    return Response({'error': 'commission_rate debe ser un número válido'}, status=400)
+                    return Response({'error': 'commission_percentage debe ser un número válido'}, status=400)
             
-            # Validar fixed_salary
-            if 'fixed_salary' in request.data:
+            # Validar salary_amount (fixed_salary)
+            if 'fixed_salary' in request.data or 'salary_amount' in request.data:
                 try:
-                    fixed_salary = float(request.data['fixed_salary'])
-                    if fixed_salary < 0:
-                        return Response({'error': 'fixed_salary no puede ser negativo'}, status=400)
-                    employee.fixed_salary = fixed_salary
+                    salary_amount = float(
+                        request.data.get('salary_amount') or request.data.get('fixed_salary')
+                    )
+                    if salary_amount < 0:
+                        return Response({'error': 'salary_amount no puede ser negativo'}, status=400)
+                    employee.salary_amount = salary_amount
                 except (ValueError, TypeError):
-                    return Response({'error': 'fixed_salary debe ser un número válido'}, status=400)
+                    return Response({'error': 'salary_amount debe ser un número válido'}, status=400)
             
             employee.save()
             
@@ -57,9 +74,13 @@ class EarningViewSet(viewsets.ViewSet):
                 'message': 'Configuración actualizada correctamente',
                 'employee': {
                     'id': employee.id,
-                    'payment_type': employee.payment_type,
-                    'commission_rate': float(employee.commission_rate or 0),
-                    'fixed_salary': float(employee.fixed_salary or 0)
+                    'salary_type': employee.salary_type,
+                    'commission_percentage': float(employee.commission_percentage or 0),
+                    'salary_amount': float(employee.salary_amount or 0),
+                    # Compatibilidad con nombres anteriores
+                    'payment_type': employee.salary_type,
+                    'commission_rate': float(employee.commission_percentage or 0),
+                    'fixed_salary': float(employee.salary_amount or 0)
                 }
             })
         except Employee.DoesNotExist:
@@ -67,80 +88,177 @@ class EarningViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response({'error': f'Error interno: {str(e)}'}, status=500)
     
+    @action(detail=False, methods=['post'])
+    def pay(self, request):
+        """Procesar pago de empleado por quincena"""
+        employee_id = request.data.get('employee_id')
+        year = request.data.get('year')
+        fortnight = request.data.get('fortnight')
+        payment_method = request.data.get('payment_method', 'cash')
+        payment_reference = request.data.get('payment_reference', '')
+        payment_notes = request.data.get('payment_notes', '')
+        
+        # Fallback: Accept frequency + reference_date and convert to year/fortnight
+        # This is temporary while frontend normalizes to use year/fortnight directly
+        if not year or not fortnight:
+            frequency = request.data.get('frequency')
+            reference_date = request.data.get('reference_date')
+            
+            if frequency and reference_date:
+                # Validate frequency
+                if frequency != 'fortnightly':
+                    return Response({
+                        'error': f'Unsupported frequency: {frequency}. Only "fortnightly" is supported.'
+                    }, status=400)
+                
+                try:
+                    year, fortnight = date_to_year_fortnight(reference_date)
+                    logger.debug(f"Fallback conversion: frequency={frequency}, reference_date={reference_date} -> year={year}, fortnight={fortnight}")
+                except ValueError as e:
+                    return Response({'error': str(e)}, status=400)
+            else:
+                return Response({'error': 'year y fortnight son requeridos (o frequency y reference_date)'}, status=400)
+        
+        if not employee_id:
+            return Response({'error': 'employee_id es requerido'}, status=400)
+        
+        try:
+            year = int(year)
+            fortnight = int(fortnight)
+            if not (1 <= fortnight <= 24):
+                return Response({'error': 'fortnight debe estar entre 1 y 24'}, status=400)
+        except ValueError:
+            return Response({'error': 'year y fortnight deben ser números enteros'}, status=400)
+        
+        try:
+            employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
+            
+            with transaction.atomic():
+                # Verificar si ya está pagado
+                try:
+                    summary = FortnightSummary.objects.get(
+                        employee=employee,
+                        fortnight_year=year,
+                        fortnight_number=fortnight
+                    )
+                    
+                    if summary.is_paid:
+                        return Response({
+                            'error': 'La quincena ya está pagada',
+                            'summary': {
+                                'employee_id': employee.id,
+                                'employee_name': employee.user.full_name or employee.user.email,
+                                'year': year,
+                                'fortnight': fortnight,
+                                'amount_paid': float(summary.amount_paid or summary.total_earnings),
+                                'paid_at': summary.paid_at.isoformat() if summary.paid_at else None
+                            }
+                        }, status=400)
+                        
+                except FortnightSummary.DoesNotExist:
+                    return Response({'error': 'No hay ganancias registradas para esta quincena'}, status=404)
+                
+                # Verificar que hay ganancias para pagar
+                if summary.total_earnings <= 0:
+                    return Response({'error': 'No hay ganancias para procesar el pago'}, status=400)
+                
+                # Marcar como pagado
+                summary.is_paid = True
+                summary.paid_at = timezone.now()
+                summary.paid_by = request.user
+                summary.closed_at = timezone.now()
+                summary.payment_method = payment_method
+                summary.amount_paid = summary.total_earnings
+                summary.payment_reference = payment_reference
+                summary.payment_notes = payment_notes
+                summary.save()
+                
+                # Crear recibo
+                from .earnings_models import PaymentReceipt
+                receipt = PaymentReceipt.objects.create(fortnight_summary=summary)
+                
+                return Response({
+                    'status': 'paid',
+                    'message': 'Pago procesado correctamente',
+                    'summary': {
+                        'employee_id': employee.id,
+                        'employee_name': employee.user.full_name or employee.user.email,
+                        'year': year,
+                        'fortnight': fortnight,
+                        'amount_paid': float(summary.amount_paid),
+                        'services_count': summary.total_services,
+                        'payment_method': payment_method,
+                        'payment_reference': payment_reference,
+                        'receipt_number': receipt.receipt_number,
+                        'paid_at': summary.paid_at.isoformat()
+                    }
+                })
+        
+        except Employee.DoesNotExist:
+            return Response({'error': 'Empleado no encontrado'}, status=404)
+            
+        except Exception as e:
+            return Response({'error': f'Error procesando pago: {str(e)}'}, status=500)
+    
     def list(self, request):
-        """Obtener ganancias reales de empleados"""
-        # Obtener parámetros de filtro
-        start_date = request.GET.get('start_date')
-        end_date = request.GET.get('end_date')
+        """Obtener ganancias por quincena"""
+        # Parámetros requeridos: year y fortnight
+        year = request.GET.get('year')
+        fortnight = request.GET.get('fortnight')
         role = request.GET.get('role')
         status_filter = request.GET.get('status')
         
-        # Validación de fechas
-        try:
-            if start_date and end_date:
-                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        # Fallback: Accept frequency + reference_date and convert to year/fortnight
+        # This is temporary while frontend normalizes to use year/fortnight directly
+        if not year or not fortnight:
+            frequency = request.GET.get('frequency')
+            reference_date = request.GET.get('reference_date')
+            
+            if frequency and reference_date:
+                # Validate frequency
+                if frequency != 'fortnightly':
+                    return Response({
+                        'error': f'Unsupported frequency: {frequency}. Only "fortnightly" is supported.'
+                    }, status=400)
                 
-                if start_date > end_date:
-                    return Response({'error': 'Fecha inicial no puede ser mayor a fecha final'}, status=400)
+                try:
+                    year, fortnight = date_to_year_fortnight(reference_date)
+                    logger.debug(f"Fallback conversion: frequency={frequency}, reference_date={reference_date} -> year={year}, fortnight={fortnight}")
+                except ValueError as e:
+                    return Response({'error': str(e)}, status=400)
             else:
-                # Fechas por defecto (quincena actual)
+                # Si no se especifica year/fortnight ni frequency/reference_date, usar quincena actual
                 today = timezone.now().date()
-                if today.day <= 15:
-                    start_date = today.replace(day=1)
-                    end_date = today.replace(day=15)
-                else:
-                    start_date = today.replace(day=16)
-                    last_day = (today.replace(month=today.month+1, day=1) - timedelta(days=1)).day
-                    end_date = today.replace(day=last_day)
-        except ValueError:
-            return Response({'error': 'Formato de fecha inválido. Use YYYY-MM-DD'}, status=400)
+                year, fortnight = Earning.calculate_fortnight(today)
         
-        # Optimizar consulta con select_related y prefetch_related
+        # Validate year/fortnight values
+        try:
+            year = int(year)
+            fortnight = int(fortnight)
+            if not (1 <= fortnight <= 24):
+                return Response({'error': 'Fortnight debe estar entre 1 y 24'}, status=400)
+        except ValueError:
+            return Response({'error': 'Year y fortnight deben ser números enteros'}, status=400)
+        
+        # Obtener empleados activos del tenant
         employees = Employee.objects.filter(
             tenant=request.user.tenant,
             is_active=True
-        ).select_related('user').prefetch_related(
-            Prefetch('fortnight_summaries', 
-                    queryset=FortnightSummary.objects.select_related('paid_by'))
-        )
+        ).select_related('user')
         
-        # Verificar si el usuario es admin y agregarlo como manager si no está en employees
-        admin_employee = None
-        if request.user.is_staff and not employees.filter(user=request.user).exists():
-            # Crear registro temporal para el admin
-            admin_employee = type('Employee', (), {
-                'id': 0,
-                'user': request.user,
-                'specialty': 'Administrador',
-                'payment_type': 'fixed',
-                'commission_rate': 0,
-                'fixed_salary': 0,
-                'is_active': True
-            })
-        
-        # Obtener ventas del período ACTIVO (no cerrado) para optimizar consultas
-        from apps.pos_api.models import Sale
-        
-        # SOLO considerar ventas de períodos NO cerrados o sin período para mostrar datos pendientes correctos
-        sales_data = Sale.objects.filter(
-            date_time__date__gte=start_date,
-            date_time__date__lte=end_date,
-            employee__tenant=request.user.tenant
-        ).filter(
-            Q(period__isnull=True) | Q(period__closed_at__isnull=True)
-        ).values('employee_id').annotate(
-            total_sales=Sum('total'),
-            services_count=Count('id')
-        )
+        # Obtener FortnightSummary para la quincena especificada
+        fortnight_summaries = FortnightSummary.objects.filter(
+            employee__tenant=request.user.tenant,
+            fortnight_year=year,
+            fortnight_number=fortnight
+        ).select_related('employee__user')
         
         # Crear diccionario para acceso rápido
-        sales_dict = {item['employee_id']: item for item in sales_data}
+        summaries_dict = {summary.employee_id: summary for summary in fortnight_summaries}
         
         earnings_data = []
-        all_employees = list(employees) + ([admin_employee] if admin_employee else [])
         
-        for emp in all_employees:
+        for emp in employees:
             # Mapear specialty a role
             role_mapped = self._map_specialty_to_role(emp.specialty)
             
@@ -148,35 +266,24 @@ class EarningViewSet(viewsets.ViewSet):
             if role and role_mapped != role:
                 continue
             
-            # Obtener datos de ventas optimizados
-            if hasattr(emp, 'id') and emp.id != 0:
-                employee_sales = sales_dict.get(emp.id, {'total_sales': 0, 'services_count': 0})
+            # Obtener FortnightSummary del empleado
+            summary = summaries_dict.get(emp.id)
+            
+            if summary:
+                total_earned = float(summary.total_earnings)
+                services_count = summary.total_services
+                payment_status = 'paid' if summary.is_paid else 'pending'
             else:
-                # Admin temporal - no tiene ventas como empleado
-                employee_sales = {'total_sales': 0, 'services_count': 0}
-            
-            total_sales = float(employee_sales['total_sales'] or 0)
-            services_count = employee_sales['services_count'] or 0
-            
-            # Calcular ganancias según tipo de pago
-            total_earned = self._calculate_earnings_by_type(
-                emp, total_sales, start_date, end_date
-            )
-            
-            # Determinar estado de pago (solo para empleados reales)
-            if hasattr(emp, 'id') and emp.id != 0:
-                payment_status = self._get_payment_status(emp, start_date, end_date, status_filter)
-                # No incluir empleados sin ventas
-                if payment_status == 'no_sales':
+                # No hay summary para esta quincena
+                total_earned = 0.0
+                services_count = 0
+                payment_status = 'no_sales'
+                
+                # Solo incluir empleados con sueldo fijo aunque no tengan ventas
+                if emp.salary_type != 'fixed':
                     continue
-            else:
-                payment_status = 'pending'  # Admin temporal siempre pending
             
-            # Para empleados con sueldo fijo, incluir aunque no tengan ventas
-            if total_sales == 0 and services_count == 0 and emp.payment_type != 'fixed':
-                # Solo excluir empleados sin ventas si no tienen sueldo fijo
-                continue
-            
+            # Filtrar por estado si se especifica
             if status_filter and payment_status != status_filter:
                 continue
             
@@ -187,33 +294,47 @@ class EarningViewSet(viewsets.ViewSet):
                 'email': emp.user.email,
                 'role': role_mapped,
                 'is_active': emp.is_active,
-                'payment_type': emp.payment_type or 'commission',
-                'commission_rate': float(emp.commission_rate or 40),
-                'fixed_salary': float(emp.fixed_salary or 0),
-                'total_sales': total_sales,
+                'payment_type': emp.salary_type or 'commission',
+                'commission_rate': float(emp.commission_percentage or 40),
+                'fixed_salary': float(emp.salary_amount or 0),
                 'total_earned': total_earned,
                 'services_count': services_count,
-                'payment_status': payment_status
+                'payment_status': payment_status,
+                'fortnight_year': year,
+                'fortnight_number': fortnight
             })
         
-        # Calcular summary solo con datos pendientes (no cerrados)
-        total_generated = sum(emp['total_sales'] for emp in earnings_data)
+        # Calcular totales
         total_earned_sum = sum(emp['total_earned'] for emp in earnings_data)
+        total_paid = sum(emp['total_earned'] for emp in earnings_data if emp['payment_status'] == 'paid')
+        total_pending = sum(emp['total_earned'] for emp in earnings_data if emp['payment_status'] == 'pending')
         
-        # Para paid/pending, solo contar empleados con ventas reales
-        total_paid = 0  # En este contexto, paid siempre es 0 porque solo mostramos pendientes
-        total_pending = sum(emp['total_earned'] for emp in earnings_data 
-                           if emp['total_sales'] > 0 or emp['services_count'] > 0)
+        # Calcular fechas de la quincena para mostrar
+        month = ((fortnight - 1) // 2) + 1
+        is_first_half = (fortnight % 2) == 1
         
-        # Nueva estructura de respuesta
+        if is_first_half:
+            start_day = 1
+            end_day = 15
+        else:
+            start_day = 16
+            if month == 12:
+                next_month = datetime(year + 1, 1, 1)
+            else:
+                next_month = datetime(year, month + 1, 1)
+            end_day = (next_month - timedelta(days=1)).day
+        
+        period_display = f"{year}-{month:02d}-{start_day:02d} - {year}-{month:02d}-{end_day:02d}"
+        
         return Response({
             'employees': earnings_data,
             'summary': {
-                'total_generated': total_generated,
                 'total_earned': total_earned_sum,
                 'total_paid': total_paid,
                 'total_pending': total_pending,
-                'period': f"{start_date} - {end_date}",
+                'period': period_display,
+                'year': year,
+                'fortnight': fortnight,
                 'employees_count': len(earnings_data)
             }
         })
@@ -249,31 +370,52 @@ class EarningViewSet(viewsets.ViewSet):
             # Comisión sobre ventas
             commission_earned = (total_sales * commission_rate) / 100
             
-            # Prorratear sueldo fijo por días del período
-            days_in_period = (end_date - start_date).days + 1
-            
-            # Calcular días del mes para prorrateo
-            if start_date.month == 12:
-                next_month = start_date.replace(year=start_date.year + 1, month=1, day=1)
+            # Prorratear sueldo fijo - salary_amount es QUINCENAL, no mensual
+            # Si el período es exactamente una quincena (1-15 o 16-fin), usar monto completo
+            if (start_date.day == 1 and end_date.day == 15) or (start_date.day == 16):
+                # Período quincenal completo
+                prorated_salary = fixed_salary
             else:
-                next_month = start_date.replace(month=start_date.month + 1, day=1)
-            month_days = (next_month - timedelta(days=1)).day
-            
-            daily_salary = fixed_salary / month_days
-            prorated_salary = daily_salary * days_in_period
+                # Prorrateo por días dentro de la quincena
+                if start_date.day <= 15:
+                    # Primera quincena: días 1-15
+                    quincenal_days = 15
+                else:
+                    # Segunda quincena: días 16-fin de mes
+                    if start_date.month == 12:
+                        next_month = start_date.replace(year=start_date.year + 1, month=1, day=1)
+                    else:
+                        next_month = start_date.replace(month=start_date.month + 1, day=1)
+                    last_day = (next_month - timedelta(days=1)).day
+                    quincenal_days = last_day - 15
+                
+                days_in_period = (end_date - start_date).days + 1
+                daily_salary = fixed_salary / quincenal_days
+                prorated_salary = daily_salary * days_in_period
             total_earned = prorated_salary + commission_earned
         else:  # fixed
-            # Prorratear sueldo fijo por días del período
-            days_in_period = (end_date - start_date).days + 1
-            
-            if start_date.month == 12:
-                next_month = start_date.replace(year=start_date.year + 1, month=1, day=1)
+            # Prorratear sueldo fijo - salary_amount es QUINCENAL, no mensual
+            # Si el período es exactamente una quincena (1-15 o 16-fin), usar monto completo
+            if (start_date.day == 1 and end_date.day == 15) or (start_date.day == 16):
+                # Período quincenal completo
+                total_earned = fixed_salary
             else:
-                next_month = start_date.replace(month=start_date.month + 1, day=1)
-            month_days = (next_month - timedelta(days=1)).day
-            
-            daily_salary = fixed_salary / month_days
-            total_earned = daily_salary * days_in_period
+                # Prorrateo por días dentro de la quincena
+                if start_date.day <= 15:
+                    # Primera quincena: días 1-15
+                    quincenal_days = 15
+                else:
+                    # Segunda quincena: días 16-fin de mes
+                    if start_date.month == 12:
+                        next_month = start_date.replace(year=start_date.year + 1, month=1, day=1)
+                    else:
+                        next_month = start_date.replace(month=start_date.month + 1, day=1)
+                    last_day = (next_month - timedelta(days=1)).day
+                    quincenal_days = last_day - 15
+                
+                days_in_period = (end_date - start_date).days + 1
+                daily_salary = fixed_salary / quincenal_days
+                total_earned = daily_salary * days_in_period
         
         return float(total_earned)
     
@@ -285,7 +427,8 @@ class EarningViewSet(viewsets.ViewSet):
         pending_sales = Sale.objects.filter(
             employee=employee,
             date_time__date__gte=start_date,
-            date_time__date__lte=end_date
+            date_time__date__lte=end_date,
+            status='completed'
         ).filter(
             Q(period__isnull=True) | Q(period__closed_at__isnull=True)
         ).exists()
@@ -298,6 +441,7 @@ class EarningViewSet(viewsets.ViewSet):
             employee=employee,
             date_time__date__gte=start_date,
             date_time__date__lte=end_date,
+            status='completed',
             period__closed_at__isnull=False,
             period__is_paid=True
         ).exists()
@@ -310,10 +454,9 @@ class EarningViewSet(viewsets.ViewSet):
     
     def _calculate_fortnight_number(self, date):
         """Calcula el número de quincena (1-24)"""
-        month = date.month
-        day = date.day
-        fortnight_in_month = 1 if day <= 15 else 2
-        return (month - 1) * 2 + fortnight_in_month
+        from .earnings_models import Earning
+        _, fortnight_number = Earning.calculate_fortnight(date)
+        return fortnight_number
     
     @action(detail=False, methods=['post'], url_path='(?P<employee_id>[^/.]+)/process_payment')
     def process_payment(self, request, employee_id=None):
@@ -529,7 +672,8 @@ class EarningViewSet(viewsets.ViewSet):
             sales_data = Sale.objects.filter(
                 employee_id=employee.id,
                 date_time__date__gte=start_date,
-                date_time__date__lte=end_date
+                date_time__date__lte=end_date,
+                status='completed'
             ).aggregate(
                 total_sales=Sum('total'),
                 services_count=Count('id')
@@ -575,6 +719,7 @@ class EarningViewSet(viewsets.ViewSet):
                 employee_id=employee.id,
                 date_time__date__gte=start_date,
                 date_time__date__lte=end_date,
+                status='completed',
                 period__isnull=True
             ).update(period=summary)
             
@@ -582,6 +727,7 @@ class EarningViewSet(viewsets.ViewSet):
                 employee_id=employee.id,
                 date_time__date__gte=start_date,
                 date_time__date__lte=end_date,
+                status='completed',
                 period__closed_at__isnull=True
             ).exclude(period=summary).update(period=summary)
             
@@ -846,7 +992,8 @@ class EarningViewSet(viewsets.ViewSet):
             sales_data = Sale.objects.filter(
                 employee_id=emp.id,
                 date_time__date__gte=start_date,
-                date_time__date__lte=end_date
+                date_time__date__lte=end_date,
+                status='completed'
             ).aggregate(
                 total_sales=Sum('total'),
                 services_count=Count('id')
@@ -968,7 +1115,8 @@ class EarningViewSet(viewsets.ViewSet):
         sales_without_period = Sale.objects.filter(
             period__isnull=True,
             employee__isnull=False,
-            employee__tenant=request.user.tenant
+            employee__tenant=request.user.tenant,
+            status='completed'
         )
         
         for sale in sales_without_period:
@@ -1076,6 +1224,195 @@ class EarningViewSet(viewsets.ViewSet):
             'message': 'Inconsistencias corregidas',
             'fixes_applied': fixes_applied,
             'total_fixes': len(fixes_applied)
+        })
+
+    @action(detail=False, methods=['post'])
+    def create_payroll_batch(self, request):
+        """Crear lote de nómina"""
+        serializer = PayrollBatchCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        
+        data = serializer.validated_data
+        
+        try:
+            with transaction.atomic():
+                # Crear batch
+                batch = PayrollBatch.objects.create(
+                    tenant=request.user.tenant,
+                    period_start=data['period_start'],
+                    period_end=data['period_end'],
+                    frequency=data['frequency'],
+                    created_by=request.user,
+                    status='draft'
+                )
+                
+                # Obtener empleados válidos del tenant
+                employees = Employee.objects.filter(
+                    id__in=data['employee_ids'],
+                    tenant=request.user.tenant,
+                    is_active=True
+                ).select_related('user')
+                
+                if not employees.exists():
+                    return Response({'error': 'No se encontraron empleados válidos'}, status=400)
+                
+                total_amount = Decimal('0.00')
+                items_created = 0
+                
+                # Crear items del batch
+                for employee in employees:
+                    # Calcular ganancias del período
+                    from apps.pos_api.models import Sale
+                    sales_data = Sale.objects.filter(
+                        employee=employee,
+                        date_time__date__gte=data['period_start'],
+                        date_time__date__lte=data['period_end'],
+                        status='completed'
+                    ).aggregate(
+                        total_sales=Sum('total'),
+                        services_count=Count('id')
+                    )
+                    
+                    total_sales = float(sales_data['total_sales'] or 0)
+                    
+                    # Calcular earnings según tipo de empleado
+                    gross_amount = self._calculate_earnings_by_type(
+                        employee, total_sales, data['period_start'], data['period_end']
+                    )
+                    
+                    if gross_amount > 0:
+                        # Buscar o crear PeriodSummary
+                        period_start, period_end, period_year, period_index = compute_period_range(
+                            data['frequency'], data['period_start']
+                        )
+                        
+                        period_summary, _ = PeriodSummary.objects.get_or_create(
+                            employee=employee,
+                            frequency=data['frequency'],
+                            period_year=period_year,
+                            period_index=period_index,
+                            defaults={
+                                'period_start': period_start,
+                                'period_end': period_end,
+                                'total_earnings': gross_amount,
+                                'total_services': sales_data['services_count'] or 0
+                            }
+                        )
+                        
+                        # Crear item del batch
+                        PayrollBatchItem.objects.create(
+                            batch=batch,
+                            employee=employee,
+                            period_summary=period_summary,
+                            gross_amount=gross_amount,
+                            deductions=Decimal('0.00'),  # TODO: Implementar deducciones
+                            net_amount=gross_amount,
+                            status='pending'
+                        )
+                        
+                        total_amount += gross_amount
+                        items_created += 1
+                
+                # Actualizar totales del batch
+                batch.total_employees = items_created
+                batch.total_amount = total_amount
+                batch.status = 'approved' if items_created > 0 else 'draft'
+                batch.save()
+                
+                logger.info(f"Batch creado: {batch.batch_number} con {items_created} items")
+                
+                serializer = PayrollBatchSerializer(batch)
+                return Response({
+                    'status': 'created',
+                    'batch': serializer.data,
+                    'items_created': items_created
+                })
+                
+        except Exception as e:
+            logger.error(f"Error creando batch: {str(e)}")
+            return Response({'error': f'Error interno: {str(e)}'}, status=500)
+    
+    @action(detail=False, methods=['post'])
+    def process_payroll_batch(self, request):
+        """Procesar lote de nómina en background"""
+        serializer = PayrollBatchProcessSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        
+        batch_id = serializer.validated_data['batch_id']
+        
+        try:
+            batch = PayrollBatch.objects.get(
+                id=batch_id,
+                tenant=request.user.tenant
+            )
+            
+            if batch.status not in ['approved', 'draft']:
+                return Response({'error': 'Batch no puede ser procesado en su estado actual'}, status=400)
+            
+            # Enqueue background task
+            from .tasks import process_payroll_batch_task
+            task = process_payroll_batch_task.delay(batch_id)
+            
+            # Guardar task_id en el batch
+            batch.task_id = task.id
+            batch.status = 'processing'
+            batch.save()
+            
+            logger.info(f"Batch {batch_id} encolado para procesamiento con task {task.id}")
+            
+            return Response({
+                'status': 'processing',
+                'task_id': task.id,
+                'batch_id': batch_id
+            })
+            
+        except PayrollBatch.DoesNotExist:
+            return Response({'error': 'Batch no encontrado'}, status=404)
+        except Exception as e:
+            logger.error(f"Error procesando batch {batch_id}: {str(e)}")
+            return Response({'error': f'Error interno: {str(e)}'}, status=500)
+    
+    @action(detail=False, methods=['get'])
+    def export_payroll_pdf(self, request):
+        """Exportar lote de nómina como PDF"""
+        batch_id = request.GET.get('batch_id')
+        if not batch_id:
+            return Response({'error': 'batch_id es requerido'}, status=400)
+        
+        try:
+            batch = PayrollBatch.objects.select_related('tenant', 'created_by').prefetch_related(
+                'items__employee__user'
+            ).get(id=batch_id, tenant=request.user.tenant)
+            
+            # Generar PDF
+            from .utils import generate_payroll_batch_pdf
+            pdf_content = generate_payroll_batch_pdf(batch)
+            
+            response = HttpResponse(pdf_content, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="nomina_{batch.batch_number}.pdf"'
+            
+            logger.info(f"PDF generado para batch {batch_id}")
+            return response
+            
+        except PayrollBatch.DoesNotExist:
+            return Response({'error': 'Batch no encontrado'}, status=404)
+        except Exception as e:
+            logger.error(f"Error generando PDF para batch {batch_id}: {str(e)}")
+            return Response({'error': f'Error interno: {str(e)}'}, status=500)
+    
+    @action(detail=False, methods=['get'])
+    def list_payroll_batches(self, request):
+        """Listar lotes de nómina del tenant"""
+        batches = PayrollBatch.objects.filter(
+            tenant=request.user.tenant
+        ).select_related('created_by').order_by('-created_at')
+        
+        serializer = PayrollBatchListSerializer(batches, many=True)
+        return Response({
+            'batches': serializer.data,
+            'count': batches.count()
         })
 
 class FortnightSummaryViewSet(viewsets.ViewSet):
