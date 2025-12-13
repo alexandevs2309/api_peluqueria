@@ -1,6 +1,8 @@
 from django.db import models
 from django.conf import settings
 from django.utils import timezone
+from django.utils.crypto import get_random_string
+import uuid
 from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -61,6 +63,9 @@ class Earning(models.Model):
     fortnight_year = models.IntegerField()
     fortnight_number = models.IntegerField()  # 1-24 (2 por mes)
     
+    # Campo para idempotencia
+    external_id = models.CharField(max_length=100, unique=True, null=True, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
     
@@ -68,21 +73,53 @@ class Earning(models.Model):
         ordering = ['-date_earned']
         indexes = [
             models.Index(fields=['employee', 'fortnight_year', 'fortnight_number']),
+            models.Index(fields=['external_id']),
             models.Index(fields=['date_earned']),
         ]
     
     def save(self, *args, **kwargs):
+        from django.db import transaction
+        from django.db.models import Sum, Count
+        
         # Validar campos requeridos
         if not self.employee_id:
             raise ValueError("Employee es requerido")
         if not self.amount:
             self.amount = Decimal('0.00')
+        if not self.date_earned:
+            self.date_earned = timezone.now()
         
-        # Calcular quincena automáticamente
-        if not self.fortnight_year or not self.fortnight_number:
-            self.fortnight_year, self.fortnight_number = self.calculate_fortnight(self.date_earned)
+        # Calcular quincena automáticamente SIEMPRE
+        self.fortnight_year, self.fortnight_number = self.calculate_fortnight(self.date_earned)
         
-        super().save(*args, **kwargs)
+        with transaction.atomic():
+            super().save(*args, **kwargs)
+            
+            # Actualizar FortnightSummary automáticamente
+            summary, created = FortnightSummary.objects.get_or_create(
+                employee=self.employee,
+                fortnight_year=self.fortnight_year,
+                fortnight_number=self.fortnight_number,
+                defaults={
+                    'total_earnings': Decimal('0.00'),
+                    'total_services': 0,
+                    'is_paid': False
+                }
+            )
+            
+            # Recalcular totales desde la DB
+            earnings_data = Earning.objects.filter(
+                employee=self.employee,
+                fortnight_year=self.fortnight_year,
+                fortnight_number=self.fortnight_number
+            ).aggregate(
+                total_amount=Sum('amount'),
+                total_count=Count('id')
+            )
+            
+            summary.total_earnings = earnings_data['total_amount'] or Decimal('0.00')
+            summary.total_services = earnings_data['total_count'] or 0
+            summary.save()
     
     @staticmethod
     def calculate_fortnight(date):
@@ -168,6 +205,29 @@ class FortnightSummary(models.Model):
         max_digits=10, decimal_places=2, null=True, blank=True,
         help_text="Monto real pagado"
     )
+    
+    # Descuentos legales (República Dominicana)
+    afp_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Descuento AFP (2.87%)"
+    )
+    sfs_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Descuento SFS (3.04%)"
+    )
+    isr_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Descuento ISR (según escala)"
+    )
+    total_deductions = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Total de descuentos legales"
+    )
+    net_salary = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="Salario neto después de descuentos"
+    )
+    
     payment_reference = models.CharField(
         max_length=100, null=True, blank=True,
         help_text="Referencia bancaria o número de cheque"
@@ -175,6 +235,12 @@ class FortnightSummary(models.Model):
     payment_notes = models.TextField(
         null=True, blank=True,
         help_text="Notas adicionales del pago"
+    )
+    
+    # Campo para pagos anticipados
+    is_advance_payment = models.BooleanField(
+        default=False,
+        help_text="Indica si este pago fue realizado antes de la fecha correspondiente"
     )
     
     created_at = models.DateTimeField(auto_now_add=True)
@@ -246,3 +312,166 @@ class PaymentReceipt(models.Model):
     
     def __str__(self):
         return f"Recibo {self.receipt_number} - {self.fortnight_summary.employee}"
+
+class PeriodSummary(models.Model):
+    """Resumen de ganancias por período (multifrecuencia)"""
+    
+    FREQUENCY_CHOICES = [
+        ('daily', 'Diario'),
+        ('weekly', 'Semanal'),
+        ('biweekly', 'Quincenal'),
+        ('monthly', 'Mensual')
+    ]
+    
+    employee = models.ForeignKey(
+        'employees_api.Employee',
+        on_delete=models.CASCADE,
+        related_name='period_summaries'
+    )
+    
+    frequency = models.CharField(max_length=10, choices=FREQUENCY_CHOICES)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    period_year = models.IntegerField()
+    period_index = models.IntegerField()  # 1-365 daily, 1-52 weekly, 1-24 biweekly, 1-12 monthly
+    
+    total_earnings = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        validators=[MinValueValidator(Decimal('0.00'))]
+    )
+    total_services = models.IntegerField(default=0, validators=[MinValueValidator(0)])
+    
+    is_paid = models.BooleanField(default=False)
+    paid_at = models.DateTimeField(null=True, blank=True)
+    paid_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    
+    payment_method = models.CharField(
+        max_length=20,
+        choices=[
+            ('cash', 'Efectivo'),
+            ('transfer', 'Transferencia'),
+            ('check', 'Cheque'),
+            ('other', 'Otro')
+        ],
+        null=True, blank=True
+    )
+    amount_paid = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    payment_reference = models.CharField(max_length=100, null=True, blank=True)
+    payment_notes = models.TextField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        unique_together = ('employee', 'frequency', 'period_year', 'period_index')
+        ordering = ['-period_year', '-period_index']
+        indexes = [
+            models.Index(fields=['employee', 'frequency', 'period_year', 'period_index']),
+            models.Index(fields=['is_paid']),
+        ]
+    
+    def __str__(self):
+        return f"{self.employee} - {self.frequency} {self.period_year}/{self.period_index} - ${self.total_earnings}"
+
+class PayrollBatch(models.Model):
+    """Lotes de nómina para procesamiento masivo"""
+    
+    STATUS_CHOICES = [
+        ('draft', 'Borrador'),
+        ('approved', 'Aprobado'),
+        ('processing', 'Procesando'),
+        ('completed', 'Completado'),
+        ('failed', 'Fallido')
+    ]
+    
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='payroll_batches')
+    batch_number = models.CharField(max_length=50, unique=True)
+    period_start = models.DateField()
+    period_end = models.DateField()
+    frequency = models.CharField(max_length=10, choices=PeriodSummary.FREQUENCY_CHOICES)
+    
+    total_employees = models.IntegerField(default=0)
+    total_amount = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    
+    # Tracking fields
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
+    approved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='approved_payroll_batches'
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    
+    # Task tracking
+    task_id = models.CharField(max_length=100, null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant', 'status']),
+            models.Index(fields=['batch_number']),
+            models.Index(fields=['created_at']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        if not self.batch_number:
+            timestamp = timezone.now().strftime('%Y%m%d%H%M%S')
+            short_uuid = str(uuid.uuid4())[:8]
+            self.batch_number = f"{timestamp}-{short_uuid}"
+        super().save(*args, **kwargs)
+    
+    def __str__(self):
+        return f"Batch {self.batch_number} - {self.status}"
+
+class PayrollBatchItem(models.Model):
+    """Items individuales dentro de un lote de nómina"""
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pendiente'),
+        ('paid', 'Pagado'),
+        ('failed', 'Fallido')
+    ]
+    
+    batch = models.ForeignKey(PayrollBatch, on_delete=models.CASCADE, related_name='items')
+    employee = models.ForeignKey('Employee', on_delete=models.CASCADE)
+    period_summary = models.ForeignKey(PeriodSummary, on_delete=models.CASCADE, null=True, blank=True)
+    
+    gross_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    # Desglose de descuentos legales
+    afp_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="AFP (2.87%)"
+    )
+    sfs_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="SFS (3.04%)"
+    )
+    isr_deduction = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text="ISR (según escala)"
+    )
+    
+    deductions = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    net_amount = models.DecimalField(max_digits=10, decimal_places=2)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    external_ref = models.CharField(max_length=100, null=True, blank=True)
+    processed_at = models.DateTimeField(null=True, blank=True)
+    
+    class Meta:
+        unique_together = ['batch', 'employee']
+        indexes = [
+            models.Index(fields=['batch', 'status']),
+            models.Index(fields=['employee']),
+        ]
+    
+    def __str__(self):
+        return f"{self.batch.batch_number} - {self.employee.user.full_name} - ${self.net_amount}"

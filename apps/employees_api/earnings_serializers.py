@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .earnings_models import Earning, FortnightSummary
+from .earnings_models import Earning, FortnightSummary, PayrollBatch, PayrollBatchItem
 from decimal import Decimal
 
 class EarningSerializer(serializers.ModelSerializer):
@@ -146,3 +146,64 @@ class MarkPaidRequestSerializer(serializers.Serializer):
                 "La fecha inicial no puede ser mayor a la fecha final"
             )
         return data
+
+class PayrollBatchItemSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source='employee.user.full_name', read_only=True)
+    employee_email = serializers.CharField(source='employee.user.email', read_only=True)
+    
+    class Meta:
+        model = PayrollBatchItem
+        fields = [
+            'id', 'employee', 'employee_name', 'employee_email',
+            'gross_amount', 'deductions', 'net_amount', 
+            'status', 'external_ref', 'processed_at'
+        ]
+        read_only_fields = ['external_ref', 'processed_at']
+
+class PayrollBatchSerializer(serializers.ModelSerializer):
+    items = PayrollBatchItemSerializer(many=True, read_only=True)
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.full_name', read_only=True)
+    
+    class Meta:
+        model = PayrollBatch
+        fields = [
+            'id', 'batch_number', 'period_start', 'period_end', 'frequency',
+            'total_employees', 'total_amount', 'status', 
+            'created_by', 'created_by_name', 'approved_by', 'approved_by_name',
+            'created_at', 'processed_at', 'task_id', 'items'
+        ]
+        read_only_fields = [
+            'batch_number', 'total_employees', 'total_amount', 
+            'created_by', 'processed_at', 'task_id'
+        ]
+
+class PayrollBatchCreateSerializer(serializers.Serializer):
+    """Serializer para crear lote de nómina"""
+    period_start = serializers.DateField()
+    period_end = serializers.DateField()
+    frequency = serializers.ChoiceField(choices=['daily', 'weekly', 'biweekly', 'monthly'])
+    employee_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        allow_empty=False
+    )
+    
+    def validate(self, data):
+        if data['period_start'] > data['period_end']:
+            raise serializers.ValidationError(
+                "La fecha inicial no puede ser mayor a la fecha final"
+            )
+        return data
+
+class PayrollBatchProcessSerializer(serializers.Serializer):
+    """Serializer para procesar lote de nómina"""
+    batch_id = serializers.IntegerField()
+    
+class PayrollBatchListSerializer(serializers.ModelSerializer):
+    """Serializer simplificado para listado"""
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+    
+    class Meta:
+        model = PayrollBatch
+        fields = ['id', 'batch_number', 'period_start', 'period_end', 'frequency', 
+                 'total_employees', 'total_amount', 'status', 'created_by_name', 'created_at']

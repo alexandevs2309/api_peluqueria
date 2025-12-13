@@ -239,15 +239,16 @@ class MyEntitlementsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        # Para Super-Admin, devolver entitlements limitados (no exponer capacidades)
-        if request.user.roles.filter(name='Super-Admin').exists():
+        # Para SuperAdmin, devolver información administrativa (no suscripción)
+        if request.user.is_superuser or request.user.role == 'SuperAdmin' or request.user.roles.filter(name='Super-Admin').exists():
             return Response({
-                "plan": "admin",
-                "plan_display": "Plan Administrativo",
-                "features": {"management": True},
-                "limits": {"max_employees": 999},  # No exponer "unlimited"
-                "usage": {"employees": 0},
-                "duration_month": 12
+                "plan": "system_admin",
+                "plan_display": "Administrador del Sistema",
+                "features": {"full_access": True, "platform_management": True},
+                "limits": {"unlimited": True},
+                "usage": {"tenants": 0},
+                "is_superadmin": True,
+                "subscription_status": "system_admin"
             })
         
         sub = get_user_active_subscription(request.user)

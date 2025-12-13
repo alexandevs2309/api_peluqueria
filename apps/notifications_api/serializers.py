@@ -9,12 +9,14 @@ class NotificationTemplateSerializer(serializers.ModelSerializer):
 class NotificationSerializer(serializers.ModelSerializer):
     template_name = serializers.CharField(source='template.name', read_only=True)
     template_type = serializers.CharField(source='template.type', read_only=True)
+    type = serializers.CharField(source='template.notification_type', read_only=True)
+    title = serializers.CharField(source='subject', read_only=True)
 
     class Meta:
         model = Notification
         fields = [
-            'id', 'recipient', 'template', 'template_name', 'template_type',
-            'subject', 'message', 'status', 'priority', 'scheduled_at',
+            'id', 'recipient', 'template', 'template_name', 'template_type', 'type',
+            'subject', 'title', 'message', 'status', 'priority', 'scheduled_at',
             'sent_at', 'metadata', 'created_at', 'updated_at'
         ]
         read_only_fields = ['sent_at', 'created_at', 'updated_at']

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Notificación de Pago</title>
+</head>
+<body>
+    <h2>Pago Procesado</h2>
+    <p>Estimado/a {{ employee_name }},</p>
+    <p>Se ha procesado su pago correspondiente al período {{ period }}.</p>
+    <p><strong>Monto:</strong> ${{ amount }}</p>
+    <p><strong>Fecha:</strong> {{ payment_date }}</p>
+    {% if is_advance_payment %}
+    <p style="color: red;"><strong>⚠️ PAGO ANTICIPADO</strong></p>
+    {% endif %}
+</body>
+</html>

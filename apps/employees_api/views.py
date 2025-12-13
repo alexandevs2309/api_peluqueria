@@ -149,6 +149,42 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'services_count': EmployeeService.objects.filter(employee=employee).count()
         })
 
+    @action(detail=True, methods=['patch'], permission_classes=[IsAuthenticated])
+    def update_payment_config(self, request, pk=None):
+        """Endpoint específico para actualizar configuración de pagos"""
+        employee = self.get_object()
+        
+        # Campos permitidos para configuración de pagos
+        allowed_fields = [
+            'salary_type', 'commission_percentage', 'contractual_monthly_salary',
+            'payment_frequency', 'apply_afp', 'apply_sfs', 'apply_isr'
+        ]
+        
+        # Filtrar solo campos permitidos
+        update_data = {k: v for k, v in request.data.items() if k in allowed_fields}
+        
+        if not update_data:
+            return Response(
+                {'error': 'No se proporcionaron campos válidos para actualizar'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Actualizar campos
+        for field, value in update_data.items():
+            setattr(employee, field, value)
+        
+        try:
+            employee.save()
+            return Response({
+                'message': 'Configuración de pago actualizada correctamente',
+                'updated_fields': list(update_data.keys())
+            })
+        except Exception as e:
+            return Response(
+                {'error': f'Error al actualizar: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
 class WorkScheduleViewSet(viewsets.ModelViewSet):
     queryset = WorkSchedule.objects.all()
     serializer_class = WorkScheduleSerializer

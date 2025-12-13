@@ -1,145 +1,167 @@
+import logging
 from celery import shared_task
-from django.db.models import Sum, Count
-from django.db import models
-from .earnings_models import Earning, FortnightSummary
-from .models import Employee
+from django.db import transaction
+from django.utils import timezone
+from decimal import Decimal
 
-@shared_task
-def generate_fortnight_summaries(year, fortnight_number):
-    """Genera resúmenes de quincena para todos los empleados"""
-    
-    employees = Employee.objects.filter(is_active=True)
-    created_count = 0
-    
-    for employee in employees:
-        # Obtener ganancias de la quincena
-        earnings = Earning.objects.filter(
-            employee=employee,
-            fortnight_year=year,
-            fortnight_number=fortnight_number
-        )
-        
-        if not earnings.exists():
-            continue
-            
-        # Calcular totales
-        totals = earnings.aggregate(
-            total_earnings=Sum('amount'),
-            total_services=Count('id', filter=models.Q(earning_type='service')),
-            total_commissions=Sum('amount', filter=models.Q(earning_type='commission')),
-            total_tips=Sum('amount', filter=models.Q(earning_type='tip'))
-        )
-        
-        # Crear o actualizar resumen
-        summary, created = FortnightSummary.objects.get_or_create(
-            employee=employee,
-            fortnight_year=year,
-            fortnight_number=fortnight_number,
-            defaults={
-                'total_earnings': totals['total_earnings'] or 0,
-                'total_services': totals['total_services'] or 0,
-                'total_commissions': totals['total_commissions'] or 0,
-                'total_tips': totals['total_tips'] or 0,
-            }
-        )
-        
-        if not created:
-            # Actualizar resumen existente
-            summary.total_earnings = totals['total_earnings'] or 0
-            summary.total_services = totals['total_services'] or 0
-            summary.total_commissions = totals['total_commissions'] or 0
-            summary.total_tips = totals['total_tips'] or 0
-            summary.save()
-            
-        created_count += 1
-    
-    return f"Generados {created_count} resúmenes para la quincena {fortnight_number}/{year}"
+logger = logging.getLogger(__name__)
 
-@shared_task
-def create_earning_from_sale(sale_id, employee_id, percentage=50):
-    """Crea ganancia automática cuando se completa una venta"""
-    from apps.pos_api.models import Sale
-    from decimal import Decimal
+@shared_task(bind=True, max_retries=3)
+def create_earning_from_sale(self, sale_id, external_id):
+    """
+    Crear earning de forma idempotente desde una venta completada
+    """
+    logger.info(f"Iniciando creación de earning para sale_id={sale_id}, external_id={external_id}")
     
     try:
-        sale = Sale.objects.get(id=sale_id)
-        employee = Employee.objects.get(id=employee_id)
+        from apps.pos_api.models import Sale
+        from .earnings_models import Earning
+        from .models import Employee
         
-        # Verificar que no existe ya una ganancia para esta venta
-        existing_earning = Earning.objects.filter(sale=sale, employee=employee).first()
+        # Verificar idempotencia
+        existing_earning = Earning.objects.filter(external_id=external_id).first()
         if existing_earning:
-            return f"Ganancia ya existe para venta #{sale_id}"
+            logger.info(f"Earning ya existe para external_id={external_id}")
+            return {'status': 'exists', 'earning_id': existing_earning.id}
         
-        # Calcular ganancia (porcentaje de la venta)
-        earning_amount = (sale.total * Decimal(str(percentage))) / 100
+        with transaction.atomic():
+            try:
+                sale = Sale.objects.select_related('employee').get(id=sale_id)
+            except Sale.DoesNotExist:
+                logger.error(f"Sale {sale_id} no encontrada")
+                return {'status': 'error', 'message': 'Sale not found'}
+            
+            if not sale.employee or sale.status != 'completed':
+                logger.info(f"Sale {sale_id} no tiene empleado o no está completada")
+                return {'status': 'skipped', 'reason': 'no_employee_or_not_completed'}
+            
+            # Calcular earning basado en tipo de pago del empleado
+            employee = sale.employee
+            earning_amount = Decimal('0.00')
+            
+            if employee.salary_type == 'commission':
+                earning_amount = (sale.total * employee.commission_percentage) / 100
+            elif employee.salary_type == 'mixed':
+                # Solo comisión para ventas individuales, sueldo se maneja en períodos
+                earning_amount = (sale.total * employee.commission_percentage) / 100
+            # Para 'fixed', no se crean earnings por venta individual
+            
+            if earning_amount > 0:
+                # Calcular quincena
+                year, fortnight_number = Earning.calculate_fortnight(sale.date_time.date())
+                
+                earning = Earning.objects.create(
+                    employee=employee,
+                    sale=sale,
+                    amount=earning_amount,
+                    earning_type='commission',
+                    percentage=employee.commission_percentage,
+                    description=f'Comisión por venta #{sale.id}',
+                    date_earned=sale.date_time,
+                    fortnight_year=year,
+                    fortnight_number=fortnight_number,
+                    external_id=external_id,
+                    created_by=None  # Sistema automático
+                )
+                
+                logger.info(f"Earning creado: {earning.id} por ${earning_amount}")
+                return {'status': 'created', 'earning_id': earning.id, 'amount': float(earning_amount)}
+            else:
+                logger.info(f"No se creó earning para sale {sale_id} - monto 0 o empleado con sueldo fijo")
+                return {'status': 'skipped', 'reason': 'zero_amount_or_fixed_salary'}
+                
+    except Exception as exc:
+        logger.error(f"Error creando earning para sale {sale_id}: {str(exc)}")
+        if self.request.retries < self.max_retries:
+            logger.info(f"Reintentando... intento {self.request.retries + 1}")
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        return {'status': 'error', 'message': str(exc)}
+
+@shared_task(bind=True, max_retries=3)
+def process_payroll_batch_task(self, batch_id):
+    """
+    Procesar lote de nómina - marcar items como pagados
+    """
+    logger.info(f"Iniciando procesamiento de batch {batch_id}")
+    
+    try:
+        from .earnings_models import PayrollBatch, PayrollBatchItem
         
-        # Crear ganancia
-        earning = Earning.objects.create(
-            employee=employee,
-            sale=sale,
-            amount=earning_amount,
-            earning_type='commission',
-            percentage=Decimal(str(percentage)),
-            description=f"Comisión por venta #{sale.id} - {sale.client.full_name if sale.client else 'Cliente anónimo'}",
-            created_by=sale.user
-        )
-        
-        # Notificar al empleado
-        notify_new_earning.delay(earning.id)
-        
-        return f"Ganancia creada: ${earning_amount} para {employee}"
-        
-    except Exception as e:
-        return f"Error creando ganancia: {str(e)}"
+        with transaction.atomic():
+            try:
+                batch = PayrollBatch.objects.get(id=batch_id)
+            except PayrollBatch.DoesNotExist:
+                logger.error(f"PayrollBatch {batch_id} no encontrado")
+                return {'status': 'error', 'message': 'Batch not found'}
+            
+            if batch.status != 'approved':
+                logger.error(f"Batch {batch_id} no está en estado 'approved'")
+                return {'status': 'error', 'message': 'Batch not approved'}
+            
+            batch.status = 'processing'
+            batch.save()
+            
+            # Procesar cada item
+            processed_count = 0
+            failed_count = 0
+            
+            for item in batch.items.all():
+                try:
+                    # Simular procesamiento de pago
+                    # TODO: Integrar con gateway de pagos aquí
+                    
+                    item.status = 'paid'
+                    item.external_ref = f"manual-{batch.batch_number}-{item.employee.id}"
+                    item.processed_at = timezone.now()
+                    item.save()
+                    
+                    # Marcar period_summary como pagado si existe
+                    if item.period_summary:
+                        item.period_summary.is_paid = True
+                        item.period_summary.paid_at = timezone.now()
+                        item.period_summary.save()
+                    
+                    processed_count += 1
+                    logger.info(f"Item procesado: empleado {item.employee.id}")
+                    
+                except Exception as item_exc:
+                    logger.error(f"Error procesando item {item.id}: {str(item_exc)}")
+                    item.status = 'failed'
+                    item.save()
+                    failed_count += 1
+            
+            # Actualizar estado del batch
+            if failed_count == 0:
+                batch.status = 'completed'
+            else:
+                batch.status = 'failed' if processed_count == 0 else 'completed'
+            
+            batch.processed_at = timezone.now()
+            batch.save()
+            
+            logger.info(f"Batch {batch_id} procesado: {processed_count} exitosos, {failed_count} fallidos")
+            return {
+                'status': 'completed',
+                'processed_count': processed_count,
+                'failed_count': failed_count
+            }
+            
+    except Exception as exc:
+        logger.error(f"Error procesando batch {batch_id}: {str(exc)}")
+        if self.request.retries < self.max_retries:
+            raise self.retry(countdown=60 * (2 ** self.request.retries))
+        return {'status': 'error', 'message': str(exc)}
 
 @shared_task
-def notify_new_earning(earning_id):
-    """Notifica al empleado sobre nueva ganancia"""
-    try:
-        earning = Earning.objects.get(id=earning_id)
-        
-        # Crear notificación en el sistema
-        from apps.notifications_api.models import Notification, NotificationTemplate
-        
-        # Buscar template de ganancias o crear uno básico
-        template, created = NotificationTemplate.objects.get_or_create(
-            notification_type='earnings_available',
-            type='push',
-            defaults={
-                'name': 'Nueva Ganancia',
-                'subject': '💰 Nueva ganancia disponible',
-                'body': 'Has ganado ${{amount}} por {{description}}. ¡Quincena actual: ${{fortnight_total}}!',
-                'is_active': True
-            }
-        )
-        
-        # Calcular total de quincena actual
-        current_year, current_fortnight = earning.fortnight_year, earning.fortnight_number
-        fortnight_total = Earning.objects.filter(
-            employee=earning.employee,
-            fortnight_year=current_year,
-            fortnight_number=current_fortnight
-        ).aggregate(total=models.Sum('amount'))['total'] or 0
-        
-        # Crear notificación
-        notification = Notification.objects.create(
-            recipient=earning.employee.user,
-            template=template,
-            subject=f'💰 Nueva ganancia: ${earning.amount}',
-            message=f'Has ganado ${earning.amount} por {earning.description}. Quincena actual: ${fortnight_total}',
-            metadata={
-                'earning_id': earning.id,
-                'amount': str(earning.amount),
-                'fortnight_total': str(fortnight_total),
-                'description': earning.description
-            },
-            priority='normal'
-        )
-        
-        # Enviar notificación
-        notification.send()
-        
-        return f"Notificación enviada a {earning.employee}: ${earning.amount}"
-        
-    except Exception as e:
-        return f"Error enviando notificación: {str(e)}"
+def schedule_automatic_payroll():
+    """
+    Tarea programada para crear lotes de nómina automáticamente
+    """
+    logger.info("Ejecutando programación automática de nómina")
+    
+    # TODO: Implementar lógica de programación automática
+    # - Verificar empleados con frecuencias que deben procesarse
+    # - Crear batches automáticamente según configuración
+    
+    logger.info("Programación automática completada")
+    return {'status': 'completed', 'message': 'Automatic scheduling completed'}

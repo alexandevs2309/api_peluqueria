@@ -27,10 +27,8 @@ class SaleViewSet(viewsets.ModelViewSet):
             commission_percentage = pos_config.commission_percentage if pos_config else 50
             
             # Crear ganancia de forma asíncrona
-            create_earning_from_sale.delay(
-                sale_id=sale.id,
-                employee_id=employee.id,
-                percentage=commission_percentage
+            external_id = f"sale-{sale.id}-{sale.date_time.strftime('%Y%m%d%H%M%S')}"
+            create_earning_from_sale.delay(sale.id, external_id
             )
             
         except Employee.DoesNotExist:
@@ -208,7 +206,8 @@ class SaleViewSet(viewsets.ModelViewSet):
             user=self.request.user,  # Usuario que registra la venta
             employee=sale_employee,  # Empleado que realizó el servicio
             period=active_period,    # Período activo
-            total=total_with_discount
+            total=total_with_discount,
+            status='completed'  # Marcar como completada por defecto
         )
         
         # Actualizar inventario
@@ -648,11 +647,20 @@ def dashboard_stats(request):
     from .models import SaleDetail
     from django.db.models import Count
     from datetime import datetime, timedelta
+    from apps.appointments_api.models import Appointment
+    from apps.clients_api.models import Client
+    from apps.employees_api.models import Employee
     
     today = timezone.localdate()
+    
+    # Filtros por tenant
     if request.user.is_superuser:
         sales_today = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
         all_sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user))
+        appointments_today = Appointment.objects.filter(Q(stylist=request.user), date_time__date=today)
+        appointments_week = Appointment.objects.filter(Q(stylist=request.user), date_time__date__gte=today - timedelta(days=7))
+        clients = Client.objects.all()
+        employees = Employee.objects.all()
     elif request.user.tenant:
         sales_today = Sale.objects.filter(
             Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
@@ -661,43 +669,57 @@ def dashboard_stats(request):
         all_sales = Sale.objects.filter(
             Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True)
         )
+        appointments_today = Appointment.objects.filter(stylist__tenant=request.user.tenant, date_time__date=today)
+        appointments_week = Appointment.objects.filter(stylist__tenant=request.user.tenant, date_time__date__gte=today - timedelta(days=7))
+        clients = Client.objects.filter(tenant=request.user.tenant)
+        employees = Employee.objects.filter(tenant=request.user.tenant)
     else:
         sales_today = Sale.objects.none()
         all_sales = Sale.objects.none()
+        appointments_today = Appointment.objects.none()
+        appointments_week = Appointment.objects.none()
+        clients = Client.objects.none()
+        employees = Employee.objects.none()
     
-    total_sales = sales_today.aggregate(total=Sum('total'))['total'] or 0
-    total_transactions = sales_today.count()
-    avg_ticket = total_sales / total_transactions if total_transactions > 0 else 0
+    # Calcular estadísticas
+    revenue_today = sales_today.aggregate(total=Sum('total'))['total'] or 0
+    total_sales_today = sales_today.count()
     
-    # Top productos vendidos hoy
+    # Ingresos del mes actual
+    month_start = today.replace(day=1)
+    sales_this_month = all_sales.filter(date_time__date__gte=month_start, date_time__date__lte=today)
+    revenue_this_month = sales_this_month.aggregate(total=Sum('total'))['total'] or 0
+    
+    # Top servicios
     if request.user.is_superuser:
-        product_filter = Q(sale__user=request.user) | Q(sale__employee__user=request.user)
+        service_filter = Q(sale__user=request.user) | Q(sale__employee__user=request.user)
     elif request.user.tenant:
-        product_filter = Q(sale__employee__tenant=request.user.tenant) | Q(sale__user__tenant=request.user.tenant, sale__employee__isnull=True)
+        service_filter = Q(sale__employee__tenant=request.user.tenant) | Q(sale__user__tenant=request.user.tenant, sale__employee__isnull=True)
     else:
-        product_filter = Q(pk__isnull=True)  # No results
+        service_filter = Q(pk__isnull=True)
     
-    top_products = SaleDetail.objects.filter(
-        product_filter,
-        sale__date_time__date=today,
-        content_type__model='product'
+    top_services = SaleDetail.objects.filter(
+        service_filter,
+        sale__date_time__date__gte=month_start,
+        sale__date_time__date__lte=today
     ).values('name').annotate(
-        sold=Sum('quantity')
-    ).order_by('-sold')[:5]
+        count=Count('id'),
+        revenue=Sum('price')
+    ).order_by('-count')[:5]
     
     # Ingresos mensuales de los últimos 6 meses
     monthly_revenue = []
     current_date = today.replace(day=1)
     
     for i in range(6):
-        month_start = current_date
+        month_start_iter = current_date
         if current_date.month == 12:
             month_end = current_date.replace(year=current_date.year + 1, month=1, day=1) - timedelta(days=1)
         else:
             month_end = current_date.replace(month=current_date.month + 1, day=1) - timedelta(days=1)
         
         month_sales = all_sales.filter(
-            date_time__gte=month_start,
+            date_time__gte=month_start_iter,
             date_time__lt=month_end + timedelta(days=1)
         )
         
@@ -718,12 +740,31 @@ def dashboard_stats(request):
         else:
             current_date = current_date.replace(month=current_date.month - 1)
     
+    # Ventas recientes
+    recent_sales = sales_today.order_by('-date_time')[:10]
+    recent_sales_data = []
+    for sale in recent_sales:
+        recent_sales_data.append({
+            'id': sale.id,
+            'client_name': sale.client.full_name if sale.client else 'Cliente sin nombre',
+            'total': float(sale.total),
+            'created_at': sale.date_time.isoformat(),
+            'services': [d.name for d in sale.details.all()]
+        })
+    
     return Response({
-        'total_sales': float(total_sales),
-        'total_transactions': total_transactions,
-        'average_ticket': float(avg_ticket),
-        'top_products': list(top_products),
-        'hourly_data': [],
+        # Campos que el frontend espera
+        'total_appointments_today': appointments_today.count(),
+        'appointments_this_week': appointments_week.count(),
+        'revenue_today': float(revenue_today),
+        'revenue_this_month': float(revenue_this_month),
+        'total_clients': clients.count(),
+        'total_employees': employees.count(),
+        'total_sales_today': total_sales_today,
+        
+        # Datos adicionales
+        'top_services': list(top_services),
+        'recent_sales': recent_sales_data,
         'monthly_revenue': monthly_revenue
     })
 
