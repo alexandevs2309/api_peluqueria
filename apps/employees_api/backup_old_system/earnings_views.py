@@ -56,17 +56,29 @@ class EarningViewSet(viewsets.ViewSet):
                 except (ValueError, TypeError):
                     return Response({'error': 'commission_percentage debe ser un número válido'}, status=400)
             
-            # Validar salary_amount (fixed_salary)
-            if 'fixed_salary' in request.data or 'salary_amount' in request.data:
+            # Validar contractual_monthly_salary (salary_amount para compatibilidad)
+            if 'contractual_monthly_salary' in request.data or 'salary_amount' in request.data or 'fixed_salary' in request.data:
                 try:
                     salary_amount = float(
-                        request.data.get('salary_amount') or request.data.get('fixed_salary')
+                        request.data.get('contractual_monthly_salary') or 
+                        request.data.get('salary_amount') or 
+                        request.data.get('fixed_salary')
                     )
                     if salary_amount < 0:
-                        return Response({'error': 'salary_amount no puede ser negativo'}, status=400)
+                        return Response({'error': 'contractual_monthly_salary no puede ser negativo'}, status=400)
+                    employee.contractual_monthly_salary = salary_amount
+                    # Mantener compatibilidad con salary_amount
                     employee.salary_amount = salary_amount
                 except (ValueError, TypeError):
-                    return Response({'error': 'salary_amount debe ser un número válido'}, status=400)
+                    return Response({'error': 'contractual_monthly_salary debe ser un número válido'}, status=400)
+            
+            # Configuración de descuentos legales
+            if 'apply_afp' in request.data:
+                employee.apply_afp = bool(request.data.get('apply_afp'))
+            if 'apply_sfs' in request.data:
+                employee.apply_sfs = bool(request.data.get('apply_sfs'))
+            if 'apply_isr' in request.data:
+                employee.apply_isr = bool(request.data.get('apply_isr'))
             
             employee.save()
             
@@ -76,11 +88,12 @@ class EarningViewSet(viewsets.ViewSet):
                     'id': employee.id,
                     'salary_type': employee.salary_type,
                     'commission_percentage': float(employee.commission_percentage or 0),
-                    'salary_amount': float(employee.salary_amount or 0),
+                    'contractual_monthly_salary': float(employee.contractual_monthly_salary or 0),
                     # Compatibilidad con nombres anteriores
                     'payment_type': employee.salary_type,
                     'commission_rate': float(employee.commission_percentage or 0),
-                    'fixed_salary': float(employee.salary_amount or 0)
+                    'salary_amount': float(employee.salary_amount or 0),
+                    'fixed_salary': float(employee.contractual_monthly_salary or 0)
                 }
             })
         except Employee.DoesNotExist:
@@ -90,13 +103,15 @@ class EarningViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['post'])
     def pay(self, request):
-        """Procesar pago de empleado por quincena"""
+        """Procesar pago de empleado por sale_ids o quincena"""
         employee_id = request.data.get('employee_id')
+        sale_ids = request.data.get('sale_ids', [])
         year = request.data.get('year')
         fortnight = request.data.get('fortnight')
         payment_method = request.data.get('payment_method', 'cash')
         payment_reference = request.data.get('payment_reference', '')
         payment_notes = request.data.get('payment_notes', '')
+        idempotency_key = request.data.get('idempotency_key', '')
         
         # Fallback: Accept frequency + reference_date and convert to year/fortnight
         # This is temporary while frontend normalizes to use year/fortnight directly
@@ -134,41 +149,201 @@ class EarningViewSet(viewsets.ViewSet):
             employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
             
             with transaction.atomic():
-                # Verificar si ya está pagado
-                try:
-                    summary = FortnightSummary.objects.get(
+                # IDEMPOTENCIA: Verificar si ya existe pago con mismo idempotency_key
+                if idempotency_key:
+                    existing = FortnightSummary.objects.filter(
                         employee=employee,
-                        fortnight_year=year,
-                        fortnight_number=fortnight
+                        payment_reference=idempotency_key,
+                        is_paid=True
+                    ).first()
+                    if existing:
+                        return Response({
+                            'status': 'already_paid',
+                            'message': 'Pago ya procesado anteriormente',
+                            'batch_id': existing.id,
+                            'paid_at': existing.paid_at.isoformat() if existing.paid_at else None
+                        }, status=200)
+                
+                # Si se envían sale_ids, usar esos; si no, buscar por quincena
+                if sale_ids:
+                    from apps.pos_api.models import Sale
+                    # SELECT FOR UPDATE para evitar race conditions
+                    sales = Sale.objects.select_for_update().filter(
+                        id__in=sale_ids,
+                        employee=employee,
+                        status='completed',
+                        period__isnull=True  # Solo ventas no pagadas
                     )
                     
-                    if summary.is_paid:
-                        return Response({
-                            'error': 'La quincena ya está pagada',
-                            'summary': {
-                                'employee_id': employee.id,
-                                'employee_name': employee.user.full_name or employee.user.email,
-                                'year': year,
-                                'fortnight': fortnight,
-                                'amount_paid': float(summary.amount_paid or summary.total_earnings),
-                                'paid_at': summary.paid_at.isoformat() if summary.paid_at else None
-                            }
-                        }, status=400)
+                    if not sales.exists():
+                        return Response({'error': 'No hay ventas pendientes con los IDs proporcionados'}, status=400)
+                    
+                    # Calcular total según configuración del empleado
+                    total_sales = sum([float(s.total) for s in sales])
+                    if employee.salary_type == 'commission':
+                        total_earned = total_sales * float(employee.commission_percentage) / 100
+                    elif employee.salary_type == 'mixed':
+                        commission = total_sales * float(employee.commission_percentage) / 100
+                        total_earned = commission
+                    else:
+                        total_earned = 0
+                    
+                    services_count = sales.count()
+                    
+                    # Calcular fechas del período para el summary
+                    today = timezone.now().date()
+                    year, fortnight = Earning.calculate_fortnight(today)
+                    
+                    # Crear o actualizar FortnightSummary
+                    summary, created = FortnightSummary.objects.get_or_create(
+                        employee=employee,
+                        fortnight_year=year,
+                        fortnight_number=fortnight,
+                        defaults={
+                            'total_earnings': 0,
+                            'total_services': 0,
+                            'is_paid': False
+                        }
+                    )
+                    
+                    # Asignar ventas al summary
+                    for sale in sales:
+                        sale.period = summary
+                        sale.save()
+                    
+                    # Actualizar totales del summary
+                    summary.total_services += services_count
+                    summary.total_earnings += Decimal(str(total_earned))
+                    
+                    # Aplicar descuentos si corresponde
+                    is_end_of_month = (fortnight % 2) == 0
+                    should_apply_deductions = (
+                        is_end_of_month and 
+                        (employee.apply_afp or employee.apply_sfs or employee.apply_isr)
+                    )
+                    
+                    if should_apply_deductions:
+                        from .payroll_calculator import calculate_net_salary
+                        net_salary, deductions = calculate_net_salary(
+                            summary.total_earnings,
+                            is_fortnight=True,
+                            apply_afp=employee.apply_afp,
+                            apply_sfs=employee.apply_sfs,
+                            apply_isr=employee.apply_isr
+                        )
+                        summary.afp_deduction = deductions['afp']
+                        summary.sfs_deduction = deductions['sfs']
+                        summary.isr_deduction = deductions['isr']
+                        summary.total_deductions = deductions['total']
+                        summary.net_salary = net_salary
+                        summary.amount_paid = net_salary
+                    else:
+                        summary.net_salary = summary.total_earnings
+                        summary.amount_paid = summary.total_earnings
+                        summary.afp_deduction = Decimal('0')
+                        summary.sfs_deduction = Decimal('0')
+                        summary.isr_deduction = Decimal('0')
+                        summary.total_deductions = Decimal('0')
+                    
+                    # Marcar como pagado
+                    summary.is_paid = True
+                    summary.paid_at = timezone.now()
+                    summary.paid_by = request.user
+                    summary.payment_method = payment_method
+                    summary.payment_reference = idempotency_key or payment_reference
+                    summary.payment_notes = payment_notes
+                    summary.save()
+                    
+                    # Crear recibo
+                    from .earnings_models import PaymentReceipt
+                    receipt = PaymentReceipt.objects.create(fortnight_summary=summary)
+                    
+                    return Response({
+                        'status': 'paid',
+                        'message': 'Pago procesado correctamente',
+                        'summary': {
+                            'employee_id': employee.id,
+                            'employee_name': employee.user.full_name or employee.user.email,
+                            'sale_ids': sale_ids,
+                            'year': year,
+                            'fortnight': fortnight,
+                            'gross_amount': float(summary.total_earnings),
+                            'deductions': {
+                                'afp': float(summary.afp_deduction),
+                                'sfs': float(summary.sfs_deduction),
+                                'isr': float(summary.isr_deduction),
+                                'total': float(summary.total_deductions)
+                            },
+                            'net_amount': float(summary.net_salary),
+                            'amount_paid': float(summary.amount_paid),
+                            'services_count': services_count,
+                            'payment_method': payment_method,
+                            'payment_reference': payment_reference,
+                            'receipt_number': receipt.receipt_number,
+                            'paid_at': summary.paid_at.isoformat()
+                        }
+                    })
+                else:
+                    # Flujo original por quincena
+                    try:
+                        summary = FortnightSummary.objects.get(
+                            employee=employee,
+                            fortnight_year=year,
+                            fortnight_number=fortnight
+                        )
                         
-                except FortnightSummary.DoesNotExist:
-                    return Response({'error': 'No hay ganancias registradas para esta quincena'}, status=404)
+                        if summary.is_paid:
+                            return Response({
+                                'status': 'already_paid',
+                                'message': 'La quincena ya está pagada',
+                                'batch_id': summary.id,
+                                'paid_at': summary.paid_at.isoformat() if summary.paid_at else None
+                            }, status=409)  # 409 Conflict en lugar de 400
+                            
+                    except FortnightSummary.DoesNotExist:
+                        return Response({'error': 'No hay ganancias registradas para esta quincena'}, status=404)
                 
                 # Verificar que hay ganancias para pagar
                 if summary.total_earnings <= 0:
                     return Response({'error': 'No hay ganancias para procesar el pago'}, status=400)
                 
-                # Marcar como pagado
+                # Calcular descuentos legales solo si están habilitados y es fin de mes
+                from .payroll_calculator import calculate_net_salary
+                
+                # Verificar si es fin de mes (quincena 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24)
+                is_end_of_month = (fortnight % 2) == 0
+                
+                # Aplicar descuentos solo si el empleado los tiene habilitados Y es fin de mes
+                should_apply_deductions = (
+                    is_end_of_month and 
+                    (employee.apply_afp or employee.apply_sfs or employee.apply_isr)
+                )
+                
+                if should_apply_deductions:
+                    net_salary, deductions = calculate_net_salary(
+                        summary.total_earnings, 
+                        is_fortnight=True,
+                        apply_afp=employee.apply_afp,
+                        apply_sfs=employee.apply_sfs,
+                        apply_isr=employee.apply_isr
+                    )
+                else:
+                    # Sin descuentos
+                    net_salary = summary.total_earnings
+                    deductions = {'afp': 0, 'sfs': 0, 'isr': 0, 'total': 0}
+                
+                # Marcar como pagado con descuentos calculados
                 summary.is_paid = True
                 summary.paid_at = timezone.now()
                 summary.paid_by = request.user
                 summary.closed_at = timezone.now()
                 summary.payment_method = payment_method
-                summary.amount_paid = summary.total_earnings
+                summary.afp_deduction = deductions['afp']
+                summary.sfs_deduction = deductions['sfs']
+                summary.isr_deduction = deductions['isr']
+                summary.total_deductions = deductions['total']
+                summary.net_salary = net_salary
+                summary.amount_paid = net_salary  # Pagar el neto
                 summary.payment_reference = payment_reference
                 summary.payment_notes = payment_notes
                 summary.save()
@@ -185,6 +360,14 @@ class EarningViewSet(viewsets.ViewSet):
                         'employee_name': employee.user.full_name or employee.user.email,
                         'year': year,
                         'fortnight': fortnight,
+                        'gross_amount': float(summary.total_earnings),
+                        'deductions': {
+                            'afp': float(summary.afp_deduction),
+                            'sfs': float(summary.sfs_deduction),
+                            'isr': float(summary.isr_deduction),
+                            'total': float(summary.total_deductions)
+                        },
+                        'net_amount': float(summary.net_salary),
                         'amount_paid': float(summary.amount_paid),
                         'services_count': summary.total_services,
                         'payment_method': payment_method,
@@ -240,6 +423,21 @@ class EarningViewSet(viewsets.ViewSet):
         except ValueError:
             return Response({'error': 'Year y fortnight deben ser números enteros'}, status=400)
         
+        # Calcular fechas del período
+        month = ((fortnight - 1) // 2) + 1
+        is_first_half = (fortnight % 2) == 1
+        
+        if is_first_half:
+            start_date = datetime(year, month, 1).date()
+            end_date = datetime(year, month, 15).date()
+        else:
+            start_date = datetime(year, month, 16).date()
+            if month == 12:
+                next_month = datetime(year + 1, 1, 1)
+            else:
+                next_month = datetime(year, month + 1, 1)
+            end_date = (next_month - timedelta(days=1)).date()
+        
         # Obtener empleados activos del tenant
         employees = Employee.objects.filter(
             tenant=request.user.tenant,
@@ -266,26 +464,90 @@ class EarningViewSet(viewsets.ViewSet):
             if role and role_mapped != role:
                 continue
             
-            # Obtener FortnightSummary del empleado
+            logger.info(f"Procesando empleado: {emp.user.full_name or emp.user.email} (ID: {emp.id})")
+            
+            # Obtener o crear FortnightSummary del empleado
             summary = summaries_dict.get(emp.id)
             
-            if summary:
-                total_earned = float(summary.total_earnings)
-                services_count = summary.total_services
-                payment_status = 'paid' if summary.is_paid else 'pending'
+            # Calcular ventas del período
+            from apps.pos_api.models import Sale
+            sales_data = Sale.objects.filter(
+                employee=emp,
+                date_time__date__gte=start_date,
+                date_time__date__lte=end_date,
+                status='completed'
+            ).aggregate(
+                total_sales=Sum('total'),
+                services_count=Count('id')
+            )
+            
+            total_sales = float(sales_data['total_sales'] or 0)
+            services_count = sales_data['services_count'] or 0
+            
+            # Calcular ganancias según tipo de empleado
+            total_earned = self._calculate_earnings_by_type(emp, total_sales, start_date, end_date)
+            
+            if not summary:
+                # Crear FortnightSummary si hay ganancias o es sueldo fijo
+                if total_earned > 0 or emp.salary_type == 'fixed':
+                    logger.info(f"Creando FortnightSummary para {emp.user.full_name}: ${total_earned}, {services_count} servicios")
+                    summary = FortnightSummary.objects.create(
+                        employee=emp,
+                        fortnight_year=year,
+                        fortnight_number=fortnight,
+                        total_earnings=total_earned,
+                        total_services=services_count,
+                        is_paid=False
+                    )
+                    summaries_dict[emp.id] = summary
             else:
-                # No hay summary para esta quincena
+                # CRÍTICO: NO actualizar FortnightSummary si ya está pagado
+                # Las ventas de un período pagado deben quedar congeladas
+                if not summary.is_paid:
+                    summary.total_earnings = total_earned
+                    summary.total_services = services_count
+                    summary.save()
+                    logger.info(f"Actualizado FortnightSummary para {emp.user.full_name}: ${total_earned}, {services_count} servicios")
+                else:
+                    # Si el período ya está pagado, usar los valores guardados (no recalcular)
+                    total_earned = float(summary.total_earnings)
+                    services_count = summary.total_services
+                    logger.info(f"FortnightSummary ya pagado para {emp.user.full_name}: ${total_earned} (no se actualiza)")
+            
+            if summary:
+                # Si el período está pagado, mostrar tanto lo pagado como lo pendiente
+                if summary.is_paid:
+                    # Lo que está en el summary es lo PAGADO
+                    amount_paid = float(summary.total_earnings)
+                    # Lo calculado es el TOTAL GENERADO (incluyendo ventas posteriores)
+                    total_earned = total_earned
+                    # Si hay diferencia, hay monto pendiente
+                    if total_earned > amount_paid:
+                        payment_status = 'partial'  # Parcialmente pagado
+                    else:
+                        payment_status = 'paid'
+                else:
+                    # Período no pagado, todo es pendiente
+                    total_earned = float(summary.total_earnings)
+                    services_count = summary.total_services
+                    payment_status = 'pending'
+            else:
+                # No hay summary y no se creó (comisión sin ventas)
                 total_earned = 0.0
                 services_count = 0
-                payment_status = 'no_sales'
-                
-                # Solo incluir empleados con sueldo fijo aunque no tengan ventas
-                if emp.salary_type != 'fixed':
-                    continue
+                payment_status = 'pending'
             
             # Filtrar por estado si se especifica
             if status_filter and payment_status != status_filter:
                 continue
+            
+            # Calcular monto pagado y pendiente
+            if summary and summary.is_paid:
+                amount_paid = float(summary.total_earnings)
+                amount_pending = max(0, total_earned - amount_paid)
+            else:
+                amount_paid = 0
+                amount_pending = total_earned
             
             earnings_data.append({
                 'id': emp.id,
@@ -298,6 +560,8 @@ class EarningViewSet(viewsets.ViewSet):
                 'commission_rate': float(emp.commission_percentage or 40),
                 'fixed_salary': float(emp.salary_amount or 0),
                 'total_earned': total_earned,
+                'amount_paid': amount_paid,
+                'amount_pending': amount_pending,
                 'services_count': services_count,
                 'payment_status': payment_status,
                 'fortnight_year': year,
@@ -309,22 +573,7 @@ class EarningViewSet(viewsets.ViewSet):
         total_paid = sum(emp['total_earned'] for emp in earnings_data if emp['payment_status'] == 'paid')
         total_pending = sum(emp['total_earned'] for emp in earnings_data if emp['payment_status'] == 'pending')
         
-        # Calcular fechas de la quincena para mostrar
-        month = ((fortnight - 1) // 2) + 1
-        is_first_half = (fortnight % 2) == 1
-        
-        if is_first_half:
-            start_day = 1
-            end_day = 15
-        else:
-            start_day = 16
-            if month == 12:
-                next_month = datetime(year + 1, 1, 1)
-            else:
-                next_month = datetime(year, month + 1, 1)
-            end_day = (next_month - timedelta(days=1)).day
-        
-        period_display = f"{year}-{month:02d}-{start_day:02d} - {year}-{month:02d}-{end_day:02d}"
+        period_display = f"{start_date} - {end_date}"
         
         return Response({
             'employees': earnings_data,
@@ -358,64 +607,62 @@ class EarningViewSet(viewsets.ViewSet):
     
     def _calculate_earnings_by_type(self, employee, total_sales, start_date, end_date):
         """Calcula ganancias según tipo de pago del empleado"""
-        # Validar campos del empleado
-        payment_type = getattr(employee, 'payment_type', 'commission') or 'commission'
-        commission_rate = float(getattr(employee, 'commission_rate', 40) or 40)
-        fixed_salary = float(getattr(employee, 'fixed_salary', 0) or 0)
+        from .payroll_utils import convert_salary_to_period
         
-        # Calcular ganancias según tipo de pago
+        payment_type = employee.salary_type or 'commission'
+        commission_rate = float(employee.commission_percentage or 40)
+        
+        # NUEVO: Usar contractual_monthly_salary como fuente de verdad
+        contractual_monthly = Decimal(str(employee.contractual_monthly_salary or 0))
+        payment_frequency = employee.payment_frequency or 'biweekly'
+        
         if payment_type == 'commission':
             total_earned = (total_sales * commission_rate) / 100
         elif payment_type == 'mixed':
             # Comisión sobre ventas
             commission_earned = (total_sales * commission_rate) / 100
             
-            # Prorratear sueldo fijo - salary_amount es QUINCENAL, no mensual
-            # Si el período es exactamente una quincena (1-15 o 16-fin), usar monto completo
-            if (start_date.day == 1 and end_date.day == 15) or (start_date.day == 16):
-                # Período quincenal completo
-                prorated_salary = fixed_salary
+            # Sueldo fijo basado en contractual_monthly_salary y payment_frequency
+            period_salary = convert_salary_to_period(contractual_monthly, payment_frequency)
+            
+            # Prorratear si el período no es completo
+            days_in_period = (end_date - start_date).days + 1
+            
+            if payment_frequency == 'biweekly':
+                expected_days = 15
+            elif payment_frequency == 'monthly':
+                expected_days = 30
+            elif payment_frequency == 'weekly':
+                expected_days = 7
             else:
-                # Prorrateo por días dentro de la quincena
-                if start_date.day <= 15:
-                    # Primera quincena: días 1-15
-                    quincenal_days = 15
-                else:
-                    # Segunda quincena: días 16-fin de mes
-                    if start_date.month == 12:
-                        next_month = start_date.replace(year=start_date.year + 1, month=1, day=1)
-                    else:
-                        next_month = start_date.replace(month=start_date.month + 1, day=1)
-                    last_day = (next_month - timedelta(days=1)).day
-                    quincenal_days = last_day - 15
-                
-                days_in_period = (end_date - start_date).days + 1
-                daily_salary = fixed_salary / quincenal_days
-                prorated_salary = daily_salary * days_in_period
+                expected_days = 1
+            
+            if days_in_period < expected_days:
+                prorated_salary = float(period_salary) * (days_in_period / expected_days)
+            else:
+                prorated_salary = float(period_salary)
+            
             total_earned = prorated_salary + commission_earned
         else:  # fixed
-            # Prorratear sueldo fijo - salary_amount es QUINCENAL, no mensual
-            # Si el período es exactamente una quincena (1-15 o 16-fin), usar monto completo
-            if (start_date.day == 1 and end_date.day == 15) or (start_date.day == 16):
-                # Período quincenal completo
-                total_earned = fixed_salary
+            # Sueldo fijo basado en contractual_monthly_salary
+            period_salary = convert_salary_to_period(contractual_monthly, payment_frequency)
+            
+            # Prorratear si el período no es completo
+            days_in_period = (end_date - start_date).days + 1
+            
+            if payment_frequency == 'biweekly':
+                expected_days = 15
+            elif payment_frequency == 'monthly':
+                expected_days = 30
+            elif payment_frequency == 'weekly':
+                expected_days = 7
             else:
-                # Prorrateo por días dentro de la quincena
-                if start_date.day <= 15:
-                    # Primera quincena: días 1-15
-                    quincenal_days = 15
-                else:
-                    # Segunda quincena: días 16-fin de mes
-                    if start_date.month == 12:
-                        next_month = start_date.replace(year=start_date.year + 1, month=1, day=1)
-                    else:
-                        next_month = start_date.replace(month=start_date.month + 1, day=1)
-                    last_day = (next_month - timedelta(days=1)).day
-                    quincenal_days = last_day - 15
-                
-                days_in_period = (end_date - start_date).days + 1
-                daily_salary = fixed_salary / quincenal_days
-                total_earned = daily_salary * days_in_period
+                expected_days = 1
+            
+            if days_in_period < expected_days:
+                total_earned = float(period_salary) * (days_in_period / expected_days)
+            else:
+                total_earned = float(period_salary)
         
         return float(total_earned)
     
@@ -894,7 +1141,7 @@ class EarningViewSet(viewsets.ViewSet):
                     'payment_reference': summary.payment_reference,
                     'payment_notes': summary.payment_notes,
                     'paid_at': summary.paid_at.isoformat() if summary.paid_at else None,
-                    'paid_by': summary.paid_by.full_name if summary.paid_by else None,
+                    'paid_by': summary.paid_by.full_name if summary.paid_by and hasattr(summary.paid_by, 'full_name') else (summary.paid_by.email if summary.paid_by else None),
                     'receipt_number': summary.receipt.receipt_number if hasattr(summary, 'receipt') else None,
                     'can_reverse': summary.paid_at and (timezone.now() - summary.paid_at).days <= 30 if summary.paid_at else False
                 })
@@ -1099,6 +1346,36 @@ class EarningViewSet(viewsets.ViewSet):
             'pending_payments': pending_data,
             'total_employees': len(pending_data),
             'total_amount': sum(emp['total_pending'] for emp in pending_data)
+        })
+    
+    @action(detail=False, methods=['post'])
+    def calculate_payroll(self, request):
+        """Calcular nómina con descuentos legales dominicanos"""
+        from .payroll_calculator import get_payroll_summary, validate_minimum_wage
+        
+        gross_salary = request.data.get('gross_salary')
+        is_fortnight = request.data.get('is_fortnight', True)
+        company_size = request.data.get('company_size', 'pequena')
+        
+        if not gross_salary:
+            return Response({'error': 'gross_salary es requerido'}, status=400)
+        
+        try:
+            gross_salary = Decimal(str(gross_salary))
+        except (ValueError, TypeError):
+            return Response({'error': 'gross_salary debe ser un número válido'}, status=400)
+        
+        # Obtener resumen completo
+        summary = get_payroll_summary(gross_salary, is_fortnight)
+        
+        return Response({
+            'calculation': summary,
+            'notes': [
+                'Descuentos según normativa laboral de República Dominicana',
+                'AFP: 2.87% del salario bruto',
+                'SFS: 3.04% del salario bruto',
+                'ISR: Según escala progresiva (si aplica)'
+            ]
         })
     
     @action(detail=False, methods=['post'])
@@ -1466,3 +1743,274 @@ class FortnightSummaryViewSet(viewsets.ViewSet):
             ])
         
         return response
+# ==================== ENDPOINTS DE NÓMINA ====================
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from .payroll_services import PayrollService
+from .payroll_permissions import IsHROrClientAdmin, CanViewOwnPaystubs
+from django.template.loader import render_to_string
+from django.http import HttpResponse
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def payroll_preview(request):
+    """Preview de nómina sin persistir"""
+    from .payroll_calculator import get_payroll_summary
+    
+    gross_salary = request.data.get('gross_salary')
+    is_fortnight = request.data.get('is_fortnight', True)
+    
+    if not gross_salary:
+        return Response({'error': 'gross_salary requerido'}, status=400)
+    
+    try:
+        gross = Decimal(str(gross_salary))
+        summary = get_payroll_summary(gross, is_fortnight)
+        return Response(summary)
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsHROrClientAdmin])
+def payroll_generate(request):
+    """Generar recibos de nómina para un período"""
+    year = request.data.get('year')
+    fortnight = request.data.get('fortnight')
+    employee_ids = request.data.get('employee_ids')
+    
+    if not year or not fortnight:
+        return Response({'error': 'year y fortnight requeridos'}, status=400)
+    
+    try:
+        results = PayrollService.bulk_generate_for_period(
+            request.user.tenant,
+            int(year),
+            int(fortnight),
+            employee_ids
+        )
+        return Response(results)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payroll_my_stubs(request):
+    """Empleado lista sus recibos"""
+    try:
+        employee = Employee.objects.get(user=request.user)
+        summaries = FortnightSummary.objects.filter(
+            employee=employee,
+            is_paid=True
+        ).order_by('-fortnight_year', '-fortnight_number')[:12]
+        
+        data = [{
+            'id': s.id,
+            'period': s.fortnight_display,
+            'gross': float(s.total_earnings),
+            'deductions': float(s.total_deductions),
+            'net': float(s.net_salary),
+            'paid_at': s.paid_at.isoformat() if s.paid_at else None,
+            'receipt_number': s.receipt.receipt_number if hasattr(s, 'receipt') else None
+        } for s in summaries]
+        
+        return Response({'stubs': data})
+    except Employee.DoesNotExist:
+        return Response({'error': 'No es empleado'}, status=404)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payroll_stub_download(request, stub_id):
+    """Descargar PDF del recibo"""
+    try:
+        summary = FortnightSummary.objects.get(id=stub_id)
+        
+        # Verificar permisos
+        if not request.user.is_superuser:
+            if summary.employee.user != request.user:
+                return Response({'error': 'Sin permisos'}, status=403)
+        
+        if not summary.is_paid:
+            return Response({'error': 'Recibo no pagado'}, status=400)
+        
+        receipt = PaymentReceipt.objects.get(fortnight_summary=summary)
+        
+        # Renderizar HTML
+        html = render_to_string('payroll/paystub.html', {
+            'summary': summary,
+            'receipt': receipt,
+            'company_name': request.user.tenant.name if request.user.tenant else 'MI EMPRESA',
+            'now': timezone.now()
+        })
+        
+        # Retornar HTML (para PDF usar WeasyPrint en producción)
+        response = HttpResponse(html, content_type='text/html')
+        response['Content-Disposition'] = f'inline; filename="recibo_{receipt.receipt_number}.html"'
+        return response
+        
+    except FortnightSummary.DoesNotExist:
+        return Response({'error': 'Recibo no encontrado'}, status=404)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsHROrClientAdmin])
+def payroll_mark_paid(request, stub_id):
+    """Marcar recibo como pagado"""
+    try:
+        summary = FortnightSummary.objects.get(id=stub_id)
+        
+        if summary.is_paid:
+            return Response({'error': 'Ya está pagado'}, status=400)
+        
+        method = request.data.get('payment_method', 'transfer')
+        transaction_id = request.data.get('transaction_id', '')
+        
+        receipt = PayrollService.mark_paystub_as_paid(
+            summary,
+            timezone.now(),
+            method,
+            transaction_id
+        )
+        
+        return Response({
+            'success': True,
+            'receipt_number': receipt.receipt_number,
+            'paid_at': summary.paid_at.isoformat()
+        })
+        
+    except FortnightSummary.DoesNotExist:
+        return Response({'error': 'Recibo no encontrado'}, status=404)
+
+# ==================== ENDPOINTS DE NÓMINA ====================
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from .payroll_services import PayrollService
+from .payroll_permissions import IsHROrClientAdmin, CanViewOwnPaystubs
+from django.template.loader import render_to_string
+from django.http import HttpResponse
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def payroll_preview(request):
+    """Preview de nómina sin persistir"""
+    from .payroll_calculator import get_payroll_summary
+    
+    gross_salary = request.data.get('gross_salary')
+    is_fortnight = request.data.get('is_fortnight', True)
+    
+    if not gross_salary:
+        return Response({'error': 'gross_salary requerido'}, status=400)
+    
+    try:
+        gross = Decimal(str(gross_salary))
+        summary = get_payroll_summary(gross, is_fortnight)
+        return Response(summary)
+    except Exception as e:
+        return Response({'error': str(e)}, status=400)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsHROrClientAdmin])
+def payroll_generate(request):
+    """Generar recibos de nómina para un período"""
+    year = request.data.get('year')
+    fortnight = request.data.get('fortnight')
+    employee_ids = request.data.get('employee_ids')
+    
+    if not year or not fortnight:
+        return Response({'error': 'year y fortnight requeridos'}, status=400)
+    
+    try:
+        results = PayrollService.bulk_generate_for_period(
+            request.user.tenant,
+            int(year),
+            int(fortnight),
+            employee_ids
+        )
+        return Response(results)
+    except Exception as e:
+        return Response({'error': str(e)}, status=500)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payroll_my_stubs(request):
+    """Empleado lista sus recibos"""
+    try:
+        employee = Employee.objects.get(user=request.user)
+        summaries = FortnightSummary.objects.filter(
+            employee=employee,
+            is_paid=True
+        ).order_by('-fortnight_year', '-fortnight_number')[:12]
+        
+        data = [{
+            'id': s.id,
+            'period': s.fortnight_display,
+            'gross': float(s.total_earnings),
+            'deductions': float(s.total_deductions),
+            'net': float(s.net_salary),
+            'paid_at': s.paid_at.isoformat() if s.paid_at else None,
+            'receipt_number': s.receipt.receipt_number if hasattr(s, 'receipt') else None
+        } for s in summaries]
+        
+        return Response({'stubs': data})
+    except Employee.DoesNotExist:
+        return Response({'error': 'No es empleado'}, status=404)
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payroll_stub_download(request, stub_id):
+    """Descargar PDF del recibo"""
+    try:
+        summary = FortnightSummary.objects.get(id=stub_id)
+        
+        # Verificar permisos
+        if not request.user.is_superuser:
+            if summary.employee.user != request.user:
+                return Response({'error': 'Sin permisos'}, status=403)
+        
+        if not summary.is_paid:
+            return Response({'error': 'Recibo no pagado'}, status=400)
+        
+        receipt = PaymentReceipt.objects.get(fortnight_summary=summary)
+        
+        # Renderizar HTML
+        html = render_to_string('payroll/paystub.html', {
+            'summary': summary,
+            'receipt': receipt,
+            'company_name': request.user.tenant.name if request.user.tenant else 'MI EMPRESA',
+            'now': timezone.now()
+        })
+        
+        # Retornar HTML (para PDF usar WeasyPrint en producción)
+        response = HttpResponse(html, content_type='text/html')
+        response['Content-Disposition'] = f'inline; filename="recibo_{receipt.receipt_number}.html"'
+        return response
+        
+    except FortnightSummary.DoesNotExist:
+        return Response({'error': 'Recibo no encontrado'}, status=404)
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsHROrClientAdmin])
+def payroll_mark_paid(request, stub_id):
+    """Marcar recibo como pagado"""
+    try:
+        summary = FortnightSummary.objects.get(id=stub_id)
+        
+        if summary.is_paid:
+            return Response({'error': 'Ya está pagado'}, status=400)
+        
+        method = request.data.get('payment_method', 'transfer')
+        transaction_id = request.data.get('transaction_id', '')
+        
+        receipt = PayrollService.mark_paystub_as_paid(
+            summary,
+            timezone.now(),
+            method,
+            transaction_id
+        )
+        
+        return Response({
+            'success': True,
+            'receipt_number': receipt.receipt_number,
+            'paid_at': summary.paid_at.isoformat()
+        })
+        
+    except FortnightSummary.DoesNotExist:
+        return Response({'error': 'Recibo no encontrado'}, status=404)

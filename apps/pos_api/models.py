@@ -28,6 +28,15 @@ class Sale(models.Model):
         ('mixed', 'Mixed'),
         ('other', 'Other')
     ], default='cash')
+    
+    # Estado de la venta para el flujo de ganancias
+    status = models.CharField(max_length=20, choices=[
+        ('pending', 'Pendiente'),
+        ('completed', 'Completada'),
+        ('cancelled', 'Cancelada'),
+        ('refunded', 'Reembolsada')
+    ], default='completed')
+    
     closed = models.BooleanField(default=False)  # Útil para arqueo de caja
 
     class Meta:

@@ -12,6 +12,13 @@ class Employee(models.Model):
         ('mixed', 'Mixto (Sueldo + Comisión)')
     ]
     
+    PAYMENT_FREQUENCY_CHOICES = [
+        ('daily', 'Diario'),
+        ('weekly', 'Semanal'), 
+        ('biweekly', 'Quincenal'),
+        ('monthly', 'Mensual')
+    ]
+    
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')
     specialty = models.CharField(max_length=100, blank=True)
@@ -19,10 +26,58 @@ class Employee(models.Model):
     hire_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     
-    # Payment configuration fields
-    payment_type = models.CharField(max_length=10, choices=PAYMENT_TYPE_CHOICES, default='commission')
-    fixed_salary = models.DecimalField(max_digits=10, decimal_places=2, default=0.00, help_text='Sueldo fijo mensual')
-    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, default=40.00, help_text='Porcentaje de comisión (ej: 40.00 para 40%)')
+    # Payment configuration fields - usando nombres correctos del flujo de negocio
+    salary_type = models.CharField(max_length=10, choices=PAYMENT_TYPE_CHOICES, default='commission', help_text='Tipo de pago: fixed, commission, mixed')
+    
+    # NUEVO: Salario contractual mensual (fuente de verdad)
+    contractual_monthly_salary = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=0.00,
+        help_text='Salario mensual contractual (fuente de verdad para cálculos de nómina)'
+    )
+    
+    # DEPRECATED: Mantener solo para backward compatibility
+    # NO USAR en nueva lógica - usar contractual_monthly_salary + payment_frequency
+    salary_amount = models.DecimalField(
+        max_digits=10, 
+        decimal_places=2, 
+        default=0.00, 
+        help_text='[DEPRECATED] Usar contractual_monthly_salary. Anteriormente: sueldo quincenal'
+    )
+    
+    commission_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=40.00, help_text='Porcentaje de comisión (ej: 40.00 para 40%)')
+    payment_frequency = models.CharField(max_length=10, choices=PAYMENT_FREQUENCY_CHOICES, default='biweekly', help_text='Frecuencia de pago')
+    
+    # Descuentos legales (opcionales)
+    apply_afp = models.BooleanField(default=False, help_text='Aplicar descuento AFP (2.87%)')
+    apply_sfs = models.BooleanField(default=False, help_text='Aplicar descuento SFS (3.04%)')
+    apply_isr = models.BooleanField(default=False, help_text='Aplicar descuento ISR')
+    
+    # Campos de compatibilidad (mantener para no romper código existente)
+    @property
+    def payment_type(self):
+        return self.salary_type
+    
+    @payment_type.setter
+    def payment_type(self, value):
+        self.salary_type = value
+    
+    @property
+    def fixed_salary(self):
+        return self.salary_amount
+    
+    @fixed_salary.setter
+    def fixed_salary(self, value):
+        self.salary_amount = value
+    
+    @property
+    def commission_rate(self):
+        return self.commission_percentage
+    
+    @commission_rate.setter
+    def commission_rate(self, value):
+        self.commission_percentage = value
     
     # Additional fields from API contracts
     avatar = models.ImageField(upload_to='employees/avatars/', null=True, blank=True)

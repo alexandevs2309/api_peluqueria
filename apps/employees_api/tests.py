@@ -128,3 +128,42 @@ def test_delete_employee_permission_denied_other_roles():
     client.force_authenticate(user=user)
     response = client.delete(reverse("employee-detail", args=[employee.id]))
     assert response.status_code in [403, 401]
+
+@pytest.mark.django_db
+def test_compute_period_range_biweekly():
+    from apps.employees_api.utils import compute_period_range
+    from datetime import date
+    
+    # Test first fortnight
+    ref_date = date(2025, 1, 10)
+    start, end, year, index = compute_period_range('biweekly', ref_date)
+    assert start == date(2025, 1, 1)
+    assert end == date(2025, 1, 15)
+    assert year == 2025
+    assert index == 1
+    
+    # Test second fortnight
+    ref_date = date(2025, 1, 20)
+    start, end, year, index = compute_period_range('biweekly', ref_date)
+    assert start == date(2025, 1, 16)
+    assert end == date(2025, 1, 31)
+    assert year == 2025
+    assert index == 2
+
+@pytest.mark.django_db
+def test_compute_period_range_monthly():
+    from apps.employees_api.utils import compute_period_range
+    from datetime import date
+    
+    ref_date = date(2025, 3, 15)
+    start, end, year, index = compute_period_range('monthly', ref_date)
+    assert start == date(2025, 3, 1)
+    assert end == date(2025, 3, 31)
+    assert year == 2025
+    assert index == 3
+
+@pytest.mark.django_db
+def test_employee_payment_frequency_default():
+    user = UserFactory(is_email_verified=True)
+    employee = Employee.objects.create(user=user, specialty="Stylist")
+    assert employee.payment_frequency == 'biweekly'

@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Lote de Nómina {{ batch.batch_number }}</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            font-size: 12px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            border-bottom: 2px solid #333;
+            padding-bottom: 10px;
+        }
+        .batch-info {
+            margin-bottom: 20px;
+        }
+        .batch-info table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .batch-info td {
+            padding: 5px;
+            border: 1px solid #ddd;
+        }
+        .items-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        .items-table th,
+        .items-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .items-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .total-row {
+            font-weight: bold;
+            background-color: #f9f9f9;
+        }
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 10px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Lote de Nómina</h1>
+        <h2>{{ batch.batch_number }}</h2>
+    </div>
+    
+    <div class="batch-info">
+        <table>
+            <tr>
+                <td><strong>Período:</strong></td>
+                <td>{{ batch.period_start }} - {{ batch.period_end }}</td>
+                <td><strong>Frecuencia:</strong></td>
+                <td>{{ batch.get_frequency_display }}</td>
+            </tr>
+            <tr>
+                <td><strong>Estado:</strong></td>
+                <td>{{ batch.get_status_display }}</td>
+                <td><strong>Total Empleados:</strong></td>
+                <td>{{ batch.total_employees }}</td>
+            </tr>
+            <tr>
+                <td><strong>Monto Total:</strong></td>
+                <td>${{ batch.total_amount|floatformat:2 }}</td>
+                <td><strong>Creado por:</strong></td>
+                <td>{{ batch.created_by.full_name|default:batch.created_by.email }}</td>
+            </tr>
+        </table>
+    </div>
+    
+    <table class="items-table">
+        <thead>
+            <tr>
+                <th>Empleado</th>
+                <th>Email</th>
+                <th>Monto Bruto</th>
+                <th>Deducciones</th>
+                <th>Monto Neto</th>
+                <th>Estado</th>
+                <th>Referencia</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.employee.user.full_name|default:item.employee.user.email }}</td>
+                <td>{{ item.employee.user.email }}</td>
+                <td>${{ item.gross_amount|floatformat:2 }}</td>
+                <td>${{ item.deductions|floatformat:2 }}</td>
+                <td>${{ item.net_amount|floatformat:2 }}</td>
+                <td>{{ item.get_status_display }}</td>
+                <td>{{ item.external_ref|default:"-" }}</td>
+            </tr>
+            {% endfor %}
+            <tr class="total-row">
+                <td colspan="4"><strong>TOTAL</strong></td>
+                <td><strong>${{ batch.total_amount|floatformat:2 }}</strong></td>
+                <td colspan="2"></td>
+            </tr>
+        </tbody>
+    </table>
+    
+    <div class="footer">
+        <p>Generado el {{ generated_at|date:"d/m/Y H:i" }}</p>
+        <p>Sistema de Gestión de Peluquerías</p>
+    </div>
+</body>
+</html>

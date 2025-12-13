@@ -34,7 +34,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Employee
-        fields = ['id', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'created_at', 'updated_at']
+        fields = [
+            'id', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active',
+            'salary_type', 'contractual_monthly_salary', 'commission_percentage', 'payment_frequency',
+            'apply_afp', 'apply_sfs', 'apply_isr',
+            'created_at', 'updated_at'
+        ]
         read_only_fields = ['created_at', 'updated_at']
     
     def to_representation(self, instance):
