@@ -1,6 +1,9 @@
 """
 Sistema de pagos unificado y optimizado
 Reemplaza earnings_views.py y pending_payments_views.py
+
+*** PAYROLL LOGIC FINALIZED ***
+Any changes require explicit business rule update + tests.
 """
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -13,7 +16,7 @@ from decimal import Decimal
 from .models import Employee
 from .earnings_models import FortnightSummary, PaymentReceipt
 from .payroll_calculator import calculate_net_salary
-from .tax_calculator import DominicanTaxCalculator
+from .tax_calculator_factory import TaxCalculatorFactory
 from .advance_loans import AdvanceLoan, LoanPayment, process_loan_deductions
 from .payroll_reports import PayrollReportGenerator
 from .accounting_integration import AccountingIntegrator
@@ -39,8 +42,13 @@ class PaymentViewSet(viewsets.ViewSet):
         apply_loan_deduction = request.data.get('apply_loan_deduction', True)
         loan_deduction_amount = Decimal(str(request.data.get('loan_deduction_amount', 0)))
         
+        # Validaciones de seguridad
         if not employee_id:
             return Response({'error': 'employee_id requerido'}, status=400)
+        if loan_deduction_amount < 0:
+            return Response({'error': 'Monto de descuento no puede ser negativo'}, status=400)
+        if loan_deduction_amount > 50000:  # Límite de seguridad
+            return Response({'error': 'Monto de descuento excede límite permitido'}, status=400)
         
         try:
             # Validaciones de seguridad
@@ -158,7 +166,7 @@ class PaymentViewSet(viewsets.ViewSet):
         loan_details = []
         
         if apply_loan_deduction:
-            active_loans = employee.advance_loans.filter(status='active')
+            active_loans = employee.advance_loans.select_for_update().filter(status='active')
             
             if active_loans.exists():
                 # Usar monto personalizado o calcular automáticamente
@@ -265,7 +273,7 @@ class PaymentViewSet(viewsets.ViewSet):
             }
         })
     
-    def _pay_by_fortnight(self, employee, year, fortnight, payment_method, payment_reference, user):
+    def _pay_by_fortnight(self, employee, year, fortnight, payment_method, payment_reference, user, apply_loan_deduction=True, loan_deduction_amount=Decimal('0')):
         """Pagar quincena completa"""
         logger.info(f"Intentando pagar - Empleado: {employee.id}, Año: {year}, Quincena: {fortnight}")
         
@@ -280,23 +288,46 @@ class PaymentViewSet(viewsets.ViewSet):
                 'requested': f'{year}/{fortnight}'
             }, status=400)
         
+        # Protección contra doble pago
+        existing_payment = FortnightSummary.objects.filter(
+            employee=employee,
+            fortnight_year=year,
+            fortnight_number=fortnight,
+            is_paid=True
+        ).first()
+        
+        if existing_payment:
+            return Response({
+                'status': 'already_paid',
+                'message': 'Empleado ya pagado en este período',
+                'paid_at': existing_payment.paid_at.isoformat(),
+                'is_advance_payment': getattr(existing_payment, 'is_advance_payment', False)
+            }, status=409)
+        
         try:
             summary = FortnightSummary.objects.get(
                 employee=employee,
                 fortnight_year=year,
                 fortnight_number=fortnight
             )
-            
-            if summary.is_paid:
-                return Response({
-                    'status': 'already_paid',
-                    'message': 'Quincena ya pagada',
-                    'paid_at': summary.paid_at.isoformat(),
-                    'is_advance_payment': getattr(summary, 'is_advance_payment', False)
-                }, status=409)
                 
         except FortnightSummary.DoesNotExist:
-            return Response({'error': 'No hay ganancias para esta quincena'}, status=404)
+            # Para empleados FIXED/MIXED: crear summary automático
+            if employee.salary_type in ['fixed', 'mixed']:
+                fixed_amount = self._calculate_fixed_salary_for_period(employee)
+                if fixed_amount > 0:
+                    summary = FortnightSummary.objects.create(
+                        employee=employee,
+                        fortnight_year=year,
+                        fortnight_number=fortnight,
+                        total_earnings=fixed_amount,
+                        total_services=0,
+                        is_paid=False
+                    )
+                else:
+                    return Response({'error': 'Empleado no tiene salario configurado'}, status=400)
+            else:
+                return Response({'error': 'No hay ganancias para esta quincena'}, status=404)
         
         if summary.total_earnings <= 0:
             return Response({'error': 'No hay ganancias para pagar'}, status=400)
@@ -462,7 +493,7 @@ class PaymentViewSet(viewsets.ViewSet):
                 })
                 
             except FortnightSummary.DoesNotExist:
-                # No hay summary para esta quincena, solo calcular pendientes
+                # No hay summary para esta quincena
                 from apps.pos_api.models import Sale
                 pending_sales = Sale.objects.filter(
                     employee=employee,
@@ -477,20 +508,38 @@ class PaymentViewSet(viewsets.ViewSet):
                     pending_amount = self._calculate_payment_amount(employee, total_pending_sales)
                     services_count = pending_sales.count()
                 
-                if pending_amount > 0:
+                # Para empleados FIXED/MIXED: crear summary automático si no existe
+                total_earned = 0
+                if employee.salary_type in ['fixed', 'mixed']:
+                    # Calcular sueldo fijo para el período
+                    fixed_amount = self._calculate_fixed_salary_for_period(employee)
+                    if fixed_amount > 0:
+                        # Crear summary automático para empleados fijos
+                        summary = FortnightSummary.objects.create(
+                            employee=employee,
+                            fortnight_year=year,
+                            fortnight_number=fortnight,
+                            total_earnings=fixed_amount,
+                            total_services=0,
+                            is_paid=False
+                        )
+                        total_earned = float(fixed_amount)
+                
+                # Incluir empleado si tiene pendientes O es fijo con salario
+                if pending_amount > 0 or total_earned > 0:
                     earnings_data.append({
                         'employee_id': employee.id,
                         'employee_name': employee.user.full_name or employee.user.email,
                         'salary_type': employee.salary_type,
                         'commission_percentage': float(employee.commission_percentage),
-                        'total_earned': 0,  # No hay ganancias registradas para esta quincena
+                        'total_earned': total_earned,
                         'pending_amount': round(pending_amount, 2),
                         'services_count': services_count,
                         'payment_status': 'pending',
                         'paid_at': None
                     })
                 else:
-                    # Empleado sin ganancias ni pendientes para esta quincena
+                    # Solo incluir si no es empleado fijo o tiene salario 0
                     earnings_data.append({
                         'employee_id': employee.id,
                         'employee_name': employee.user.full_name or employee.user.email,
@@ -550,23 +599,31 @@ class PaymentViewSet(viewsets.ViewSet):
         elif employee.salary_type == 'mixed':
             commission = total_sales * float(employee.commission_percentage) / 100
             # Para mixto: sueldo base + comisión
-            from .payroll_utils import convert_salary_to_period
-            base_salary = convert_salary_to_period(
-                employee.contractual_monthly_salary or employee.salary_amount, 
-                employee.payment_frequency
-            )
+            base_salary = self._calculate_fixed_salary_for_period(employee)
             return float(base_salary) + commission
         else:  # fixed
-            # Sueldo fijo según frecuencia de pago
-            from .payroll_utils import convert_salary_to_period
-            return float(convert_salary_to_period(
-                employee.contractual_monthly_salary or employee.salary_amount,
-                employee.payment_frequency
-            ))
+            # Para sueldo fijo, usar método específico
+            return float(self._calculate_fixed_salary_for_period(employee))
+    
+    def _calculate_fixed_salary_for_period(self, employee):
+        """Calcular sueldo fijo según payment_frequency contractual"""
+        from .payroll_utils import convert_salary_to_period
+        
+        monthly_salary = employee.contractual_monthly_salary or employee.salary_amount or Decimal('0')
+        if monthly_salary <= 0:
+            return Decimal('0')
+        
+        # Respetar payment_frequency del contrato laboral
+        frequency = getattr(employee, 'payment_frequency', 'biweekly')
+        return convert_salary_to_period(monthly_salary, frequency)
     
     def _apply_deductions(self, employee, gross_amount, fortnight):
-        """Aplicar descuentos legales usando calculadora dominicana"""
-        tax_calculator = DominicanTaxCalculator()
+        """Aplicar descuentos legales según país del tenant"""
+        # Obtener país del tenant (default: DO)
+        country_code = getattr(employee.tenant, 'country', 'DO') or 'DO'
+        
+        # Obtener calculadora según país
+        tax_calculator = TaxCalculatorFactory.get_calculator(country_code)
         
         # Determinar si es fin de mes
         is_month_end = tax_calculator.is_month_end_payment(timezone.now().year, fortnight)

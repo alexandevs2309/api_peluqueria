@@ -4,6 +4,9 @@ Calculadora de descuentos legales para República Dominicana
 from decimal import Decimal
 from typing import Dict, Any
 
+# Importar calculadora sin descuentos
+from .no_tax_calculator import NoTaxCalculator
+
 class DominicanTaxCalculator:
     """Calculadora de impuestos y descuentos según ley dominicana"""
     
