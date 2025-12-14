@@ -27,7 +27,7 @@ class AdvanceLoanViewSet(viewsets.ViewSet):
         for loan in loans:
             data.append({
                 'id': loan.id,
-                'employee_name': loan.employee.user.full_name,
+                'employee_name': getattr(loan.employee.user, 'full_name', None) or loan.employee.user.email,
                 'loan_type': loan.get_loan_type_display(),
                 'amount': float(loan.amount),
                 'status': loan.get_status_display(),
@@ -45,11 +45,21 @@ class AdvanceLoanViewSet(viewsets.ViewSet):
         employee_id = request.data.get('employee_id')
         loan_type = request.data.get('loan_type')
         amount = request.data.get('amount')
-        reason = request.data.get('reason', '')
+        reason = request.data.get('reason', '').strip()
         installments = request.data.get('installments', 1)
         
+        # Validaciones de seguridad
+        if not amount or amount <= 0:
+            return Response({'error': 'Monto debe ser mayor a 0'}, status=400)
+        if amount > 100000:  # Límite máximo
+            return Response({'error': 'Monto excede límite máximo (RD$100,000)'}, status=400)
+        if installments < 1 or installments > 24:
+            return Response({'error': 'Cuotas deben estar entre 1 y 24'}, status=400)
+        if len(reason) > 500:
+            return Response({'error': 'Motivo demasiado largo (máx. 500 caracteres)'}, status=400)
+        
         try:
-            employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
+            employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant, is_active=True)
             
             with transaction.atomic():
                 loan = AdvanceLoan.objects.create(
@@ -59,6 +69,9 @@ class AdvanceLoanViewSet(viewsets.ViewSet):
                     reason=reason,
                     installments=installments
                 )
+                
+                # Log de auditoría
+                logger.info(f'Préstamo creado - ID: {loan.id}, Empleado: {employee.user.email}, Monto: {amount}, Usuario: {request.user.id}')
                 
                 # Sin límites - cualquier empleado puede solicitar préstamos
                 
@@ -72,8 +85,15 @@ class AdvanceLoanViewSet(viewsets.ViewSet):
             return Response({'error': 'Empleado no encontrado'}, status=404)
     
     @action(detail=True, methods=['post'])
-    def cancel(self, request, pk=None):
-        """Cancelar préstamo"""
+    def request_cancellation(self, request, pk=None):
+        """Solicitar cancelación de préstamo"""
+        reason = request.data.get('reason', '').strip()
+        
+        if not reason:
+            return Response({'error': 'Motivo de cancelación requerido'}, status=400)
+        if len(reason) > 500:
+            return Response({'error': 'Motivo demasiado largo (máx. 500 caracteres)'}, status=400)
+        
         try:
             loan = AdvanceLoan.objects.get(
                 id=pk, 
@@ -81,13 +101,70 @@ class AdvanceLoanViewSet(viewsets.ViewSet):
                 status='active'
             )
             
-            loan.status = 'cancelled'
+            loan.status = 'pending_cancellation'
+            loan.cancellation_requested_by = request.user
+            loan.cancellation_reason = reason
+            loan.cancellation_requested_at = timezone.now()
             loan.save()
             
-            return Response({'message': 'Préstamo cancelado'})
+            return Response({'message': 'Solicitud de cancelación enviada para aprobación'})
                 
         except AdvanceLoan.DoesNotExist:
             return Response({'error': 'Préstamo no encontrado'}, status=404)
+    
+    @action(detail=True, methods=['post'])
+    def approve_cancellation(self, request, pk=None):
+        """Aprobar cancelación de préstamo"""
+        try:
+            loan = AdvanceLoan.objects.get(
+                id=pk, 
+                employee__tenant=request.user.tenant,
+                status='pending_cancellation'
+            )
+            
+            # Calcular saldo real
+            total_paid = sum(payment.amount for payment in loan.payments.all())
+            real_balance = loan.amount - total_paid
+            
+            if real_balance > 0:
+                return Response({
+                    'error': f'El empleado debe ${real_balance:.2f}. Debe pagarse antes de cancelar.',
+                    'pending_balance': float(real_balance)
+                }, status=400)
+            
+            loan.status = 'cancelled'
+            loan.cancelled_by = request.user
+            loan.cancelled_at = timezone.now()
+            loan.save()
+            
+            # Log de auditoría
+            logger.info(f'Préstamo {loan.id} cancelado por usuario {request.user.id} - Empleado: {loan.employee.user.email}')
+            
+            return Response({'message': 'Préstamo cancelado exitosamente'})
+                
+        except AdvanceLoan.DoesNotExist:
+            return Response({'error': 'Solicitud de cancelación no encontrada'}, status=404)
+    
+    @action(detail=True, methods=['post'])
+    def reject_cancellation(self, request, pk=None):
+        """Rechazar cancelación de préstamo"""
+        try:
+            loan = AdvanceLoan.objects.get(
+                id=pk, 
+                employee__tenant=request.user.tenant,
+                status='pending_cancellation'
+            )
+            
+            loan.status = 'active'
+            loan.cancellation_requested_by = None
+            loan.cancellation_reason = ''
+            loan.cancellation_requested_at = None
+            loan.save()
+            
+            return Response({'message': 'Solicitud de cancelación rechazada'})
+                
+        except AdvanceLoan.DoesNotExist:
+            return Response({'error': 'Solicitud de cancelación no encontrada'}, status=404)
 
 class PayrollReportViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]

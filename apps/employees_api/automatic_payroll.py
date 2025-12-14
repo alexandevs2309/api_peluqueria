@@ -6,7 +6,7 @@ from django.db import transaction
 from decimal import Decimal
 from .models import Employee
 from .earnings_models import FortnightSummary, PaymentReceipt
-from .tax_calculator import DominicanTaxCalculator
+from .tax_calculator_factory import TaxCalculatorFactory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 class AutomaticPayrollProcessor:
     """Procesador de nómina automática"""
     
-    def __init__(self):
-        self.tax_calculator = DominicanTaxCalculator()
+    def __init__(self, country_code='DO'):
+        self.tax_calculator = TaxCalculatorFactory.get_calculator(country_code)
     
     def process_fixed_salaries(self, year=None, fortnight=None, tenant=None):
         """

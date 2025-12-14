@@ -15,6 +15,7 @@ class AdvanceLoan(models.Model):
     STATUS_CHOICES = [
         ('active', 'Activo'),
         ('completed', 'Completado'),
+        ('pending_cancellation', 'Cancelación Pendiente'),
         ('cancelled', 'Cancelado')
     ]
     
@@ -36,6 +37,13 @@ class AdvanceLoan(models.Model):
     # Aprobación
     approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     approval_notes = models.TextField(blank=True)
+    
+    # Cancelación
+    cancellation_requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='requested_cancellations')
+    cancellation_reason = models.TextField(blank=True)
+    cancellation_requested_at = models.DateTimeField(null=True, blank=True)
+    cancelled_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='cancelled_loans')
+    cancelled_at = models.DateTimeField(null=True, blank=True)
     
     # Cálculos
     total_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
