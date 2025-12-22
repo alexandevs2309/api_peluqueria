@@ -1,35 +1,47 @@
 from rest_framework import viewsets, permissions, status, serializers
 import logging
 logger = logging.getLogger(__name__)
-from rest_framework.decorators import action, api_view
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.db.models import Sum, Count, Q
 from django.utils import timezone
+from django.db import transaction
+from decimal import Decimal, InvalidOperation
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
-from django.db.models import Sum, Q
-from decimal import Decimal, InvalidOperation
+from .tenant_utils import get_tenant_sales_filter, validate_tenant_ownership
+from .state_validators import SaleStateValidator, CashRegisterStateValidator
+from apps.auth_api.permissions import IsClientAdmin, IsClientAdminOrStaff
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.all()
     serializer_class = SaleSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientAdminOrStaff]  # Solo admin o staff pueden usar POS
+    
+    # OPTIMIZACIÓN: Paginación para limitar resultados
+    from rest_framework.pagination import PageNumberPagination
+    
+    class SalePagination(PageNumberPagination):
+        page_size = 50
+        page_size_query_param = 'page_size'
+        max_page_size = 200
+    
+    pagination_class = SalePagination
     
     def _create_employee_earning(self, sale, employee_user):
-        """Crea ganancia automática para el empleado"""
+        """Dispara creación asíncrona de ganancia - Celery es la única autoridad"""
         from apps.employees_api.models import Employee
         from apps.employees_api.tasks import create_earning_from_sale
         
         try:
             employee = Employee.objects.get(user=employee_user, tenant=sale.user.tenant)
             
-            # Obtener porcentaje de comisión desde configuración o usar valor por defecto
-            pos_config = PosConfiguration.objects.filter(user=employee_user).first()
-            commission_percentage = pos_config.commission_percentage if pos_config else 50
-            
-            # Crear ganancia de forma asíncrona
+            # Crear external_id idempotente
             external_id = f"sale-{sale.id}-{sale.date_time.strftime('%Y%m%d%H%M%S')}"
-            create_earning_from_sale.delay(sale.id, external_id
-            )
+            
+            # Disparar tarea asíncrona - Celery marcará earnings_generated al éxito
+            create_earning_from_sale.delay(sale.id, external_id)
             
         except Employee.DoesNotExist:
             pass
@@ -84,70 +96,82 @@ class SaleViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError("Valores inválidos para cantidad o precio")
     
     def _get_or_create_active_period(self, employee):
-        """Obtiene o crea el período activo para el empleado"""
-        from apps.employees_api.earnings_models import FortnightSummary
-        from datetime import datetime
+        """Obtiene o crea el período activo para el empleado
         
-        # Buscar cualquier período activo (no cerrado) para el empleado
-        active_period = FortnightSummary.objects.filter(
+        REGLA DE NEGOCIO: Si el período calculado por fecha ya está pagado,
+        asignar automáticamente al siguiente período abierto.
+        """
+        from apps.employees_api.earnings_models import FortnightSummary
+        from apps.employees_api.period_utils import get_current_period_for_employee
+        
+        # 1. Calcular período según fecha actual y frecuencia del empleado
+        current_period_info = get_current_period_for_employee(employee)
+        year = current_period_info['year']
+        period_index = current_period_info['period_index']
+        
+        # 2. Verificar si el período calculado existe y está pagado
+        calculated_period = FortnightSummary.objects.filter(
             employee=employee,
-            closed_at__isnull=True
+            fortnight_year=year,
+            fortnight_number=period_index
         ).first()
         
-        if active_period:
-            return active_period
+        # 3. Si el período calculado NO está pagado, usarlo
+        if calculated_period and not calculated_period.is_paid:
+            return calculated_period
         
-        # No hay período activo, crear uno nuevo para la quincena actual o siguiente
-        today = timezone.now().date()
+        # 4. Si no existe el período calculado, crearlo
+        if not calculated_period:
+            period, created = FortnightSummary.objects.get_or_create(
+                employee=employee,
+                fortnight_year=year,
+                fortnight_number=period_index,
+                defaults={
+                    'total_earnings': 0,
+                    'total_services': 0,
+                    'is_paid': False
+                }
+            )
+            return period
         
-        if today.day <= 15:
-            start_date = today.replace(day=1)
-            end_date = today.replace(day=15)
-        else:
-            start_date = today.replace(day=16)
-            last_day = (today.replace(month=today.month+1, day=1) - timezone.timedelta(days=1)).day
-            end_date = today.replace(day=last_day)
+        # 5. El período calculado YA ESTÁ PAGADO - buscar siguiente período abierto
+        logger.info(f"Período {year}/{period_index} ya pagado para {employee.user.full_name}. Buscando siguiente período.")
         
-        year = start_date.year
-        month = start_date.month
-        fortnight_in_month = 1 if start_date.day <= 15 else 2
-        fortnight_number = (month - 1) * 2 + fortnight_in_month
+        # Buscar el siguiente período no pagado
+        next_period_index = period_index + 1
+        next_year = year
         
-        # Verificar si ya existe un período cerrado para esta quincena
-        existing_closed = FortnightSummary.objects.filter(
+        # Ajustar año si es necesario (después de quincena 24)
+        if next_period_index > 24:
+            next_year += 1
+            next_period_index = 1
+        
+        # Crear o obtener el siguiente período
+        next_period, created = FortnightSummary.objects.get_or_create(
             employee=employee,
-            fortnight_year=year,
-            fortnight_number=fortnight_number,
-            closed_at__isnull=False
-        ).exists()
-        
-        if existing_closed:
-            # Si ya hay un período cerrado para esta quincena, crear el siguiente
-            if fortnight_number < 24:  # No es la última quincena del año
-                fortnight_number += 1
-            else:
-                # Es la última quincena del año, crear la primera del siguiente año
-                year += 1
-                fortnight_number = 1
-        
-        # Usar get_or_create para evitar duplicados
-        period, created = FortnightSummary.objects.get_or_create(
-            employee=employee,
-            fortnight_year=year,
-            fortnight_number=fortnight_number,
+            fortnight_year=next_year,
+            fortnight_number=next_period_index,
             defaults={
                 'total_earnings': 0,
                 'total_services': 0,
                 'is_paid': False
             }
         )
-        return period
+        
+        if created:
+            logger.info(f"Creado nuevo período {next_year}/{next_period_index} para {employee.user.full_name}")
+        
+        return next_period
 
+    @transaction.atomic
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
 
         # Validar caja abierta
         open_register = self._validate_cash_register()
+        
+        # Validar que se puede operar con la caja
+        CashRegisterStateValidator.validate_open_operation(open_register)
         
         # Calcular totales automáticamente
         details = self.request.data.get('details', [])
@@ -192,9 +216,15 @@ class SaleViewSet(viewsets.ModelViewSet):
         if employee_id:
             from apps.employees_api.models import Employee
             try:
-                sale_employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
-            except Employee.DoesNotExist:
-                pass
+                sale_employee = Employee.objects.select_for_update().get(
+                    id=employee_id, 
+                    tenant=self.request.user.tenant,
+                    is_active=True
+                )
+                # Validar ownership
+                validate_tenant_ownership(self.request.user, employee=sale_employee)
+            except (Employee.DoesNotExist, ValueError) as e:
+                raise serializers.ValidationError(f"Empleado inválido: {str(e)}")
         
         # Obtener o crear período activo para el empleado
         active_period = None
@@ -207,26 +237,40 @@ class SaleViewSet(viewsets.ModelViewSet):
             employee=sale_employee,  # Empleado que realizó el servicio
             period=active_period,    # Período activo
             total=total_with_discount,
-            status='completed'  # Marcar como completada por defecto
+            status='completed',  # Marcar como completada por defecto
+            closed=False,  # Nueva venta no está cerrada
+            earnings_generated=False  # Aún no se han generado earnings
         )
         
-        # Actualizar inventario
+        # Actualizar inventario con concurrencia segura
         for detail in details:
             if detail.get('content_type') == 'product':
                 from apps.inventory_api.models import Product, StockMovement
-                product = Product.objects.get(id=detail.get('object_id'))
-                quantity = int(detail.get('quantity', 1))
-                
-                # Reducir stock
-                product.stock -= quantity
-                product.save()
-                
-                # Crear movimiento de stock
-                StockMovement.objects.create(
-                    product=product,
-                    quantity=-quantity,
-                    reason=f"Venta #{sale.id}"
-                )
+                try:
+                    # CONCURRENCIA: select_for_update para evitar race conditions
+                    product = Product.objects.select_for_update().get(
+                        id=detail.get('object_id')
+                    )
+                    quantity = int(detail.get('quantity', 1))
+                    
+                    # Validar stock disponible
+                    if product.stock < quantity:
+                        raise serializers.ValidationError(
+                            f"Stock insuficiente para {product.name}. Disponible: {product.stock}"
+                        )
+                    
+                    # Reducir stock
+                    product.stock -= quantity
+                    product.save()
+                    
+                    # Crear movimiento de stock
+                    StockMovement.objects.create(
+                        product=product,
+                        quantity=-quantity,
+                        reason=f"Venta #{sale.id}"
+                    )
+                except Product.DoesNotExist:
+                    raise serializers.ValidationError("Producto no encontrado")
         
         # Actualizar cita si existe
         appointment_id = self.request.data.get('appointment_id')
@@ -244,15 +288,17 @@ class SaleViewSet(viewsets.ModelViewSet):
                     appointment.client.save()
                     
                 # Crear ganancia automática para el empleado
-                if sale_employee:
+                if sale_employee and sale.can_generate_earnings:
                     self._create_employee_earning(sale, sale_employee.user)
+                    # NO marcar earnings_generated - Celery lo hará al confirmar éxito
                     
             except Appointment.DoesNotExist:
                 pass
         
         # Si no hay cita pero hay empleado asignado, crear ganancia
-        elif sale_employee:
+        elif sale_employee and sale.can_generate_earnings:
             self._create_employee_earning(sale, sale_employee.user)
+            # NO marcar earnings_generated - Celery lo hará al confirmar éxito
        
             
 
@@ -260,15 +306,21 @@ class SaleViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         user = self.request.user
         
-        # SuperAdmin puede ver todo
-        if user.is_superuser:
-            pass  # No filtrar nada
-        elif user.tenant:
-            # Filtrar por tenant del usuario
-            qs = qs.filter(user__tenant=user.tenant)
-        else:
-            qs = qs.none()
-            
+        # OPTIMIZACIÓN: Eliminar N+1 queries con select_related y prefetch_related
+        qs = qs.select_related(
+            'client',
+            'employee__user', 
+            'user',
+            'period'
+        ).prefetch_related(
+            'details__content_type',
+            'payments'
+        )
+        
+        # SEGURIDAD: Aplicar filtro de tenant siempre (incluye superuser)
+        tenant_filter = get_tenant_sales_filter(user)
+        qs = qs.filter(tenant_filter)
+        
         # Si no es staff, solo sus propias ventas
         if not user.is_staff and not user.is_superuser:
             qs = qs.filter(user=user)
@@ -283,9 +335,21 @@ class SaleViewSet(viewsets.ModelViewSet):
             
         return qs
 
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsClientAdminOrStaff])
     def open_register(self, request):
         today = timezone.localdate()
+        
+        # VALIDACIÓN PREVIA: Verificar caja abierta ANTES de cerrar automáticamente
+        existing_open = CashRegister.objects.filter(
+            user=request.user,
+            is_open=True
+        ).first()
+        
+        if existing_open:
+            return Response(
+                {'error': 'Ya tienes una caja abierta. Ciérrala antes de abrir una nueva.'},
+                status=status.HTTP_409_CONFLICT
+            )
         
         # Cerrar cualquier caja abierta anterior (por seguridad)
         CashRegister.objects.filter(
@@ -337,22 +401,29 @@ class SaleViewSet(viewsets.ModelViewSet):
             
         return Response(CashRegisterSerializer(register).data)
 
+    @transaction.atomic
     @action(detail=True, methods=['post'])
     def refund(self, request, pk=None):
         sale = self.get_object()
         
-        if sale.closed:
+        # Validar que se puede reembolsar
+        try:
+            SaleStateValidator.validate_transition(sale.status, 'refunded')
+        except ValidationError as e:
             return Response(
-                {'error': 'No se puede reembolsar una venta cerrada'}, 
+                {'error': str(e)}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Restaurar inventario
+        # Guardar estado anterior para earnings
+        old_status = sale.status
+        
+        # Restaurar inventario con concurrencia segura
         for detail in sale.details.all():
-            if detail.content_type == 'product':
+            if detail.item_type == 'product':
                 from apps.inventory_api.models import Product, StockMovement
                 try:
-                    product = Product.objects.get(id=detail.object_id)
+                    product = Product.objects.select_for_update().get(id=detail.object_id)
                     product.stock += detail.quantity
                     product.save()
                     
@@ -362,14 +433,27 @@ class SaleViewSet(viewsets.ModelViewSet):
                         reason=f"Reembolso venta #{sale.id}"
                     )
                 except Product.DoesNotExist:
-                    pass
+                    logger.warning(f"Producto {detail.object_id} no encontrado para reembolso")
         
-        # Marcar como reembolsada
+        # Revertir earnings si es necesario
+        if SaleStateValidator.should_revert_earnings(old_status, 'refunded'):
+            if sale.earnings_generated and not sale.earnings_reverted:
+                # Aquí se podría llamar a un servicio para revertir earnings
+                # Por ahora solo marcamos como revertido
+                sale.mark_earnings_reverted()
+        
+        # Cambiar estado a reembolsada
+        sale.status = 'refunded'
+        sale.closed = True  # Auto-cerrar
         sale.total = Decimal('0')
         sale.paid = Decimal('0')
         sale.save()
         
-        return Response({'detail': 'Venta reembolsada correctamente'})
+        return Response({
+            'detail': 'Venta reembolsada correctamente',
+            'new_status': sale.status,
+            'closed': sale.closed
+        })
     
     @action(detail=True, methods=['get'])
     def print_receipt(self, request, pk=None):
@@ -407,6 +491,7 @@ class SaleViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def search_sales(self, request):
         """Búsqueda avanzada de ventas"""
+        # OPTIMIZACIÓN: Usar queryset optimizado
         queryset = self.get_queryset()
         
         # Filtros
@@ -448,10 +533,12 @@ class SaleViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(payment_method=payment_method)
         
         from apps.utils.response_formatter import StandardResponse
+        # OPTIMIZACIÓN: Usar count() antes de serializar para evitar evaluación doble
+        total_count = queryset.count()
         serializer = self.get_serializer(queryset, many=True)
         return Response(StandardResponse.list_response(
             results=serializer.data,
-            count=queryset.count()
+            count=total_count
         ))
 
    
@@ -459,18 +546,30 @@ class SaleViewSet(viewsets.ModelViewSet):
 class CashRegisterViewSet(viewsets.ModelViewSet):
     queryset = CashRegister.objects.all()
     serializer_class = CashRegisterSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientAdminOrStaff]  # Solo admin o staff
+    
+    # OPTIMIZACIÓN: Paginación para historial de cajas
+    from rest_framework.pagination import PageNumberPagination
+    
+    class CashRegisterPagination(PageNumberPagination):
+        page_size = 30
+        page_size_query_param = 'page_size'
+        max_page_size = 100
+    
+    pagination_class = CashRegisterPagination
     
     def get_queryset(self):
         qs = super().get_queryset()
         user = self.request.user
         
-        if user.is_superuser:
-            return qs
-        elif user.tenant:
-            return qs.filter(user__tenant=user.tenant)
-        else:
+        # OPTIMIZACIÓN: Precargar relación user
+        qs = qs.select_related('user')
+        
+        # SEGURIDAD: Filtrar siempre por tenant
+        if not user.tenant:
             return qs.none()
+        
+        return qs.filter(user__tenant=user.tenant)
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -498,21 +597,34 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
             
         return Response(CashRegisterSerializer(register).data)
 
-    @action(detail=True, methods=['post'])
+    @transaction.atomic
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsClientAdmin])
     def close(self, request, pk=None):
         register = self.get_object()
-        if not register.is_open:
-            return Response({"detail": "Caja ya está cerrada."}, status=status.HTTP_400_BAD_REQUEST)
-
+        
+        # VALIDAR OWNERSHIP
+        if register.user.tenant != request.user.tenant:
+            return Response({"error": "No autorizado"}, status=status.HTTP_403_FORBIDDEN)
+        
+        # Validar que se puede cerrar
         from .serializers import CashRegisterCloseSerializer
         serializer = CashRegisterCloseSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        final_cash = serializer.validated_data['final_cash']
+        
+        try:
+            CashRegisterStateValidator.validate_close_operation(register, final_cash)
+        except ValidationError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Cerrar caja de forma atómica
         register.is_open = False
         register.closed_at = timezone.now()
-        register.final_cash = serializer.validated_data['final_cash']
+        register.final_cash = final_cash
         register.save()
+        
         return Response(CashRegisterSerializer(register).data)
     
     @action(detail=True, methods=['post'])
@@ -547,9 +659,10 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
     
     def _calculate_cash_sales(self, register):
         """Calcular ventas en efectivo del día del tenant"""
-        # Incluir ventas con empleado del tenant y ventas sin empleado del usuario
+        # SEGURIDAD: Usar filtro centralizado
+        tenant_filter = get_tenant_sales_filter(register.user)
         cash_sales = Sale.objects.filter(
-            Q(employee__tenant=register.user.tenant) | Q(user__tenant=register.user.tenant, employee__isnull=True),
+            tenant_filter,
             date_time__date=register.opened_at.date(),
             payment_method='cash'
         ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
@@ -605,30 +718,54 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
 @api_view(['GET'])  
 def daily_summary(request):
         today = timezone.localdate()
-        if request.user.is_superuser:
-            sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
-        elif request.user.tenant:
-            sales = Sale.objects.filter(
-                Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
-                date_time__date=today
-            )
-        else:
-            sales = Sale.objects.none()
+        # SEGURIDAD: Usar filtro centralizado
+        tenant_filter = get_tenant_sales_filter(request.user)
+        sales = Sale.objects.filter(tenant_filter, date_time__date=today)
 
         total = sales.aggregate(total=Sum('total'))['total'] or 0
         paid = sales.aggregate(paid=Sum('paid'))['paid'] or 0
 
         by_method = sales.values('payment_method').annotate(total=Sum('paid'))
-        by_type = {
-            'services': 0,
-            'products': 0,
-        }
-        for sale in sales:
-            for d in sale.details.all():
-                if d.content_type == 'product':
-                    by_type['products'] += d.quantity * d.price
-                else:
-                    by_type['services'] += d.quantity * d.price
+        
+        # OPTIMIZACIÓN: Eliminar N+1 queries usando agregación directa en SaleDetail
+        from .models import SaleDetail
+        from django.contrib.contenttypes.models import ContentType
+        
+        # Obtener ContentType para productos
+        try:
+            product_ct = ContentType.objects.get(app_label='inventory_api', model='product')
+            
+            # Calcular totales por tipo usando agregación
+            details_today = SaleDetail.objects.filter(
+                sale__in=sales
+            ).select_related('content_type')
+            
+            products_total = details_today.filter(
+                content_type=product_ct
+            ).aggregate(
+                total=Sum('price') * Sum('quantity')
+            )['total'] or 0
+            
+            services_total = details_today.exclude(
+                content_type=product_ct
+            ).aggregate(
+                total=Sum('price') * Sum('quantity')
+            )['total'] or 0
+            
+            by_type = {
+                'products': float(products_total),
+                'services': float(services_total),
+            }
+        except ContentType.DoesNotExist:
+            # Fallback al método anterior si hay problemas
+            by_type = {'services': 0, 'products': 0}
+            sales_with_details = sales.prefetch_related('details__content_type')
+            for sale in sales_with_details:
+                for d in sale.details.all():
+                    if d.item_type == 'product':
+                        by_type['products'] += d.quantity * d.price
+                    else:
+                        by_type['services'] += d.quantity * d.price
 
         return Response({
             'date': today,
@@ -654,32 +791,24 @@ def dashboard_stats(request):
     today = timezone.localdate()
     
     # Filtros por tenant
-    if request.user.is_superuser:
-        sales_today = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
-        all_sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user))
-        appointments_today = Appointment.objects.filter(Q(stylist=request.user), date_time__date=today)
-        appointments_week = Appointment.objects.filter(Q(stylist=request.user), date_time__date__gte=today - timedelta(days=7))
-        clients = Client.objects.all()
-        employees = Employee.objects.all()
-    elif request.user.tenant:
-        sales_today = Sale.objects.filter(
-            Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
-            date_time__date=today
-        )
-        all_sales = Sale.objects.filter(
-            Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True)
-        )
-        appointments_today = Appointment.objects.filter(stylist__tenant=request.user.tenant, date_time__date=today)
-        appointments_week = Appointment.objects.filter(stylist__tenant=request.user.tenant, date_time__date__gte=today - timedelta(days=7))
-        clients = Client.objects.filter(tenant=request.user.tenant)
-        employees = Employee.objects.filter(tenant=request.user.tenant)
-    else:
-        sales_today = Sale.objects.none()
-        all_sales = Sale.objects.none()
-        appointments_today = Appointment.objects.none()
-        appointments_week = Appointment.objects.none()
-        clients = Client.objects.none()
-        employees = Employee.objects.none()
+    # SEGURIDAD: Usar filtro centralizado y validar tenant
+    if not request.user.tenant:
+        return Response({'error': 'Usuario sin tenant asignado'}, status=403)
+    
+    tenant_filter = get_tenant_sales_filter(request.user)
+    sales_today = Sale.objects.filter(tenant_filter, date_time__date=today)
+    all_sales = Sale.objects.filter(tenant_filter)
+    
+    appointments_today = Appointment.objects.filter(
+        stylist__tenant=request.user.tenant, 
+        date_time__date=today
+    )
+    appointments_week = Appointment.objects.filter(
+        stylist__tenant=request.user.tenant, 
+        date_time__date__gte=today - timedelta(days=7)
+    )
+    clients = Client.objects.filter(tenant=request.user.tenant)
+    employees = Employee.objects.filter(tenant=request.user.tenant)
     
     # Calcular estadísticas
     revenue_today = sales_today.aggregate(total=Sum('total'))['total'] or 0
@@ -740,8 +869,8 @@ def dashboard_stats(request):
         else:
             current_date = current_date.replace(month=current_date.month - 1)
     
-    # Ventas recientes
-    recent_sales = sales_today.order_by('-date_time')[:10]
+    # OPTIMIZACIÓN: Ventas recientes con prefetch para evitar N+1
+    recent_sales = sales_today.select_related('client').prefetch_related('details').order_by('-date_time')[:10]
     recent_sales_data = []
     for sale in recent_sales:
         recent_sales_data.append({

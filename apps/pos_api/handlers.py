@@ -9,9 +9,20 @@ def create_earnings_from_sale(sale):
     """
     Crear earnings de forma idempotente desde una venta completada
     """
+    # Validar precondiciones
     if not sale.employee or sale.status != 'completed':
         logger.debug(f"Sale {sale.id} no tiene empleado o no está completada")
         return {'status': 'skipped', 'reason': 'no_employee_or_not_completed'}
+    
+    # Validar que no se hayan generado earnings ya
+    if sale.earnings_generated:
+        logger.debug(f"Sale {sale.id} ya tiene earnings generados")
+        return {'status': 'skipped', 'reason': 'earnings_already_generated'}
+    
+    # Validar que no estén revertidos
+    if sale.earnings_reverted:
+        logger.debug(f"Sale {sale.id} tiene earnings revertidos")
+        return {'status': 'skipped', 'reason': 'earnings_reverted'}
     
     employee = sale.employee
     earnings_created = []
@@ -57,9 +68,16 @@ def create_earnings_from_sale(sale):
                 })
                 
                 logger.info(f"Earning creado: {earning.id} por ${earning_amount}")
+        
+        # Marcar que se generaron earnings
+        if earnings_created:
+            sale.mark_earnings_generated()
     
-    return {
+    result = {
         'status': 'created' if earnings_created else 'skipped',
         'earnings_created': len(earnings_created),
         'earnings': earnings_created
     }
+    
+    logger.info(f"Earnings processing result for sale {sale.id}: {result}")
+    return result

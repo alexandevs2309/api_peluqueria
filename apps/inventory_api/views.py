@@ -1,6 +1,6 @@
 from rest_framework import viewsets, permissions
 from apps.audit_api.mixins import AuditLoggingMixin
-from apps.roles_api.permissions import role_permission_for
+from apps.auth_api.permissions import IsClientAdminOrStaff
 from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
 from rest_framework.permissions import IsAuthenticated

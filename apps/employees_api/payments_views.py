@@ -21,99 +21,114 @@ from .advance_loans import AdvanceLoan, LoanPayment, process_loan_deductions
 from .payroll_reports import PayrollReportGenerator
 from .accounting_integration import AccountingIntegrator
 from .notifications import PayrollNotificationService
+from .services.balance import EmployeeBalanceService
+from .services.payment import PaymentService
+from .services.loan import LoanService
+from apps.auth_api.permissions import IsClientAdmin, CanViewFinancialData
 import logging
 
 logger = logging.getLogger(__name__)
 
 
 class PaymentViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientAdmin]  # Solo CLIENT_ADMIN puede gestionar pagos
     
-    @action(detail=False, methods=['post'])
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsClientAdmin])
     def pay_employee(self, request):
-        """Pagar empleado por sale_ids específicos o quincena completa"""
-        employee_id = request.data.get('employee_id')
-        sale_ids = request.data.get('sale_ids', [])
-        year = request.data.get('year')
-        fortnight = request.data.get('fortnight')
-        payment_method = request.data.get('payment_method', 'cash')
-        payment_reference = request.data.get('payment_reference', '')
-        idempotency_key = request.data.get('idempotency_key', '')
-        apply_loan_deduction = request.data.get('apply_loan_deduction', True)
-        loan_deduction_amount = Decimal(str(request.data.get('loan_deduction_amount', 0)))
+        """Procesar pago a empleado con idempotencia y transacciones atómicas
         
-        # Validaciones de seguridad
+        ENDURECIMIENTO:
+        - Idempotencia usando idempotency_key
+        - Transacciones atómicas
+        - Recálculo de balance dentro de transacción
+        - Estados claros (PENDING, COMPLETED, FAILED)
+        """
+        employee_id = request.data.get('employee_id')
+        requested_amount = request.data.get('amount', 0)
+        idempotency_key = request.data.get('idempotency_key')
+        
+        # Validaciones básicas
         if not employee_id:
             return Response({'error': 'employee_id requerido'}, status=400)
-        if loan_deduction_amount < 0:
-            return Response({'error': 'Monto de descuento no puede ser negativo'}, status=400)
-        if loan_deduction_amount > 50000:  # Límite de seguridad
-            return Response({'error': 'Monto de descuento excede límite permitido'}, status=400)
         
-        try:
-            # Validaciones de seguridad
-            if not request.user.tenant:
-                return Response({'error': 'Usuario sin tenant asignado'}, status=403)
-            
-            employee = Employee.objects.select_for_update().get(
-                id=employee_id, 
-                tenant=request.user.tenant,
-                is_active=True
-            )
-            
-            with transaction.atomic():
-                # Verificar idempotencia
-                if idempotency_key:
-                    # Buscar por payment_reference O por idempotency_key en metadata
-                    existing = FortnightSummary.objects.filter(
-                        employee=employee,
-                        is_paid=True
-                    ).filter(
-                        Q(payment_reference=idempotency_key) |
-                        Q(payment_notes__icontains=idempotency_key)
-                    ).first()
-                    if existing:
-                        return Response({
-                            'status': 'already_paid',
-                            'message': 'Pago ya procesado',
-                            'paid_at': existing.paid_at.isoformat()
-                        })
-                
-                if sale_ids:
-                    # Pago por ventas específicas
-                    return self._pay_by_sales(employee, sale_ids, payment_method, 
-                                            payment_reference, idempotency_key, request.user,
-                                            apply_loan_deduction, loan_deduction_amount)
-                elif year and fortnight:
-                    # Pago por quincena completa
-                    return self._pay_by_fortnight(employee, int(year), int(fortnight), 
-                                                payment_method, payment_reference, request.user,
-                                                apply_loan_deduction, loan_deduction_amount)
-                else:
-                    return Response({'error': 'Especificar sale_ids o year+fortnight'}, status=400)
-                    
-        except Employee.DoesNotExist:
-            return Response({'error': 'Empleado no encontrado'}, status=404)
-        except Exception as e:
-            logger.error(f"Error en pago: {str(e)}")
-            return Response({'error': f'Error procesando pago: {str(e)}'}, status=500)
-    
-    def _pay_by_sales(self, employee, sale_ids, payment_method, payment_reference, idempotency_key, user, apply_loan_deduction=True, loan_deduction_amount=Decimal('0')):
-        """Pagar por ventas específicas"""
-        from apps.pos_api.models import Sale
+        if not idempotency_key:
+            return Response({'error': 'idempotency_key requerido'}, status=400)
         
-        # Validar ownership de ventas
-        sales = Sale.objects.select_for_update().filter(
-            id__in=sale_ids,
-            employee=employee,
-            employee__tenant=employee.tenant,  # Validar tenant
-            status='completed',
-            period__isnull=True
+        if not requested_amount or requested_amount <= 0:
+            return Response({'error': 'amount debe ser mayor a 0'}, status=400)
+        
+        # Datos del pago
+        payment_data = {
+            'payment_method': request.data.get('payment_method', 'cash'),
+            'payment_reference': request.data.get('payment_reference', ''),
+            'payment_notes': request.data.get('payment_notes', ''),
+            'paid_by': request.user
+        }
+        
+        # Validar caja abierta para pagos en efectivo
+        if payment_data['payment_method'] == 'cash':
+            from apps.pos_api.models import CashRegister
+            open_register = CashRegister.objects.filter(
+                user__tenant=request.user.tenant,
+                is_open=True
+            ).first()
+            
+            if not open_register:
+                return Response({
+                    'error': 'No hay caja registradora abierta para procesar pagos en efectivo'
+                }, status=409)
+        
+        # Procesar pago usando servicio endurecido
+        result = PaymentService.process_payment(
+            employee_id=employee_id,
+            requested_amount=Decimal(str(requested_amount)),
+            payment_data=payment_data,
+            idempotency_key=idempotency_key
         )
         
-        # Validar que todas las ventas existen y pertenecen al tenant
-        if sales.count() != len(sale_ids):
-            return Response({'error': 'Algunas ventas no existen o no pertenecen a este tenant'}, status=400)
+        # Mapear respuesta según resultado
+        if result['status'] == 'success':
+            return Response(result, status=201)
+        elif result['status'] == 'already_processed':
+            return Response(result, status=200)
+        elif result['status'] == 'processing':
+            return Response(result, status=202)
+        else:
+            return Response(result, status=400)
+        
+
+    
+    @transaction.atomic
+    def _pay_by_sales(self, employee, sale_ids, payment_method, payment_reference, idempotency_key, user, apply_loan_deduction=True):
+        """Procesar pago a empleado por ventas específicas
+        
+        PUNTO 2 - REGLAS DE NEGOCIO ACTUALES (TEMPORALES):
+        - Descuento de préstamos = suma de cuotas mensuales de préstamos activos
+        - Máximo 50% del salario bruto puede ser descontado
+        - Si apply_loan_deduction=False, NO se aplica descuento
+        - Estas reglas pueden cambiar por decisión de negocio
+        """
+        from apps.pos_api.models import Sale
+        
+        # CORRECCIÓN: Manejar ON_DEMAND (sale_ids vacío)
+        if not sale_ids:  # ON_DEMAND: Obtener todas las ventas pendientes
+            sales = Sale.objects.select_for_update().filter(
+                employee=employee,
+                employee__tenant=employee.tenant,
+                status='completed',
+                period__isnull=True
+            )
+        else:  # Ventas específicas
+            sales = Sale.objects.select_for_update().filter(
+                id__in=sale_ids,
+                employee=employee,
+                employee__tenant=employee.tenant,
+                status='completed',
+                period__isnull=True
+            )
+            # Validar que todas las ventas existen
+            if sales.count() != len(sale_ids):
+                return Response({'error': 'Algunas ventas no existen o no pertenecen a este tenant'}, status=400)
         
         if not sales.exists():
             return Response({'error': 'No hay ventas pendientes válidas'}, status=400)
@@ -130,6 +145,15 @@ class PaymentViewSet(viewsets.ViewSet):
         # Validar límites de monto
         if amount <= 0:
             return Response({'error': 'Monto calculado es 0'}, status=400)
+        
+        # Validar balance disponible
+        available_balance = EmployeeBalanceService.get_balance(employee.id)
+        if amount > available_balance:
+            return Response({
+                'error': 'Balance insuficiente',
+                'available_balance': float(available_balance),
+                'requested_amount': float(amount)
+            }, status=400)
         
         if amount > 1000000:  # Límite de seguridad
             return Response({'error': 'Monto excede límite máximo permitido'}, status=400)
@@ -161,7 +185,7 @@ class PaymentViewSet(viewsets.ViewSet):
         # Aplicar descuentos legales
         net_amount, deductions = self._apply_deductions(employee, summary.total_earnings, current_fortnight)
         
-        # Procesar deducciones de préstamos personalizables
+        # PUNTO 3 ROBUSTEZ: Procesar deducciones de préstamos dentro de transacción
         loan_deductions = Decimal('0.00')
         loan_details = []
         
@@ -169,15 +193,12 @@ class PaymentViewSet(viewsets.ViewSet):
             active_loans = employee.advance_loans.select_for_update().filter(status='active')
             
             if active_loans.exists():
-                # Usar monto personalizado o calcular automáticamente
-                if loan_deduction_amount > 0:
-                    max_deduction = summary.total_earnings * Decimal('0.5')
-                    loan_deductions = min(loan_deduction_amount, max_deduction)
-                else:
-                    # Descuento automático (50% máximo)
-                    max_loan_deduction = summary.total_earnings * Decimal('0.5')
-                    total_loan_debt = sum(loan.remaining_balance for loan in active_loans)
-                    loan_deductions = min(max_loan_deduction, Decimal(str(total_loan_debt)))
+                # PUNTO 1 SEGURIDAD: Backend recalcula SIEMPRE el monto
+                # Descuento = suma de cuotas mensuales (máximo 50%)
+                max_loan_deduction = summary.total_earnings * Decimal('0.5')
+                total_monthly_payments = sum(loan.monthly_payment for loan in active_loans)
+                total_loan_debt = sum(loan.remaining_balance for loan in active_loans)
+                loan_deductions = min(max_loan_deduction, total_monthly_payments, total_loan_debt)
                 
                 # Distribuir descuento entre préstamos activos
                 remaining_deduction = loan_deductions
@@ -257,7 +278,7 @@ class PaymentViewSet(viewsets.ViewSet):
             'message': 'Pago procesado correctamente',
             'summary': {
                 'employee_id': employee.id,
-                'sale_ids': sale_ids,
+                'sale_ids': list(sales.values_list('id', flat=True)),  # IDs reales procesados
                 'gross_amount': float(summary.total_earnings),
                 'net_amount': float(net_amount),
                 'deductions': {
@@ -273,8 +294,12 @@ class PaymentViewSet(viewsets.ViewSet):
             }
         })
     
-    def _pay_by_fortnight(self, employee, year, fortnight, payment_method, payment_reference, user, apply_loan_deduction=True, loan_deduction_amount=Decimal('0')):
-        """Pagar quincena completa"""
+    def _pay_by_fortnight(self, employee, year, fortnight, payment_method, payment_reference, user, apply_loan_deduction=True):
+        """Procesar pago a empleado por quincena completa
+        
+        PUNTO 4 CLARIDAD: Este método procesa pagos de nómina quincenal
+        para empleados con sueldo fijo o mixto.
+        """
         logger.info(f"Intentando pagar - Empleado: {employee.id}, Año: {year}, Quincena: {fortnight}")
         
         # Solo permitir pagos de quincenas actuales o pasadas
@@ -415,7 +440,7 @@ class PaymentViewSet(viewsets.ViewSet):
             'total_amount': sum(emp['total_amount'] for emp in pending_data)
         })
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated, CanViewFinancialData])
     def earnings_summary(self, request):
         """Resumen de ganancias por quincena"""
         year = request.GET.get('year')
@@ -446,18 +471,31 @@ class PaymentViewSet(viewsets.ViewSet):
                     fortnight_number=fortnight
                 )
                 
-                # Calcular montos pendientes reales
+                # CORRECCIÓN: Calcular montos pendientes incluyendo earnings existentes
                 from apps.pos_api.models import Sale
+                from .earnings_models import Earning
+                
+                # Buscar ventas sin asignar a período
                 pending_sales = Sale.objects.filter(
                     employee=employee,
                     status='completed',
                     period__isnull=True
                 )
                 
+                # Buscar earnings sin pagar de este empleado
+                unpaid_earnings = Earning.objects.filter(
+                    employee=employee,
+                    sale__period__isnull=True,  # Ventas no asignadas a período
+                    sale__status='completed'
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
+                
                 pending_amount = 0
                 if pending_sales.exists():
                     total_pending_sales = sum(float(s.total) for s in pending_sales)
                     pending_amount = self._calculate_payment_amount(employee, total_pending_sales)
+                
+                # Sumar earnings existentes no pagados
+                pending_amount += float(unpaid_earnings)
                 
                 # Calcular saldo total del empleado (ganancias - préstamos)
                 total_loans = sum(loan.remaining_balance for loan in employee.advance_loans.filter(status='active'))
@@ -495,11 +533,20 @@ class PaymentViewSet(viewsets.ViewSet):
             except FortnightSummary.DoesNotExist:
                 # No hay summary para esta quincena
                 from apps.pos_api.models import Sale
+                from .earnings_models import Earning
+                
                 pending_sales = Sale.objects.filter(
                     employee=employee,
                     status='completed',
                     period__isnull=True
                 )
+                
+                # CORRECCIÓN: Incluir earnings existentes no pagados
+                unpaid_earnings = Earning.objects.filter(
+                    employee=employee,
+                    sale__period__isnull=True,
+                    sale__status='completed'
+                ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
                 
                 pending_amount = 0
                 services_count = 0
@@ -507,6 +554,9 @@ class PaymentViewSet(viewsets.ViewSet):
                     total_pending_sales = sum(float(s.total) for s in pending_sales)
                     pending_amount = self._calculate_payment_amount(employee, total_pending_sales)
                     services_count = pending_sales.count()
+                
+                # Sumar earnings existentes
+                pending_amount += float(unpaid_earnings)
                 
                 # Para empleados FIXED/MIXED: crear summary automático si no existe
                 total_earned = 0
@@ -714,6 +764,219 @@ class PaymentViewSet(viewsets.ViewSet):
             return Response({'error': 'Empleado no encontrado'}, status=404)
         except Exception as e:
             return Response({'error': str(e)}, status=500)
+    
+    @action(detail=False, methods=['post'], permission_classes=[IsAuthenticated, IsClientAdmin])
+    def preview_payment(self, request):
+        """Vista previa de pago a empleado SIN aplicar cambios
+        
+        PUNTO 3 ROBUSTEZ: Este endpoint NO modifica ningún dato.
+        Calcula todos los montos y descuentos para confirmación.
+        El pago real debe usar pay_employee() dentro de transaction.atomic().
+        
+        PUNTO 2 REGLAS: Muestra descuento sugerido basado en cuotas mensuales.
+        """
+        employee_id = request.data.get('employee_id')
+        sale_ids = request.data.get('sale_ids', [])
+        year = request.data.get('year')
+        fortnight = request.data.get('fortnight')
+        apply_loan_deduction = request.data.get('apply_loan_deduction', True)
+        
+        # PUNTO 1 SEGURIDAD: Ignorar loan_deduction_amount en preview también
+        if 'loan_deduction_amount' in request.data:
+            logger.warning(f"Preview recibió loan_deduction_amount - IGNORADO")
+        
+        # Validaciones básicas
+        if not employee_id:
+            return Response({'error': 'employee_id requerido'}, status=400)
+        
+        try:
+            employee = Employee.objects.get(
+                id=employee_id,
+                tenant=request.user.tenant,
+                is_active=True
+            )
+            
+            # Calcular monto bruto (MISMA LÓGICA que pay_employee)
+            if sale_ids is not None:  # CORRECCIÓN: Aceptar [] para ON_DEMAND
+                gross_amount = self._calculate_gross_amount_by_sales(employee, sale_ids)
+                payment_type = 'sales'
+            elif year and fortnight:
+                gross_amount = self._calculate_gross_amount_by_fortnight(employee, int(year), int(fortnight))
+                payment_type = 'fortnight'
+            else:
+                return Response({'error': 'Especificar sale_ids o year+fortnight'}, status=400)
+            
+            if gross_amount <= 0:
+                return Response({'error': 'No hay monto para pagar'}, status=400)
+            
+            # Validar balance disponible en preview
+            available_balance = EmployeeBalanceService.get_balance(employee.id)
+            if gross_amount > available_balance:
+                return Response({
+                    'error': 'Balance insuficiente para el monto solicitado',
+                    'available_balance': float(available_balance),
+                    'requested_amount': float(gross_amount)
+                }, status=400)
+            
+            # Preview de deducciones de préstamos
+            loan_preview = LoanService.preview_deductions(employee.id, gross_amount)
+            
+            # Calcular descuentos legales
+            current_fortnight = fortnight if year and fortnight else self._calculate_fortnight(timezone.now().date())[1]
+            net_after_legal, legal_deductions = self._apply_deductions(employee, gross_amount, current_fortnight)
+            
+            # Analizar préstamos (SIN MODIFICAR)
+            loan_info = self._analyze_loans_for_preview(employee, gross_amount, apply_loan_deduction)
+            
+            # Calcular neto final
+            suggested_loan_deduction = loan_info['suggested_deduction']
+            net_amount_with_loans = net_after_legal - suggested_loan_deduction
+            total_deductions = legal_deductions['total'] + float(suggested_loan_deduction)
+            
+            # Calcular neto final con préstamos
+            net_after_loans = gross_amount - loan_preview['total_deduction']
+            
+            return Response({
+                'preview': {
+                    'employee_id': employee.id,
+                    'employee_name': employee.user.full_name or employee.user.email,
+                    'payment_type': payment_type,
+                    'gross_amount': float(gross_amount),
+                    'loan_deductions': {
+                        'total': float(loan_preview['total_deduction']),
+                        'loans': loan_preview['loans'],
+                        'can_apply': loan_preview['can_apply']
+                    },
+                    'net_amount': float(net_after_loans),
+                    'balance_after_payment': float(loan_preview['balance_after_deduction'] - gross_amount)
+                },
+                'can_proceed': loan_preview['can_apply'] and net_after_loans > 0,
+                'warnings': self._get_loan_warnings(loan_preview)
+            })
+            
+        except Employee.DoesNotExist:
+            return Response({'error': 'Empleado no encontrado'}, status=404)
+        except Exception as e:
+            logger.error(f"Error en preview: {str(e)}")
+            return Response({'error': f'Error calculando preview: {str(e)}'}, status=500)
+    
+    def _calculate_gross_amount_by_sales(self, employee, sale_ids):
+        """Calcular monto bruto por ventas específicas (SOLO LECTURA)"""
+        from apps.pos_api.models import Sale
+        
+        # CORRECCIÓN: Manejar ON_DEMAND (sale_ids vacío)
+        if not sale_ids:  # ON_DEMAND: Todas las ventas pendientes
+            sales = Sale.objects.filter(
+                employee=employee,
+                employee__tenant=employee.tenant,
+                status='completed',
+                period__isnull=True
+            )
+        else:  # Ventas específicas
+            sales = Sale.objects.filter(
+                id__in=sale_ids,
+                employee=employee,
+                employee__tenant=employee.tenant,
+                status='completed',
+                period__isnull=True
+            )
+            if sales.count() != len(sale_ids):
+                raise ValueError('Algunas ventas no existen o no pertenecen a este tenant')
+        
+        if not sales.exists():
+            return Decimal('0')
+        
+        total_sales = sum(float(s.total) for s in sales)
+        return Decimal(str(self._calculate_payment_amount(employee, total_sales)))
+    
+    def _calculate_gross_amount_by_fortnight(self, employee, year, fortnight):
+        """Calcular monto bruto por quincena (SOLO LECTURA)"""
+        try:
+            summary = FortnightSummary.objects.get(
+                employee=employee,
+                fortnight_year=year,
+                fortnight_number=fortnight
+            )
+            return summary.total_earnings
+        except FortnightSummary.DoesNotExist:
+            # Para empleados FIXED: calcular automáticamente
+            if employee.salary_type in ['fixed', 'mixed']:
+                return self._calculate_fixed_salary_for_period(employee)
+            else:
+                raise ValueError('No hay ganancias para esta quincena')
+    
+    def _analyze_loans_for_preview(self, employee, gross_amount, apply_loan_deduction):
+        """Analizar préstamos para preview SIN modificar datos
+        
+        PUNTO 2 DOCUMENTACIÓN: Reglas actuales de descuento de préstamos:
+        - Descuento sugerido = suma de cuotas mensuales de préstamos activos
+        - Máximo permitido = 50% del salario bruto
+        - Si apply_loan_deduction=False, descuento = 0
+        
+        NOTA: Estas reglas son TEMPORALES y pueden cambiar.
+        """
+        active_loans = employee.advance_loans.filter(
+            status='active',
+            remaining_balance__gt=0
+        ).order_by('first_payment_date')
+        
+        if not active_loans.exists():
+            return {
+                'has_active_loans': False,
+                'total_loan_debt': 0,
+                'suggested_deduction': 0,
+                'max_deduction_allowed': 0,
+                'loans_details': []
+            }
+        
+        total_debt = sum(loan.remaining_balance for loan in active_loans)
+        max_deduction = gross_amount * Decimal('0.5')  # 50% máximo
+        
+        if not apply_loan_deduction:
+            suggested_deduction = Decimal('0')
+        else:
+            # PUNTO 1 SEGURIDAD: Backend calcula SIEMPRE el descuento
+            # Sugerir suma de cuotas mensuales (regla actual)
+            total_monthly_payments = sum(loan.monthly_payment for loan in active_loans)
+            suggested_deduction = min(total_monthly_payments, max_deduction, total_debt)
+        
+        loans_details = []
+        remaining_deduction = suggested_deduction
+        
+        for loan in active_loans:
+            if remaining_deduction <= 0:
+                suggested_payment = Decimal('0')
+            else:
+                suggested_payment = min(remaining_deduction, loan.remaining_balance)
+                remaining_deduction -= suggested_payment
+            
+            loans_details.append({
+                'loan_id': loan.id,
+                'loan_type': getattr(loan, 'loan_type', 'advance'),
+                'remaining_balance': float(loan.remaining_balance),
+                'monthly_payment': float(getattr(loan, 'monthly_payment', loan.remaining_balance)),
+                'suggested_payment': float(suggested_payment)
+            })
+        
+        return {
+            'has_active_loans': True,
+            'total_loan_debt': float(total_debt),
+            'suggested_deduction': float(suggested_deduction),
+            'max_deduction_allowed': float(max_deduction),
+            'loans_details': loans_details
+        }
+    
+    def _get_loan_warnings(self, loan_preview):
+        """Generar advertencias para el preview de préstamos"""
+        warnings = []
+        
+        if loan_preview['loans'] and not loan_preview['can_apply']:
+            warnings.append('Balance insuficiente para aplicar todas las deducciones de préstamos')
+        
+        if loan_preview['total_deduction'] > 0:
+            warnings.append(f"Se aplicarán deducciones de préstamos por ${loan_preview['total_deduction']}")
+        
+        return warnings
     
     @action(detail=False, methods=['post'])
     def process_fixed_salaries(self, request):

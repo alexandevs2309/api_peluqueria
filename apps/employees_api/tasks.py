@@ -50,22 +50,34 @@ def create_earning_from_sale(self, sale_id, external_id):
                 # Calcular quincena
                 year, fortnight_number = Earning.calculate_fortnight(sale.date_time.date())
                 
-                earning = Earning.objects.create(
-                    employee=employee,
-                    sale=sale,
-                    amount=earning_amount,
-                    earning_type='commission',
-                    percentage=employee.commission_percentage,
-                    description=f'Comisión por venta #{sale.id}',
-                    date_earned=sale.date_time,
-                    fortnight_year=year,
-                    fortnight_number=fortnight_number,
+                # Usar get_or_create para idempotencia real
+                earning, created = Earning.objects.get_or_create(
                     external_id=external_id,
-                    created_by=None  # Sistema automático
+                    defaults={
+                        'employee': employee,
+                        'sale': sale,
+                        'amount': earning_amount,
+                        'earning_type': 'commission',
+                        'percentage': employee.commission_percentage,
+                        'description': f'Comisión por venta #{sale.id}',
+                        'date_earned': sale.date_time,
+                        'fortnight_year': year,
+                        'fortnight_number': fortnight_number,
+                        'created_by': None
+                    }
                 )
                 
-                logger.info(f"Earning creado: {earning.id} por ${earning_amount}")
-                return {'status': 'created', 'earning_id': earning.id, 'amount': float(earning_amount)}
+                if created:
+                    logger.info(f"Earning creado: {earning.id} por ${earning_amount}")
+                    # SOLO Celery marca como generado tras éxito confirmado
+                    sale.mark_earnings_generated()
+                    return {'status': 'created', 'earning_id': earning.id, 'amount': float(earning_amount)}
+                else:
+                    logger.info(f"Earning ya existía: {earning.id}")
+                    # Asegurar que sale esté marcado si earning existe
+                    if not sale.earnings_generated:
+                        sale.mark_earnings_generated()
+                    return {'status': 'exists', 'earning_id': earning.id, 'amount': float(earning.amount)}
             else:
                 logger.info(f"No se creó earning para sale {sale_id} - monto 0 o empleado con sueldo fijo")
                 return {'status': 'skipped', 'reason': 'zero_amount_or_fixed_salary'}

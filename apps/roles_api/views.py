@@ -1,6 +1,6 @@
 from rest_framework import viewsets,filters
 from rest_framework.permissions import IsAuthenticated
-from .permissions import role_permission_for
+from apps.auth_api.permissions import IsSuperAdmin
 from .models import Role
 from .serializers import PermissionSerializer, RoleSerializer
 from rest_framework.decorators import action

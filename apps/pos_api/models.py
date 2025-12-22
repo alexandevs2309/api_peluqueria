@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from django.core.exceptions import ValidationError
 from apps.clients_api.models import Client
 from apps.services_api.models import Service
 from apps.inventory_api.models import Product
@@ -38,11 +39,68 @@ class Sale(models.Model):
     ], default='completed')
     
     closed = models.BooleanField(default=False)  # Útil para arqueo de caja
+    
+    # Campo para tracking de earnings (evitar duplicados)
+    earnings_generated = models.BooleanField(default=False, null=True, blank=True)
+    earnings_reverted = models.BooleanField(default=False, null=True, blank=True)
 
     class Meta:
         ordering = ['-date_time']
         verbose_name = 'Sale'
         verbose_name_plural = 'Sales'
+    
+    def clean(self):
+        """Validar consistencia de estados"""
+        from .state_validators import SaleStateValidator
+        
+        # Validar estado válido
+        SaleStateValidator.validate_state(self.status)
+        
+        # Validar consistencia entre status y closed
+        SaleStateValidator.validate_consistency(self.status, self.closed)
+    
+    def save(self, *args, **kwargs):
+        # Validar transición si es una actualización
+        if self.pk:
+            try:
+                old_instance = Sale.objects.get(pk=self.pk)
+                from .state_validators import SaleStateValidator
+                SaleStateValidator.validate_transition(old_instance.status, self.status)
+                
+                # Auto-ajustar closed según status
+                if self.status in ['cancelled', 'refunded']:
+                    self.closed = True
+                elif self.status == 'pending':
+                    self.closed = False
+                    
+            except Sale.DoesNotExist:
+                pass
+        
+        # Validar consistencia
+        self.clean()
+        super().save(*args, **kwargs)
+    
+    @property
+    def can_be_edited(self):
+        """Determinar si la venta puede ser editada"""
+        return self.status in ['pending', 'completed'] and not self.closed
+    
+    @property
+    def can_generate_earnings(self):
+        """Determinar si puede generar earnings"""
+        from .state_validators import SaleStateValidator
+        return (SaleStateValidator.can_generate_earnings(self.status) and 
+                not self.earnings_generated)
+    
+    def mark_earnings_generated(self):
+        """Marcar que se generaron earnings"""
+        self.earnings_generated = True
+        self.save(update_fields=['earnings_generated'])
+    
+    def mark_earnings_reverted(self):
+        """Marcar que se revirtieron earnings"""
+        self.earnings_reverted = True
+        self.save(update_fields=['earnings_reverted'])
 
 class SaleDetail(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='details')
