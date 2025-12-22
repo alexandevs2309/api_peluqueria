@@ -271,6 +271,7 @@ class LoginView(generics.GenericAPIView):
                 'id': tenant.id,
                 'name': tenant.name,
                 'subdomain': tenant.subdomain,
+                'country': getattr(tenant, 'country', 'DO') or 'DO'
             }
 
         # response.set_cookie(

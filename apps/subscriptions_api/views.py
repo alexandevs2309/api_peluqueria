@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan, Subscription
 from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer, OnboardingSerializer
-from .permissions import IsSuperuserOrReadOnly
+from apps.auth_api.permissions import IsSuperAdmin
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action
 from django.utils import timezone

@@ -4,6 +4,7 @@ from apps.services_api.models import Service
 
 # Importar modelos de ganancias
 from .earnings_models import Earning, FortnightSummary
+from .payroll_models import PayrollPayment, PayrollPaymentSale
 
 class Employee(models.Model):
     PAYMENT_TYPE_CHOICES = [
@@ -48,6 +49,22 @@ class Employee(models.Model):
     
     commission_percentage = models.DecimalField(max_digits=5, decimal_places=2, default=40.00, help_text='Porcentaje de comisión (ej: 40.00 para 40%)')
     payment_frequency = models.CharField(max_length=10, choices=PAYMENT_FREQUENCY_CHOICES, default='biweekly', help_text='Frecuencia de pago')
+    
+    # Modo de pago de comisiones (SOLO para salary_type='commission')
+    COMMISSION_PAYMENT_MODE_CHOICES = [
+        ('PER_PERIOD', 'Por Período'),
+        ('ON_DEMAND', 'Retiro Libre')
+    ]
+    commission_payment_mode = models.CharField(
+        max_length=12, 
+        choices=COMMISSION_PAYMENT_MODE_CHOICES, 
+        default='PER_PERIOD',
+        help_text='Modo de pago de comisiones: PER_PERIOD (por períodos) u ON_DEMAND (retiro libre)'
+    )
+    commission_on_demand_since = models.DateField(
+        null=True, blank=True,
+        help_text='Fecha desde la cual las comisiones se manejan ON_DEMAND (previene doble pago)'
+    )
     
     # Descuentos legales (opcionales)
     apply_afp = models.BooleanField(default=False, help_text='Aplicar descuento AFP (2.87%)')

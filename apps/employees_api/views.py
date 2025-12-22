@@ -6,13 +6,16 @@ from rest_framework.exceptions import ValidationError
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.mixins import TenantFilterMixin, TenantPermissionMixin
 from apps.tenants_api.models import Tenant
-from apps.roles_api.permissions import IsActiveAndRolePermission, role_permission_for
+from apps.auth_api.permissions import IsClientAdmin, CanViewFinancialData
 from apps.subscriptions_api.utils import get_user_active_subscription
 from apps.settings_api.utils import validate_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule
 from apps.auth_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
-from .permissions import IsAdminOrOwnStylist, role_permission_for
+from apps.auth_api.permissions import IsSuperAdmin
+from apps.auth_api.permissions import (
+    IsClientAdminOrStaff, CanViewFinancialData, IsSuperAdmin
+)
 
 class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     queryset = Employee.objects.all()
@@ -20,9 +23,12 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
   
     def get_permissions(self):
         if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            permission_classes = [IsAuthenticated]
+            permission_classes = [IsAuthenticated, IsClientAdmin]  # Solo CLIENT_ADMIN puede modificar
+        elif self.action in ['stats', 'update_payment_config']:
+            permission_classes = [IsAuthenticated, CanViewFinancialData]  # Solo CLIENT_ADMIN ve financiero
         else:
-            permission_classes = [IsAuthenticated]
+            # Vista básica: CLIENT_ADMIN, STAFF o SUPER_ADMIN (solo lectura)
+            permission_classes = [IsAuthenticated]  # Filtrado por tenant en get_queryset
         return [permission() for permission in permission_classes]
 
    
@@ -63,7 +69,7 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             
         serializer.save(tenant=tenant)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, role_permission_for(['Admin'])])
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, IsClientAdmin])
     def assign_service(self, request, pk=None):
         employee = self.get_object()
         serializer = EmployeeServiceSerializer(data=request.data)
@@ -188,10 +194,10 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
 class WorkScheduleViewSet(viewsets.ModelViewSet):
     queryset = WorkSchedule.objects.all()
     serializer_class = WorkScheduleSerializer
-    permission_classes = [IsAdminOrOwnStylist]
+    permission_classes = [IsAuthenticated, IsClientAdmin]
 
     def get_queryset(self):
-        if UserRole.objects.filter(user=self.request.user, role__name='Admin').exists():
+        if UserRole.objects.filter(user=self.request.user, role__name='Client-Admin').exists():
             return WorkSchedule.objects.all()
         return WorkSchedule.objects.filter(employee__user=self.request.user)
 

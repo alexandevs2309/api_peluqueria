@@ -285,6 +285,86 @@ class FortnightSummary(models.Model):
         
         return f"{half} quincena {months[month-1]} {self.fortnight_year}"
     
+    @property
+    def period_dates(self):
+        """Obtiene fechas de inicio y fin del período"""
+        from datetime import datetime, timedelta
+        
+        if not self.fortnight_number or not self.fortnight_year:
+            return None, None
+        
+        month = ((self.fortnight_number - 1) // 2) + 1
+        is_first_half = (self.fortnight_number % 2) == 1
+        
+        if is_first_half:
+            start_date = datetime(self.fortnight_year, month, 1).date()
+            end_date = datetime(self.fortnight_year, month, 15).date()
+        else:
+            start_date = datetime(self.fortnight_year, month, 16).date()
+            if month == 12:
+                next_month = datetime(self.fortnight_year + 1, 1, 1)
+            else:
+                next_month = datetime(self.fortnight_year, month + 1, 1)
+            end_date = (next_month - timedelta(days=1)).date()
+        
+        return start_date, end_date
+    
+    @property
+    def payment_status(self):
+        """Estado derivado del período de pago"""
+        if self.is_paid:
+            return 'paid'
+        
+        start_date, end_date = self.period_dates
+        if not end_date:
+            return 'unknown'
+        
+        today = timezone.now().date()
+        
+        if today <= end_date:
+            return 'in_progress'
+        elif today > end_date:
+            # Considerar atrasado después de 7 días
+            days_overdue = (today - end_date).days
+            if days_overdue > 7:
+                return 'overdue'
+            else:
+                return 'due'
+        
+        return 'unknown'
+    
+    @property
+    def payment_status_display(self):
+        """Texto amigable para el estado de pago"""
+        status = self.payment_status
+        start_date, end_date = self.period_dates
+        
+        if status == 'paid':
+            if self.paid_at:
+                return f"Pagado el {self.paid_at.strftime('%d/%m/%Y')}"
+            return "Pagado"
+        elif status == 'in_progress':
+            return "Período en curso"
+        elif status == 'due':
+            if end_date:
+                return f"Pago pendiente (desde {end_date.strftime('%d/%m/%Y')})"
+            return "Pago pendiente"
+        elif status == 'overdue':
+            if end_date:
+                days_overdue = (timezone.now().date() - end_date).days
+                return f"Pago atrasado ({days_overdue} días)"
+            return "Pago atrasado"
+        
+        return "Estado desconocido"
+    
+    @property
+    def period_display(self):
+        """Muestra el período trabajado en formato legible"""
+        start_date, end_date = self.period_dates
+        if start_date and end_date:
+            return f"{start_date.strftime('%d')}-{end_date.strftime('%d %b %Y')}"
+        return self.fortnight_display
+    
     def __str__(self):
         return f"{self.employee} - {self.fortnight_display} - ${self.total_earnings}"
 

@@ -1,18 +1,72 @@
+"""Sistema de permisos centralizado - ENDURECIDO
+Acciones críticas son responsabilidades EXCLUSIVAS de CLIENT_ADMIN
+"""
 from rest_framework.permissions import BasePermission
-from .models import UserRole
+from apps.roles_api.models import UserRole
 
-class RolePermission(BasePermission):
-    """ Permite acceso si el usuario tiene alguno de los roles permitidos. """
-    allowed_roles = ['Admin']  # Configurado explícitamente
 
+class IsSuperAdmin(BasePermission):
+    """Solo SUPER_ADMIN - SOLO LECTURA para soporte"""
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        if not request.user.is_authenticated:
             return False
+        # SUPER_ADMIN solo métodos GET
+        if request.method not in ['GET', 'HEAD', 'OPTIONS']:
+            return False
+        return UserRole.objects.filter(
+            user=request.user,
+            role__name='Super-Admin'
+        ).exists()
 
-        # Opción 1: Usar UserRole (modelo intermedio)
-        user_roles = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
+
+class IsClientAdmin(BasePermission):
+    """Solo CLIENT_ADMIN - acceso completo operativo"""
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        return UserRole.objects.filter(
+            user=request.user,
+            role__name='Client-Admin'
+        ).exists()
+
+
+class IsClientAdminOrStaff(BasePermission):
+    """CLIENT_ADMIN o STAFF - operaciones básicas"""
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        return UserRole.objects.filter(
+            user=request.user,
+            role__name__in=['Client-Admin', 'Client-Staff']
+        ).exists()
+
+
+class IsEmployeeReadOnly(BasePermission):
+    """EMPLOYEE - solo lectura de su propio balance"""
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        # Solo métodos GET
+        if request.method not in ['GET', 'HEAD', 'OPTIONS']:
+            return False
+        return UserRole.objects.filter(
+            user=request.user,
+            role__name='Employee'
+        ).exists()
+
+
+class CanViewFinancialData(BasePermission):
+    """CLIENT_ADMIN y SUPER_ADMIN (solo lectura) pueden ver datos financieros"""
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
         
-        # Opción 2: Usar la relación directa many-to-many
-        # user_roles = request.user.roles.values_list('name', flat=True)
+        # SUPER_ADMIN solo lectura
+        if UserRole.objects.filter(user=request.user, role__name='Super-Admin').exists():
+            return request.method in ['GET', 'HEAD', 'OPTIONS']
         
-        return any(role in self.allowed_roles for role in user_roles)
+        # CLIENT_ADMIN acceso completo
+        return UserRole.objects.filter(
+            user=request.user,
+            role__name='Client-Admin'
+        ).exists()

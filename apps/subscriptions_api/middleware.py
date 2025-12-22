@@ -87,6 +87,18 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
         ).first()
         
         if user_subscription and user_subscription.end_date < timezone.now():
+            # TEMPORAL DEV-ONLY: Permitir CLIENT_ADMIN con tenant activo
+            # TODO: Remover en producción - solo para desarrollo
+            from apps.roles_api.models import UserRole
+            is_client_admin = UserRole.objects.filter(
+                user=request.user, 
+                role__name='Client-Admin'
+            ).exists()
+            
+            if is_client_admin and tenant.subscription_status == 'active':
+                # Permitir acceso para CLIENT_ADMIN con tenant activo
+                return None
+            
             # Marcar como expirada
             user_subscription.is_active = False
             user_subscription.save()

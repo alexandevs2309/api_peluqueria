@@ -1,43 +1,19 @@
 """
-Factory para calculadoras de impuestos por país
+Factory para calculadoras de impuestos por país - DEPRECATED
+Usar tax_calculators.py directamente
 """
-from .tax_calculator import DominicanTaxCalculator
+from .tax_calculators import TaxCalculatorFactory as NewFactory
 
+# Mantener compatibilidad hacia atrás
 class TaxCalculatorFactory:
-    """Factory para obtener calculadora de impuestos según país"""
-    
     @staticmethod
     def get_calculator(country_code: str = 'DO'):
-        """
-        Obtiene calculadora de impuestos según código de país
-        
-        Args:
-            country_code: Código ISO del país (ej: 'DO', 'US', 'MX')
-            
-        Returns:
-            Instancia de calculadora de impuestos
-        """
-        if country_code == 'DO':
-            return DominicanTaxCalculator()
-        
-        # Para países no soportados: sin descuentos legales
-        from .tax_calculator import NoTaxCalculator
-        return NoTaxCalculator()
+        return NewFactory.get_calculator(country_code)
     
     @staticmethod
     def get_supported_countries():
-        """Retorna países con reglas fiscales implementadas"""
-        return {
-            'DO': 'República Dominicana'
-        }
+        return NewFactory.get_supported_countries()
     
     @staticmethod
     def get_all_countries():
-        """Retorna todos los países (soportados + sin descuentos)"""
-        return {
-            'DO': 'República Dominicana (Completo)',
-            'US': 'Estados Unidos (Sin descuentos legales)',
-            'MX': 'México (Sin descuentos legales)',
-            'CO': 'Colombia (Sin descuentos legales)',
-            'ES': 'España (Sin descuentos legales)'
-        }
+        return NewFactory.get_country_tax_info()

@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from apps.audit_api.mixins import AuditLoggingMixin
 from .models import Invoice, PaymentAttempt
 from .serializers import InvoiceSerializer, PaymentAttemptSerializer
-from .permissions import IsOwnerOrAdmin
+from apps.auth_api.permissions import IsClientAdminOrStaff
 from rest_framework.response import Response
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
@@ -13,7 +13,7 @@ from apps.tenants_api.models import Tenant
 
 class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = InvoiceSerializer
-    permission_classes = [permissions.IsAuthenticated , IsOwnerOrAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsClientAdminOrStaff]
 
     def get_queryset(self):
         # SuperAdmin ve todas las facturas con relaciones optimizadas
@@ -97,7 +97,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
 class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = PaymentAttemptSerializer
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+    permission_classes = [permissions.IsAuthenticated, IsClientAdminOrStaff]
 
     def get_queryset(self):
         if self.request.user.is_superuser:

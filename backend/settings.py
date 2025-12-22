@@ -146,7 +146,8 @@ REST_FRAMEWORK = {
 STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef'),
 STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_1234567890abcdef'),
 
-GEO_LOCK_ENABLED = True
+GEO_LOCK_ENABLED = env.bool('GEO_LOCK_ENABLED', default=False)
+GEOIP_PATH = env('GEOIP_PATH', default=None)
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
