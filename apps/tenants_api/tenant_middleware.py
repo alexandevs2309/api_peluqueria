@@ -35,6 +35,11 @@ class TenantValidationMiddleware(MiddlewareMixin):
     
     def get_tenant_from_location(self, request):
         try:
+            # Verificar si las tablas existen antes de hacer queries
+            from django.db import connection
+            if 'tenants_api_tenant' not in connection.introspection.table_names():
+                return None
+                
             ip = self.get_client_ip(request)
             country = self.get_country_from_ip(ip)
             
@@ -47,7 +52,14 @@ class TenantValidationMiddleware(MiddlewareMixin):
                 return Tenant.objects.filter(name__icontains='Basic').first()
         except Exception as e:
             print(f"DEBUG - Error: {e}")
-            return Tenant.objects.first()
+            try:
+                # Verificar si las tablas existen antes de hacer queries
+                from django.db import connection
+                if 'tenants_api_tenant' not in connection.introspection.table_names():
+                    return None
+                return Tenant.objects.first()
+            except Exception:
+                return None
     
     def get_client_ip(self, request):
         # Obtener IP real del cliente

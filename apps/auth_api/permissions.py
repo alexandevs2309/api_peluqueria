@@ -15,7 +15,7 @@ class IsSuperAdmin(BasePermission):
             return False
         return UserRole.objects.filter(
             user=request.user,
-            role__name='Super-Admin'
+            role__name='SUPER_ADMIN'
         ).exists()
 
 
@@ -26,7 +26,7 @@ class IsClientAdmin(BasePermission):
             return False
         return UserRole.objects.filter(
             user=request.user,
-            role__name='Client-Admin'
+            role__name='CLIENT_ADMIN'
         ).exists()
 
 
@@ -37,7 +37,7 @@ class IsClientAdminOrStaff(BasePermission):
             return False
         return UserRole.objects.filter(
             user=request.user,
-            role__name__in=['Client-Admin', 'Client-Staff']
+            role__name__in=['CLIENT_ADMIN', 'CLIENT_STAFF']
         ).exists()
 
 
@@ -51,7 +51,7 @@ class IsEmployeeReadOnly(BasePermission):
             return False
         return UserRole.objects.filter(
             user=request.user,
-            role__name='Employee'
+            role__name='CLIENT_STAFF'
         ).exists()
 
 
@@ -62,11 +62,11 @@ class CanViewFinancialData(BasePermission):
             return False
         
         # SUPER_ADMIN solo lectura
-        if UserRole.objects.filter(user=request.user, role__name='Super-Admin').exists():
+        if UserRole.objects.filter(user=request.user, role__name='SUPER_ADMIN').exists():
             return request.method in ['GET', 'HEAD', 'OPTIONS']
         
         # CLIENT_ADMIN acceso completo
         return UserRole.objects.filter(
             user=request.user,
-            role__name='Client-Admin'
+            role__name='CLIENT_ADMIN'
         ).exists()

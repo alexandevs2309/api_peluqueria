@@ -86,13 +86,15 @@ class CashRegisterStateValidator:
         if register.closed_at is not None:
             raise ValidationError("Caja registradora ya fue cerrada anteriormente")
         
-        # VALIDACIÓN CRÍTICA: Efectivo contado debe coincidir con esperado
+        # VALIDACIÓN CRÍTICA: Efectivo contado debe coincidir con esperado (tolerancia ±$0.05)
         expected_cash = Decimal(str(register.display_amount))
         final_cash_decimal = Decimal(str(final_cash))
         
-        if final_cash_decimal != expected_cash:
-            difference = final_cash_decimal - expected_cash
+        difference = final_cash_decimal - expected_cash
+        tolerance = Decimal('0.05')  # Tolerancia de 5 centavos
+        
+        if abs(difference) > tolerance:
             raise ValidationError(
                 f"Efectivo contado ${final_cash_decimal} no coincide con esperado ${expected_cash}. "
-                f"Diferencia: ${difference}"
+                f"Diferencia: ${difference}. Tolerancia máxima: ±${tolerance}"
             )

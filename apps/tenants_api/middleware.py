@@ -48,13 +48,18 @@ class TenantMiddleware(MiddlewareMixin):
                 validated_token = jwt_auth.get_validated_token(token_str)
                 tenant_id = validated_token.get('tenant_id')
                 if tenant_id:
-                    tenant = Tenant.objects.get(id=tenant_id)
-                    request.tenant = tenant
+                    # Verificar si las tablas existen antes de hacer queries
+                    from django.db import connection
+                    if 'tenants_api_tenant' in connection.introspection.table_names():
+                        tenant = Tenant.objects.get(id=tenant_id)
+                        request.tenant = tenant
+                    else:
+                        request.tenant = None
                 else:
                     request.tenant = None
             else:
                 request.tenant = None
-        except (InvalidToken, TokenError, Tenant.DoesNotExist):
+        except (InvalidToken, TokenError, Tenant.DoesNotExist, Exception):
             return HttpResponseForbidden("Token o tenant inválido.")
         
         # Si no tenant desde JWT, fallback a usuario

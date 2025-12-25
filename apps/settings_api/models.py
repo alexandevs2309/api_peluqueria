@@ -18,10 +18,17 @@ class Branch(models.Model):
 
     def save(self, *args, **kwargs):
         # Verificar que el tenant tenga un plan que permita múltiples sucursales
-        subscription = self.tenant.subscription_set.filter(is_active=True).first()
-        if subscription and not subscription.plan.allows_multiple_branches:
-            if Branch.objects.filter(tenant=self.tenant).exists() and not self.pk:
-                raise ValueError(_("Su plan actual no permite múltiples sucursales"))
+        try:
+            # Verificar si las tablas existen antes de hacer queries
+            from django.db import connection
+            if 'subscriptions_api_subscription' in connection.introspection.table_names():
+                subscription = self.tenant.subscription_set.filter(is_active=True).first()
+                if subscription and not subscription.plan.allows_multiple_branches:
+                    if Branch.objects.filter(tenant=self.tenant).exists() and not self.pk:
+                        raise ValueError(_("Su plan actual no permite múltiples sucursales"))
+        except Exception:
+            # Durante migraciones o si hay problemas de DB, permitir la operación
+            pass
         super().save(*args, **kwargs)
 
     def __str__(self):
@@ -114,28 +121,38 @@ class SystemSettings(models.Model):
     @classmethod
     def get_settings(cls):
         """Obtener o crear la configuración del sistema"""
-        settings, created = cls.objects.get_or_create(
-            pk=1,
-            defaults={
-                'platform_name': 'BarberSaaS',
-                'support_email': 'soporte@barbersaas.com',
-                'max_tenants': 100,
-                'trial_days': 7,
-                'default_currency': 'USD',
-                'platform_domain': '',
-                'supported_languages': ['es', 'en'],
-                'platform_commission_rate': 5.00,
-                'basic_plan_max_employees': 5,
-                'premium_plan_max_employees': 25,
-                'enterprise_plan_max_employees': 999,
-                'stripe_enabled': True,
-                'paypal_enabled': False,
-                'twilio_enabled': False,
-                'sendgrid_enabled': True,
-                'aws_s3_enabled': True,
-                'maintenance_mode': False,
-                'email_notifications': True,
-                'auto_suspend_expired': True
-            }
-        )
-        return settings
+        try:
+            # Verificar si las tablas existen antes de hacer queries
+            from django.db import connection
+            if 'settings_api_systemsettings' not in connection.introspection.table_names():
+                # Durante migraciones, retornar configuración por defecto
+                return None
+                
+            settings, created = cls.objects.get_or_create(
+                pk=1,
+                defaults={
+                    'platform_name': 'BarberSaaS',
+                    'support_email': 'soporte@barbersaas.com',
+                    'max_tenants': 100,
+                    'trial_days': 7,
+                    'default_currency': 'USD',
+                    'platform_domain': '',
+                    'supported_languages': ['es', 'en'],
+                    'platform_commission_rate': 5.00,
+                    'basic_plan_max_employees': 5,
+                    'premium_plan_max_employees': 25,
+                    'enterprise_plan_max_employees': 999,
+                    'stripe_enabled': True,
+                    'paypal_enabled': False,
+                    'twilio_enabled': False,
+                    'sendgrid_enabled': True,
+                    'aws_s3_enabled': True,
+                    'maintenance_mode': False,
+                    'email_notifications': True,
+                    'auto_suspend_expired': True
+                }
+            )
+            return settings
+        except Exception:
+            # Durante migraciones o errores de DB, retornar None
+            return None

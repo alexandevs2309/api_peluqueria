@@ -1,4 +1,4 @@
-from django.db import models
+from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
@@ -170,11 +170,12 @@ class Tenant(models.Model):
         self.save(update_fields=['trial_notifications_sent'])
     
     def activate_subscription(self):
-        """Activar suscripción (después de pago)"""
-        self.subscription_status = 'active'
-        self.trial_end_date = None
-        self.trial_notifications_sent = {}
-        self.save()
+        """Activar suscripción (después de pago) - DEPRECATED: Usar SubscriptionActivationService"""
+        from apps.subscriptions_api.activation_service import SubscriptionActivationService
+        return SubscriptionActivationService.activate_subscription_after_payment(
+            user=self.owner,
+            payment_reference=f"tenant_activation_{self.id}"
+        )
 
     def __str__(self):
         return f"{self.name} ({self.subdomain})"

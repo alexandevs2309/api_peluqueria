@@ -7,25 +7,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         plans = [
             {
-                'name': 'free',
-                'description': 'Plan gratuito de prueba por 7 días',
-                'price': 0.00,
-                'duration_month': 0,  # 0 = días, no meses
-                'max_employees': 2,
-                'max_users': 3,
-                'features': {
-                    'appointments': True,
-                    'basic_reports': False,
-                    'inventory': False,
-                    'advanced_reports': False,
-                    'multi_location': False,
-                    'api_access': False,
-                    'custom_branding': False,
-                    'priority_support': False
-                },
-                'is_active': True
-            },
-            {
                 'name': 'basic',
                 'description': 'Plan básico para pequeñas barberías',
                 'price': 29.99,
