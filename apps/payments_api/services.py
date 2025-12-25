@@ -99,17 +99,13 @@ class OnboardingService:
             user.tenant = tenant
             user.save()
             
-            # 3. Crear suscripción
-            subscription = UserSubscription.objects.create(
+            # 4. Activar suscripción usando servicio centralizado
+            from apps.subscriptions_api.activation_service import SubscriptionActivationService
+            activation_result = SubscriptionActivationService.activate_subscription_after_payment(
                 user=user,
-                plan=plan,
-                is_active=True,
-                auto_renew=True
+                plan_id=plan_id,
+                payment_reference=str(payment.id)
             )
-            
-            # 4. Vincular pago con suscripción
-            payment.subscription = subscription
-            payment.save()
             
             # 5. Asignar rol Client-Admin
             from apps.roles_api.models import Role, UserRole
@@ -122,7 +118,7 @@ class OnboardingService:
             
             return {
                 'tenant': tenant,
-                'subscription': subscription,
+                'activation_result': activation_result,
                 'success': True
             }
             

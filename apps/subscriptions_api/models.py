@@ -41,6 +41,12 @@ class UserSubscription(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def save(self, *args, **kwargs):
+        # Enforce Tenant > UserSubscription hierarchy
+        if hasattr(self.user, 'tenant') and self.user.tenant:
+            tenant = self.user.tenant
+            if not tenant.is_active or tenant.subscription_status in ['suspended', 'cancelled']:
+                self.is_active = False
+        
         # Handle reactivation prevention
         if not self._state.adding:
             old = UserSubscription.objects.get(pk=self.pk)

@@ -46,9 +46,35 @@ class PaymentViewSet(viewsets.ModelViewSet):
         try:
             payment = self.get_object()
             
+            # Verificación de idempotencia
+            if payment.status == 'completed':
+                return Response({
+                    'success': True,
+                    'message': 'Payment already processed',
+                    'payment_id': payment.id
+                })
+            
             # Actualizar estado del pago
             payment.status = 'completed'
             payment.save()
+            
+            # Auditar confirmación de pago
+            from apps.audit_api.utils import create_audit_log
+            create_audit_log(
+                user=request.user,
+                action='PAYMENT_CONFIRMED',
+                description=f'Pago confirmado: ${payment.amount} - Plan: {payment.metadata.get("plan_name", "N/A")}',
+                content_object=payment,
+                source='SUBSCRIPTIONS',
+                extra_data={
+                    'payment_id': str(payment.id),
+                    'amount': str(payment.amount),
+                    'currency': payment.currency,
+                    'provider': payment.provider.name,
+                    'plan_id': payment.metadata.get('plan_id')
+                },
+                request=request
+            )
             
             # Completar onboarding automático
             result = OnboardingService.complete_subscription_purchase(payment.id)
@@ -60,7 +86,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
             return Response({
                 'success': True,
                 'tenant_id': result['tenant'].id,
-                'subscription_id': result['subscription'].id,
+                'activation_result': result['activation_result'],
                 'message': 'Subscription activated successfully'
             })
             
@@ -96,6 +122,11 @@ class StripeWebhookView(View):
                     payment = Payment.objects.get(
                         provider_payment_id=payment_intent['id']
                     )
+                    
+                    # Verificación de idempotencia
+                    if payment.status == 'completed':
+                        return HttpResponse(status=200)  # Ya procesado
+                    
                     payment.status = 'completed'
                     payment.save()
                     

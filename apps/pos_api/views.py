@@ -351,6 +351,17 @@ class SaleViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_409_CONFLICT
             )
         
+        # VALIDACIÓN DE SECUENCIA: Verificar que la última caja esté correctamente cerrada
+        last_register = CashRegister.objects.filter(
+            user=request.user
+        ).order_by('-opened_at').first()
+        
+        if last_register and last_register.closed_at is None:
+            return Response(
+                {'error': 'La caja anterior no está correctamente cerrada. Completa el cierre antes de abrir una nueva.'},
+                status=status.HTTP_409_CONFLICT
+            )
+        
         # Cerrar cualquier caja abierta anterior (por seguridad)
         CashRegister.objects.filter(
             user=request.user, 

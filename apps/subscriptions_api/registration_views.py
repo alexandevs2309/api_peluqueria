@@ -105,6 +105,23 @@ def register_with_plan(request):
                     )
                     print(f"Usuario actualizado con tenant y rol Client-Admin")
                     
+                    # Crear UserRole contextual con tenant
+                    client_admin_role = Role.objects.get(name='CLIENT_ADMIN')
+                    UserRole.objects.create(
+                        user=user,
+                        role=client_admin_role,
+                        tenant=tenant
+                    )
+                    print(f"UserRole contextual creado: user={user.id}, role=CLIENT_ADMIN, tenant={tenant.id}")
+                    
+                    # Disparar evento de dominio
+                    from apps.tenants_api.events import tenant_activated
+                    tenant_activated.send(
+                        sender=self.__class__,
+                        tenant=tenant,
+                        owner=user
+                    )
+                    
                     # Crear suscripción del usuario con trial
                     trial_end = timezone.now() + timezone.timedelta(days=7)
                     user_subscription = UserSubscription.objects.create(

@@ -479,17 +479,19 @@ class RenewSubscriptionView(APIView):
         payment_successful = True
         
         if payment_successful:
-            # Activar nueva suscripción
-            tenant.subscription_plan = plan
-            tenant.subscription_status = 'active'
-            tenant.trial_end_date = None
-            tenant.save()
+            # Activar nueva suscripción usando servicio centralizado
+            from apps.subscriptions_api.activation_service import SubscriptionActivationService
+            result = SubscriptionActivationService.activate_subscription_after_payment(
+                user=request.user,
+                plan_id=plan_id,
+                payment_reference=f"renewal_{tenant.id}"
+            )
             
             return Response({
                 'message': 'Subscription renewed successfully',
-                'plan': plan.name,
-                'status': tenant.subscription_status,
-                'access_level': tenant.get_access_level()
+                'plan': result['plan'],
+                'status': result['subscription_status'],
+                'access_level': result['access_level']
             })
         else:
             return Response({'error': 'Payment failed'}, status=400)

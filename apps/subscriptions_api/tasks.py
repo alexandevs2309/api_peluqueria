@@ -2,6 +2,7 @@ from celery import shared_task
 from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
+from django.db import transaction
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import UserSubscription
 import logging
@@ -25,16 +26,17 @@ def check_trial_expirations():
     
     suspended_count = 0
     for tenant in expired_trials:
-        # Suspender tenant
-        tenant.subscription_status = 'suspended'
-        tenant.is_active = False
-        tenant.save()
-        
-        # Desactivar suscripción del usuario
-        UserSubscription.objects.filter(
-            user=tenant.owner,
-            is_active=True
-        ).update(is_active=False)
+        with transaction.atomic():
+            # Suspender tenant
+            tenant.subscription_status = 'suspended'
+            tenant.is_active = False
+            tenant.save()
+            
+            # Desactivar suscripción del usuario
+            UserSubscription.objects.filter(
+                user=tenant.owner,
+                is_active=True
+            ).update(is_active=False)
         
         # Enviar email de notificación
         send_trial_expired_email(tenant)

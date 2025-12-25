@@ -7,12 +7,17 @@ from apps.audit_api.models import AuditLog
 from apps.settings_api.utils import validate_tenant_limit
 User = get_user_model()
 
+from apps.roles_api.models import UserRole
+
 class IsSuperAdmin(permissions.BasePermission):
     def has_permission(self, request, view):
         return (
             request.user and 
             request.user.is_authenticated and 
-            request.user.roles.filter(name='Super-Admin').exists()
+            UserRole.objects.filter(
+                user=request.user,
+                role__name='SUPER_ADMIN'
+            ).exists()
         )
 
 class TenantViewSet(viewsets.ModelViewSet):
@@ -29,7 +34,10 @@ class TenantViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         # SuperAdmin ve todos los tenants
-        if self.request.user.roles.filter(name='Super-Admin').exists():
+        if UserRole.objects.filter(
+            user=self.request.user,
+            role__name='SUPER_ADMIN'
+        ).exists():
             return Tenant.objects.all()
         # Otros usuarios no tienen acceso
         return Tenant.objects.none()
@@ -79,6 +87,15 @@ class TenantViewSet(viewsets.ModelViewSet):
             )
         tenant.is_active = True
         tenant.save()
+        
+        # Disparar evento de dominio para activación
+        from apps.tenants_api.events import tenant_activated
+        tenant_activated.send(
+            sender=self.__class__,
+            tenant=tenant,
+            owner=tenant.owner
+        )
+        
         self._create_audit_log(request.user, "Activated tenant", tenant)
         serializer = self.get_serializer(tenant)
         return response.Response(serializer.data, status=status.HTTP_200_OK)

@@ -158,14 +158,14 @@ def create_audit_log(user, action, description, content_object=None,
     # Si se pasa request, extraer IP y user agent automáticamente
     if request:
         ip_address = ip_address or get_client_ip(request)
-        user_agent = user_agent or request.META.get('HTTP_USER_AGENT', '')
+        user_agent = user_agent or request.META.get('HTTP_USER_AGENT', '')[:255]  # Truncar a 255 chars
     
     kwargs = {
         'user': user,
         'action': action,
         'description': description,
         'ip_address': ip_address,
-        'user_agent': user_agent or '',
+        'user_agent': (user_agent or '')[:255],  # Truncar a 255 chars
         'source': source,
     }
     

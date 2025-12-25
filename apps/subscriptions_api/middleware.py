@@ -81,35 +81,32 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 }, status=402)  # Payment Required
             
         # Validar suscripciones de usuario expiradas
-        user_subscription = UserSubscription.objects.filter(
-            user=request.user, 
-            is_active=True
-        ).first()
-        
-        if user_subscription and user_subscription.end_date < timezone.now():
-            # TEMPORAL DEV-ONLY: Permitir CLIENT_ADMIN con tenant activo
-            # TODO: Remover en producción - solo para desarrollo
-            from apps.roles_api.models import UserRole
-            is_client_admin = UserRole.objects.filter(
-                user=request.user, 
-                role__name='Client-Admin'
-            ).exists()
-            
-            if is_client_admin and tenant.subscription_status == 'active':
-                # Permitir acceso para CLIENT_ADMIN con tenant activo
+        try:
+            # Verificar si las tablas existen antes de hacer queries
+            from django.db import connection
+            if 'subscriptions_api_usersubscription' not in connection.introspection.table_names():
                 return None
+                
+            user_subscription = UserSubscription.objects.filter(
+                user=request.user, 
+                is_active=True
+            ).first()
             
-            # Marcar como expirada
-            user_subscription.is_active = False
-            user_subscription.save()
-            
-            return JsonResponse({
-                'error': 'Subscription expired',
-                'code': 'SUBSCRIPTION_EXPIRED',
-                'expired_date': user_subscription.end_date.isoformat(),
-                'action_required': 'renew_subscription',
-                'renewal_url': '/client/payment'
-            }, status=402)
+            if user_subscription and user_subscription.end_date < timezone.now():
+                # Marcar como expirada
+                user_subscription.is_active = False
+                user_subscription.save()
+                
+                return JsonResponse({
+                    'error': 'Subscription expired',
+                    'code': 'SUBSCRIPTION_EXPIRED',
+                    'expired_date': user_subscription.end_date.isoformat(),
+                    'action_required': 'renew_subscription',
+                    'renewal_url': '/client/payment'
+                }, status=402)
+        except Exception:
+            # Durante migraciones, permitir acceso
+            pass
         
         # Validar plan activo
         if not tenant.subscription_plan:

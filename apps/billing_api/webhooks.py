@@ -1,3 +1,4 @@
+from django.db import transaction
 import stripe
 import json
 from django.http import HttpResponse
@@ -27,6 +28,31 @@ def stripe_webhook(request):
         return HttpResponse(status=400)
     except stripe.error.SignatureVerificationError:
         return HttpResponse(status=400)
+
+    # Verificación de idempotencia usando WebhookEvent
+    from apps.payments_api.models import WebhookEvent, PaymentProvider
+    
+    event_id = event.get('id')
+    if event_id:
+        provider = PaymentProvider.objects.filter(name='stripe').first()
+        if provider:
+            webhook_event, created = WebhookEvent.objects.get_or_create(
+                provider=provider,
+                event_id=event_id,
+                defaults={
+                    'event_type': event['type'],
+                    'data': event,
+                    'processed': False
+                }
+            )
+            
+            # Si ya fue procesado, retornar sin procesar
+            if not created and webhook_event.processed:
+                return HttpResponse(status=200)
+            
+            # Marcar como procesado antes de procesar
+            webhook_event.processed = True
+            webhook_event.save()
 
     # Manejar eventos
     if event['type'] == 'invoice.payment_succeeded':
@@ -64,8 +90,31 @@ def handle_payment_succeeded(invoice_data):
             if hasattr(user, 'tenant') and user.tenant:
                 tenant = user.tenant
                 if tenant.subscription_status == 'suspended':
-                    tenant.subscription_status = 'active'
-                    tenant.save()
+                    with transaction.atomic():
+                        tenant.subscription_status = 'active'
+                        tenant.save()
+                        
+                        # Activar UserSubscription del owner
+                        UserSubscription.objects.filter(
+                            user=tenant.owner,
+                            is_active=False
+                        ).update(is_active=True)
+                        
+                        # Auditar reactivación por webhook
+                        from apps.audit_api.utils import create_audit_log
+                        create_audit_log(
+                            user=user,
+                            action='TENANT_ACTIVATED',
+                            description=f'Tenant reactivado por webhook de Stripe - Factura: {invoice_data.get("id")}',
+                            content_object=tenant,
+                            source='SUBSCRIPTIONS',
+                            extra_data={
+                                'tenant_id': tenant.id,
+                                'invoice_id': invoice_data.get('id'),
+                                'amount_paid': invoice_data['amount_paid'] / 100,
+                                'webhook_event': 'invoice.payment_succeeded'
+                            }
+                        )
                     
     except User.DoesNotExist:
         pass
@@ -94,8 +143,15 @@ def handle_payment_failed(invoice_data):
             
             if failed_attempts >= 3 and hasattr(user, 'tenant'):
                 tenant = user.tenant
-                tenant.subscription_status = 'suspended'
-                tenant.save()
+                with transaction.atomic():
+                    tenant.subscription_status = 'suspended'
+                    tenant.save()
+                    
+                    # Desactivar UserSubscription
+                    UserSubscription.objects.filter(
+                        user=tenant.owner,
+                        is_active=True
+                    ).update(is_active=False)
                 
     except User.DoesNotExist:
         pass
@@ -116,8 +172,9 @@ def handle_subscription_cancelled(subscription_data):
             # Actualizar tenant
             if hasattr(user, 'tenant'):
                 tenant = user.tenant
-                tenant.subscription_status = 'cancelled'
-                tenant.save()
+                with transaction.atomic():
+                    tenant.subscription_status = 'cancelled'
+                    tenant.save()
                 
     except User.DoesNotExist:
         pass
