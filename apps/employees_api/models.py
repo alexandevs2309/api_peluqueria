@@ -3,7 +3,7 @@ from django.conf import settings
 from apps.services_api.models import Service
 
 # Importar modelos de ganancias
-from .earnings_models import Earning, FortnightSummary
+from .earnings_models import Earning
 from .payroll_models import PayrollPayment, PayrollPaymentSale
 
 class Employee(models.Model):

@@ -5,7 +5,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from django.utils import timezone
 from django.db import transaction
 from .models import Employee
-from .earnings_models import FortnightSummary, PaymentReceipt
+# ARCHIVO LEGACY - FortnightSummary eliminado
+# Usar payroll_api.PayrollSettlement en su lugar
 from .payroll_calculator import calculate_net_salary, get_payroll_summary
 
 class PayrollService:

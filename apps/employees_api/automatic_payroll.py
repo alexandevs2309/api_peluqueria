@@ -5,7 +5,8 @@ from django.utils import timezone
 from django.db import transaction
 from decimal import Decimal
 from .models import Employee
-from .earnings_models import FortnightSummary, PaymentReceipt
+# ARCHIVO LEGACY - FortnightSummary eliminado
+# Usar payroll_api.PayrollSettlement en su lugar
 from .tax_calculator_factory import TaxCalculatorFactory
 import logging
 

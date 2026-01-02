@@ -163,7 +163,8 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
         # Campos permitidos para configuración de pagos
         allowed_fields = [
             'salary_type', 'commission_percentage', 'contractual_monthly_salary',
-            'payment_frequency', 'apply_afp', 'apply_sfs', 'apply_isr'
+            'payment_frequency', 'commission_payment_mode', 'commission_on_demand_since',
+            'apply_afp', 'apply_sfs', 'apply_isr'
         ]
         
         # Filtrar solo campos permitidos

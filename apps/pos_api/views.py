@@ -8,6 +8,7 @@ from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from django.db import transaction
 from decimal import Decimal, InvalidOperation
+from datetime import timedelta
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
 from .tenant_utils import get_tenant_sales_filter, validate_tenant_ownership
@@ -30,21 +31,89 @@ class SaleViewSet(viewsets.ModelViewSet):
     pagination_class = SalePagination
     
     def _create_employee_earning(self, sale, employee_user):
-        """Dispara creación asíncrona de ganancia - Celery es la única autoridad"""
+        """Crear earnings síncrono usando el empleado específico de cada servicio"""
         from apps.employees_api.models import Employee
-        from apps.employees_api.tasks import create_earning_from_sale
+        from apps.employees_api.earnings_models import Earning
+        from apps.services_api.models import ServiceEmployee
+        from decimal import Decimal
         
-        try:
-            employee = Employee.objects.get(user=employee_user, tenant=sale.user.tenant)
-            
-            # Crear external_id idempotente
-            external_id = f"sale-{sale.id}-{sale.date_time.strftime('%Y%m%d%H%M%S')}"
-            
-            # Disparar tarea asíncrona - Celery marcará earnings_generated al éxito
-            create_earning_from_sale.delay(sale.id, external_id)
-            
-        except Employee.DoesNotExist:
-            pass
+        # Iterar por cada servicio en la venta
+        for detail in sale.details.all():
+            if detail.item_type != 'service':  # Solo servicios generan comisión
+                continue
+                
+            try:
+                # NUEVO: Usar el empleado persistido en el detail como fuente de verdad
+                employee = None
+                
+                if detail.employee:
+                    # Usar empleado específico del servicio (fuente de verdad)
+                    employee = detail.employee
+                else:
+                    # Fallback: buscar en ServiceEmployee
+                    service_employee = ServiceEmployee.objects.filter(
+                        service_id=detail.object_id,
+                        employee__tenant=sale.user.tenant,
+                        employee__is_active=True,
+                        employee__salary_type__in=['commission', 'mixed'],
+                        employee__commission_payment_mode='PER_PERIOD'
+                    ).first()
+                    
+                    if service_employee:
+                        employee = service_employee.employee
+                    elif sale.employee:
+                        # Último fallback: empleado general de la venta
+                        employee = sale.employee
+                    else:
+                        continue
+                
+                # Validar configuración del empleado
+                if employee.salary_type not in ['commission', 'mixed']:
+                    continue
+                if employee.commission_payment_mode != 'PER_PERIOD':
+                    continue
+                
+                # Calcular comisión para este servicio específico
+                service_amount = detail.price * detail.quantity
+                
+                # Usar porcentaje personalizado del ServiceEmployee o el general del Employee
+                service_employee_relation = ServiceEmployee.objects.filter(
+                    service_id=detail.object_id,
+                    employee=employee
+                ).first()
+                
+                commission_percentage = (
+                    service_employee_relation.commission_percentage 
+                    if service_employee_relation and service_employee_relation.commission_percentage 
+                    else employee.commission_percentage
+                )
+                
+                commission = service_amount * (commission_percentage / 100)
+                
+                if commission > 0:
+                    # Crear external_id idempotente por servicio
+                    external_id = f"sale-{sale.id}-service-{detail.object_id}-{sale.date_time.strftime('%Y%m%d%H%M%S')}"
+                    
+                    # Crear earning individual por servicio
+                    Earning.objects.create(
+                        employee=employee,
+                        sale=sale,
+                        amount=commission,
+                        earning_type='commission',
+                        percentage=commission_percentage,
+                        description=f"Comisión {detail.name} - venta #{sale.id}",
+                        external_id=external_id,
+                        created_by=sale.user
+                    )
+                    
+            except Exception as e:
+                # Log error pero continuar con otros servicios
+                logger.warning(f"Error creando earning para servicio {detail.object_id}: {str(e)}")
+                continue
+        
+        # Marcar que se generaron earnings
+        sale.earnings_generated = True
+        sale.save(update_fields=['earnings_generated'])
 
     def create(self, request, *args, **kwargs):
         logger.info(f"Creating sale for user {request.user}")
@@ -95,74 +164,6 @@ class SaleViewSet(viewsets.ModelViewSet):
         except (InvalidOperation, TypeError):
             raise serializers.ValidationError("Valores inválidos para cantidad o precio")
     
-    def _get_or_create_active_period(self, employee):
-        """Obtiene o crea el período activo para el empleado
-        
-        REGLA DE NEGOCIO: Si el período calculado por fecha ya está pagado,
-        asignar automáticamente al siguiente período abierto.
-        """
-        from apps.employees_api.earnings_models import FortnightSummary
-        from apps.employees_api.period_utils import get_current_period_for_employee
-        
-        # 1. Calcular período según fecha actual y frecuencia del empleado
-        current_period_info = get_current_period_for_employee(employee)
-        year = current_period_info['year']
-        period_index = current_period_info['period_index']
-        
-        # 2. Verificar si el período calculado existe y está pagado
-        calculated_period = FortnightSummary.objects.filter(
-            employee=employee,
-            fortnight_year=year,
-            fortnight_number=period_index
-        ).first()
-        
-        # 3. Si el período calculado NO está pagado, usarlo
-        if calculated_period and not calculated_period.is_paid:
-            return calculated_period
-        
-        # 4. Si no existe el período calculado, crearlo
-        if not calculated_period:
-            period, created = FortnightSummary.objects.get_or_create(
-                employee=employee,
-                fortnight_year=year,
-                fortnight_number=period_index,
-                defaults={
-                    'total_earnings': 0,
-                    'total_services': 0,
-                    'is_paid': False
-                }
-            )
-            return period
-        
-        # 5. El período calculado YA ESTÁ PAGADO - buscar siguiente período abierto
-        logger.info(f"Período {year}/{period_index} ya pagado para {employee.user.full_name}. Buscando siguiente período.")
-        
-        # Buscar el siguiente período no pagado
-        next_period_index = period_index + 1
-        next_year = year
-        
-        # Ajustar año si es necesario (después de quincena 24)
-        if next_period_index > 24:
-            next_year += 1
-            next_period_index = 1
-        
-        # Crear o obtener el siguiente período
-        next_period, created = FortnightSummary.objects.get_or_create(
-            employee=employee,
-            fortnight_year=next_year,
-            fortnight_number=next_period_index,
-            defaults={
-                'total_earnings': 0,
-                'total_services': 0,
-                'is_paid': False
-            }
-        )
-        
-        if created:
-            logger.info(f"Creado nuevo período {next_year}/{next_period_index} para {employee.user.full_name}")
-        
-        return next_period
-
     @transaction.atomic
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
@@ -226,16 +227,10 @@ class SaleViewSet(viewsets.ModelViewSet):
             except (Employee.DoesNotExist, ValueError) as e:
                 raise serializers.ValidationError(f"Empleado inválido: {str(e)}")
         
-        # Obtener o crear período activo para el empleado
-        active_period = None
-        if sale_employee:
-            active_period = self._get_or_create_active_period(sale_employee)
-        
         # Guardar venta - asignar al empleado que realizó el servicio
         sale = serializer.save(
             user=self.request.user,  # Usuario que registra la venta
             employee=sale_employee,  # Empleado que realizó el servicio
-            period=active_period,    # Período activo
             total=total_with_discount,
             status='completed',  # Marcar como completada por defecto
             closed=False,  # Nueva venta no está cerrada
@@ -288,17 +283,15 @@ class SaleViewSet(viewsets.ModelViewSet):
                     appointment.client.save()
                     
                 # Crear ganancia automática para el empleado
-                if sale_employee and sale.can_generate_earnings:
-                    self._create_employee_earning(sale, sale_employee.user)
-                    # NO marcar earnings_generated - Celery lo hará al confirmar éxito
+                if sale.can_generate_earnings:
+                    self._create_employee_earning(sale, None)
                     
             except Appointment.DoesNotExist:
                 pass
         
-        # Si no hay cita pero hay empleado asignado, crear ganancia
-        elif sale_employee and sale.can_generate_earnings:
-            self._create_employee_earning(sale, sale_employee.user)
-            # NO marcar earnings_generated - Celery lo hará al confirmar éxito
+        # Si no hay cita pero hay servicios, crear ganancias
+        elif sale.can_generate_earnings:
+            self._create_employee_earning(sale, None)
        
             
 

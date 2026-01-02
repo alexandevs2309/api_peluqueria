@@ -1,0 +1,1 @@
+# Payroll API - Dominio de nómina coherente

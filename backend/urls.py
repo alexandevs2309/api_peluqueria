@@ -37,6 +37,7 @@ urlpatterns = [
         path('appointments/', include('apps.appointments_api.urls')),
         path('services/', include('apps.services_api.urls')),
         path('employees/', include('apps.employees_api.urls')),
+        path('payroll/', include('apps.payroll_api.urls')),  # Nuevo módulo de nómina
         path('pos/', include('apps.pos_api.urls')),
         path('inventory/', include('apps.inventory_api.urls')),
         path('reports/', include('apps.reports_api.urls')),

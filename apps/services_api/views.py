@@ -3,8 +3,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
-from .models import Service
-from .serializers import ServiceSerializer
+from .models import Service, ServiceCategory
+from .serializers import ServiceSerializer, ServiceCategorySerializer
+
+class ServiceCategoryViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = ServiceCategory.objects.filter(is_active=True)
+    serializer_class = ServiceCategorySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    ordering = ['name']
 
 class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = ServiceSerializer
@@ -21,7 +27,7 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     ordering = ['name']
 
     def get_queryset(self):
-        return Service.objects.filter(tenant=self.request.user.tenant)
+        return Service.objects.filter(tenant=self.request.user.tenant).prefetch_related('categories')
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.user.tenant)

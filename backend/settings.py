@@ -67,6 +67,7 @@ INSTALLED_APPS = [
     'apps.auth_api',
     'apps.clients_api',
     'apps.employees_api',
+    'apps.payroll_api',  # Nuevo módulo de nómina
     'apps.services_api',
     'apps.inventory_api',
     'apps.pos_api',

@@ -10,12 +10,12 @@ def employee_pending_payments(request, employee_id):
     try:
         employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
         
-        # Buscar ventas pendientes
+        # Buscar ventas pendientes (sin earnings generados)
         from apps.pos_api.models import Sale
         pending_sales = Sale.objects.filter(
             employee=employee,
             status='completed',
-            period__isnull=True
+            earnings_generated=False
         ).order_by('date_time')
         
         sales_data = []

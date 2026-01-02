@@ -24,7 +24,9 @@ class PayrollPayment(models.Model):
         ('commission', 'Comisión'),
         ('mixed', 'Mixto'),
         ('bonus', 'Bono'),
-        ('adjustment', 'Ajuste')
+        ('adjustment', 'Ajuste'),
+        ('SCHEDULED', 'Pago Programado'),
+        ('PAYROLL', 'Nómina')
     ]
     
     PAYMENT_METHOD_CHOICES = [
