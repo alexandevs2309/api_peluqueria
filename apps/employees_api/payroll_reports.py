@@ -4,7 +4,8 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import calendar
 from .models import Employee
-from .earnings_models import FortnightSummary
+# ARCHIVO LEGACY - FortnightSummary eliminado
+# Usar payroll_api.PayrollSettlement en su lugar
 from .advance_loans import AdvanceLoan
 
 class PayrollReportGenerator:

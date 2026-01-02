@@ -125,7 +125,8 @@ class LoanPayment(models.Model):
     payment_number = models.IntegerField(validators=[MinValueValidator(1)])
     
     # Referencia al pago de nómina (mantener compatibilidad)
-    payroll_payment = models.ForeignKey('FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True)
+    # LEGACY: Relación con FortnightSummary eliminada
+    # payroll_payment = models.ForeignKey('FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     

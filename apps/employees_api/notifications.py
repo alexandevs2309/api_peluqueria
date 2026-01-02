@@ -5,7 +5,8 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from celery import shared_task
 from .models import Employee
-from .earnings_models import FortnightSummary
+# ARCHIVO LEGACY - FortnightSummary eliminado
+# Usar payroll_api.PayrollSettlement en su lugar
 from .advance_loans import AdvanceLoan
 
 class PayrollNotificationService:

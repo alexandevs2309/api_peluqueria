@@ -17,7 +17,8 @@ class Sale(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales', null=True, blank=True)
     employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
-    period = models.ForeignKey('employees_api.FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
+    # LEGACY: Relación con FortnightSummary eliminada - usar PayrollSettlement
+    # period = models.ForeignKey('employees_api.FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     date_time = models.DateTimeField(default=timezone.now)
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -109,6 +110,16 @@ class SaleDetail(models.Model):
     content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=False, validators=[])
     object_id = models.PositiveIntegerField(null=False, blank=False)
     content_object = GenericForeignKey('content_type', 'object_id')
+    
+    # NUEVO: Empleado que ejecuta este servicio específico
+    employee = models.ForeignKey(
+        'employees_api.Employee', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='service_details',
+        help_text="Empleado que ejecuta este servicio específico"
+    )
 
     def clean(self):
         from django.core.exceptions import ValidationError

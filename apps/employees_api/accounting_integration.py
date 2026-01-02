@@ -4,7 +4,8 @@ from decimal import Decimal
 from datetime import datetime
 import json
 from .models import Employee
-from .earnings_models import FortnightSummary
+# ARCHIVO LEGACY - FortnightSummary eliminado
+# Usar payroll_api.PayrollSettlement en su lugar
 
 class AccountingEntry(models.Model):
     ENTRY_TYPES = [

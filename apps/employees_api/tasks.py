@@ -71,6 +71,12 @@ def create_earning_from_sale(self, sale_id, external_id):
                     logger.info(f"Earning creado: {earning.id} por ${earning_amount}")
                     # SOLO Celery marca como generado tras éxito confirmado
                     sale.mark_earnings_generated()
+                    
+                    # Emitir evento en tiempo real
+                    from .events import EarningEventService
+                    event_service = EarningEventService()
+                    event_service.emit_earning_created(earning)
+                    
                     return {'status': 'created', 'earning_id': earning.id, 'amount': float(earning_amount)}
                 else:
                     logger.info(f"Earning ya existía: {earning.id}")

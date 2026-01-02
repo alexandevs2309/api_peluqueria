@@ -15,13 +15,35 @@ class SaleDetailSerializer(serializers.ModelSerializer):
     item_type = serializers.SerializerMethodField()
     # Field to specify the type of content ('service' or 'product')
     content_type = serializers.CharField(help_text="Type of item being sold (service/product)")
+    # NUEVO: Campo para el empleado que ejecuta este servicio
+    employee_id = serializers.IntegerField(required=False, allow_null=True, help_text="ID del empleado que ejecuta este servicio")
     
     class Meta:
         model = SaleDetail
-        fields = ['id', 'content_type', 'object_id', 'name', 'quantity', 'price', 'item_type']
+        fields = ['id', 'content_type', 'object_id', 'name', 'quantity', 'price', 'item_type', 'employee_id']
         
     def get_item_type(self, obj):
         return obj.content_type.model
+    
+    def validate_employee_id(self, value):
+        """Validar que el empleado pertenezca al tenant y sea activo"""
+        if value is None:
+            return value
+            
+        from apps.employees_api.models import Employee
+        from .tenant_utils import validate_tenant_ownership
+        
+        try:
+            employee = Employee.objects.get(id=value, is_active=True)
+            # Validar tenant ownership
+            request = self.context.get('request')
+            if request and request.user:
+                validate_tenant_ownership(request.user, employee=employee)
+            return value
+        except Employee.DoesNotExist:
+            raise serializers.ValidationError("Empleado no encontrado o inactivo")
+        except Exception as e:
+            raise serializers.ValidationError(f"Error validando empleado: {str(e)}")
 
 class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
@@ -132,7 +154,19 @@ class SaleSerializer(serializers.ModelSerializer):
                 content_type = ContentType.objects.get(app_label='inventory_api', model='product')
             
             detail['content_type'] = content_type
-            obj = SaleDetail.objects.create(sale=sale, **detail)
+            
+            # NUEVO: Asignar empleado si se proporciona employee_id
+            employee_id = detail.pop('employee_id', None)
+            employee = None
+            if employee_id:
+                from apps.employees_api.models import Employee
+                try:
+                    employee = Employee.objects.get(id=employee_id, is_active=True)
+                    validate_tenant_ownership(user, employee=employee)
+                except Employee.DoesNotExist:
+                    raise serializers.ValidationError(f"Empleado {employee_id} no encontrado")
+            
+            obj = SaleDetail.objects.create(sale=sale, employee=employee, **detail)
             
             # Lógica de stock para productos con concurrencia segura
             if obj.content_type.model == 'product':
