@@ -171,136 +171,58 @@ class PayrollReportViewSet(viewsets.ViewSet):
     
     @action(detail=False, methods=['get'])
     def monthly_summary(self, request):
-        """Resumen mensual de nómina"""
-        year = int(request.GET.get('year', timezone.now().year))
-        month = int(request.GET.get('month', timezone.now().month))
-        
-        report = PayrollReportGenerator.monthly_payroll_summary(
-            year, month, request.user.tenant
-        )
-        
-        return Response(report)
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)
     
     @action(detail=False, methods=['get'])
     def employee_annual(self, request):
-        """Reporte anual de empleado"""
-        employee_id = request.GET.get('employee_id')
-        year = int(request.GET.get('year', timezone.now().year))
-        
-        if not employee_id:
-            return Response({'error': 'employee_id requerido'}, status=400)
-        
-        try:
-            employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
-            report = PayrollReportGenerator.employee_annual_report(employee_id, year)
-            return Response(report)
-        except Employee.DoesNotExist:
-            return Response({'error': 'Empleado no encontrado'}, status=404)
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)
     
     @action(detail=False, methods=['get'])
     def tax_compliance(self, request):
-        """Reporte de cumplimiento fiscal"""
-        year = int(request.GET.get('year', timezone.now().year))
-        month = int(request.GET.get('month', timezone.now().month))
-        
-        report = PayrollReportGenerator.tax_compliance_report(
-            year, month, request.user.tenant
-        )
-        
-        return Response(report)
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)
     
     @action(detail=False, methods=['get'])
     def loans_summary(self, request):
-        """Resumen de préstamos"""
-        status_filter = request.GET.get('status')
-        
-        report = PayrollReportGenerator.loans_report(
-            request.user.tenant, status_filter
-        )
-        
-        return Response(report)
+        """LEGACY: Usar AdvanceLoanViewSet.list()"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/employees/loans/'
+        }, status=410)
 
 class AccountingViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
     
     def list(self, request):
-        """Listar asientos contables"""
-        entries = AccountingEntry.objects.filter(
-            tenant=request.user.tenant.name
-        ).order_by('-entry_date')[:100]
-        
-        data = []
-        for entry in entries:
-            data.append({
-                'id': entry.id,
-                'entry_type': entry.get_entry_type_display(),
-                'reference_id': entry.reference_id,
-                'entry_date': entry.entry_date,
-                'description': entry.description,
-                'debit_account': entry.debit_account,
-                'credit_account': entry.credit_account,
-                'amount': float(entry.amount),
-                'exported': entry.exported
-            })
-        
-        return Response({'entries': data})
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)
     
     @action(detail=False, methods=['post'])
     def export_quickbooks(self, request):
-        """Exportar a QuickBooks"""
-        start_date = request.data.get('start_date')
-        end_date = request.data.get('end_date')
-        
-        if not start_date or not end_date:
-            return Response({'error': 'Fechas requeridas'}, status=400)
-        
-        try:
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-            
-            iif_content = AccountingIntegrator.export_to_quickbooks(
-                request.user.tenant.name, start_date, end_date
-            )
-            
-            return Response({
-                'message': 'Exportación completada',
-                'iif_content': iif_content
-            })
-            
-        except ValueError:
-            return Response({'error': 'Formato de fecha inválido'}, status=400)
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)
     
     @action(detail=False, methods=['get'])
     def trial_balance(self, request):
-        """Balance de comprobación"""
-        date_str = request.GET.get('date', timezone.now().date().isoformat())
-        
-        try:
-            date = datetime.strptime(date_str, '%Y-%m-%d').date()
-            balance = AccountingIntegrator.generate_trial_balance(
-                request.user.tenant.name, date
-            )
-            
-            return Response({'trial_balance': balance})
-            
-        except ValueError:
-            return Response({'error': 'Formato de fecha inválido'}, status=400)
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)
     
     @action(detail=False, methods=['post'])
     def generate_employer_contributions(self, request):
-        """Generar contribuciones patronales"""
-        year = int(request.data.get('year', timezone.now().year))
-        month = int(request.data.get('month', timezone.now().month))
-        
-        try:
-            entries = AccountingIntegrator.create_employer_contribution_entries(
-                request.user.tenant.name, month, year
-            )
-            
-            return Response({
-                'message': f'Generadas {len(entries)} contribuciones patronales',
-                'entries_count': len(entries)
-            })
-            
-        except Exception as e:
-            return Response({'error': str(e)}, status=500)
+        """LEGACY: Usar payroll_api.PayrollSettlement"""
+        return Response({
+            'error': 'Endpoint legacy deshabilitado - usar /api/payroll/settlements/'
+        }, status=410)

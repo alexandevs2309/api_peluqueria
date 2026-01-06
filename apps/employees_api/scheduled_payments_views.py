@@ -58,16 +58,11 @@ def pay_scheduled_payroll(request):
                 is_active=True
             )
             
-            # Validar período usando FortnightSummary (estructura actual)
-            try:
-                period = FortnightSummary.objects.select_for_update().get(
-                    id=period_id,
-                    employee=employee
-                )
-                year = period.fortnight_year
-                fortnight = period.fortnight_number
-            except FortnightSummary.DoesNotExist:
-                return Response({'error': 'Período no encontrado'}, status=404)
+            # ARCHIVO LEGACY - FortnightSummary eliminado
+            # Usar payroll_api.PayrollSettlement en su lugar
+            return Response({
+                'error': 'Endpoint legacy deshabilitado - usar payroll_api.PayrollSettlement'
+            }, status=410)  # Gone
             
             # Validar estado PENDIENTE
             if period.is_paid:

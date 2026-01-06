@@ -303,8 +303,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         qs = qs.select_related(
             'client',
             'employee__user', 
-            'user',
-            'period'
+            'user'
         ).prefetch_related(
             'details__content_type',
             'payments'

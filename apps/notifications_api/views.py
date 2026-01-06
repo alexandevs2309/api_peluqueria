@@ -11,6 +11,7 @@ class NotificationListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        # Ignorar tenant_id ya que las notificaciones están asociadas al usuario
         return self.queryset.filter(recipient=user).order_by('-created_at')
 
 class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):

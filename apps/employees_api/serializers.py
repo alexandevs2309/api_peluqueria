@@ -75,6 +75,27 @@ class EmployeeServiceSerializer(serializers.ModelSerializer):
         fields = ['id', 'employee', 'service', 'service_id', 'created_at']
         read_only_fields = ['created_at']
 
+class EmployeePayrollConfigSerializer(serializers.ModelSerializer):
+    """Serializer para configuración de nómina por empleado"""
+    
+    class Meta:
+        model = Employee
+        fields = [
+            'salary_type', 'payment_frequency', 'commission_percentage',
+            'commission_payment_mode', 'contractual_monthly_salary',
+            'apply_afp', 'apply_sfs', 'apply_isr'
+        ]
+    
+    def validate_commission_percentage(self, value):
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("El porcentaje debe estar entre 0 y 100")
+        return value
+    
+    def validate_contractual_monthly_salary(self, value):
+        if value < 0:
+            raise serializers.ValidationError("El salario no puede ser negativo")
+        return value
+
 class WorkScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkSchedule
