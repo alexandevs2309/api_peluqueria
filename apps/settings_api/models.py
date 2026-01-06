@@ -2,6 +2,10 @@ from django.db import models
 from django.conf import settings as django_settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.translation import gettext_lazy as _
+from django.utils import timezone
+
+# Importar modelo de change log
+from .change_log_models import SettingsChangeLog
 
 class Branch(models.Model):
     """Sucursales - Solo para planes Enterprise/Multi-Branch"""

@@ -61,6 +61,12 @@
                 <td>(-) ISR</td>
                 <td style="text-align: right;">{{ summary.isr_deduction|floatformat:2 }}</td>
             </tr>
+            {% if summary.loan_deductions > 0 %}
+            <tr>
+                <td>(-) Descuento Préstamos</td>
+                <td style="text-align: right;">{{ summary.loan_deductions|floatformat:2 }}</td>
+            </tr>
+            {% endif %}
             <tr class="totals">
                 <td>Total Descuentos</td>
                 <td style="text-align: right;">{{ summary.total_deductions|floatformat:2 }}</td>

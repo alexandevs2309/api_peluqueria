@@ -8,7 +8,7 @@ from django.db import models
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import uuid
 
 class PayrollSettlement(models.Model):
@@ -78,6 +78,24 @@ class PayrollSettlement(models.Model):
     
     def __str__(self):
         return f"Settlement {self.settlement_id} - {self.employee} - {self.frequency} {self.period_year}/{self.period_index}"
+    
+    @property
+    def can_pay(self):
+        """Determina si se puede pagar según el período contable"""
+        today = timezone.now().date()
+        return today >= self.period_end
+    
+    @property
+    def pay_block_reason(self):
+        """Razón por la cual no se puede pagar"""
+        if self.can_pay:
+            return None
+        return "El período de pago aún no ha finalizado"
+    
+    @property
+    def loan_deductions(self):
+        """Calcula deducciones de préstamos dinámicamente"""
+        return self.total_deductions - self.afp_deduction - self.sfs_deduction - self.isr_deduction
 
 class SettlementEarning(models.Model):
     """

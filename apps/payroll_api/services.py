@@ -4,6 +4,7 @@ from django.db import transaction
 from django.utils import timezone
 from .models import PayrollSettlement, SettlementEarning
 from apps.employees_api.earnings_models import Earning
+from apps.employees_api.advance_loans import AdvanceLoan
 
 class PayrollSettlementService:
     """
@@ -34,11 +35,23 @@ class PayrollSettlementService:
             # 3. Calcular total bruto
             gross_amount = fixed_amount + commission_amount
             
-            # 4. Actualizar settlement
+            # 4. Calcular deducciones (préstamos + legales)
+            loan_deductions = self._calculate_loan_deductions(settlement)
+            afp_deduction, sfs_deduction, isr_deduction = self._calculate_legal_deductions(settlement, gross_amount)
+            total_deductions = loan_deductions + afp_deduction + sfs_deduction + isr_deduction
+            
+            # 5. Calcular neto
+            net_amount = gross_amount - total_deductions
+            
+            # 6. Actualizar settlement
             settlement.fixed_salary_amount = fixed_amount
             settlement.commission_amount = commission_amount
             settlement.gross_amount = gross_amount
-            settlement.net_amount = gross_amount  # Sin descuentos por ahora
+            settlement.afp_deduction = afp_deduction
+            settlement.sfs_deduction = sfs_deduction
+            settlement.isr_deduction = isr_deduction
+            settlement.total_deductions = total_deductions
+            settlement.net_amount = net_amount
             settlement.save()
             
             return settlement
@@ -52,10 +65,12 @@ class PayrollSettlementService:
         if employee.salary_type not in ['fixed', 'mixed']:
             return Decimal('0.00')
         
-        base_salary = employee.salary_amount or Decimal('0.00')
+        base_salary = employee.contractual_monthly_salary or Decimal('0.00')
         
         # Si es período quincenal completo
         if settlement.frequency == 'biweekly':
+            # Convertir salario mensual a quincenal
+            base_salary = base_salary / 2
             period_days = (settlement.period_end - settlement.period_start).days + 1
             
             # Verificar si es quincena completa
@@ -103,6 +118,52 @@ class PayrollSettlementService:
             )
         
         return commission_amount
+    
+    def _calculate_loan_deductions(self, settlement):
+        """
+        Calcula deducciones de préstamos activos
+        """
+        employee = settlement.employee
+        
+        # Obtener préstamos activos ordenados por fecha (FIFO)
+        active_loans = AdvanceLoan.objects.filter(
+            employee=employee,
+            status='active',
+            remaining_balance__gt=0
+        ).order_by('request_date')
+        
+        total_loan_deductions = Decimal('0.00')
+        
+        for loan in active_loans:
+            # Deducción = min(cuota mensual, saldo restante)
+            deduction = min(loan.monthly_payment, loan.remaining_balance)
+            total_loan_deductions += deduction
+        
+        return total_loan_deductions
+    
+    def _calculate_legal_deductions(self, settlement, gross_amount):
+        """
+        Calcula descuentos legales (AFP, SFS, ISR)
+        Retorna tupla (afp, sfs, isr)
+        """
+        employee = settlement.employee
+        
+        afp_deduction = Decimal('0.00')
+        sfs_deduction = Decimal('0.00')
+        isr_deduction = Decimal('0.00')
+        
+        if employee.apply_afp:
+            afp_deduction = gross_amount * Decimal('0.0287')  # 2.87%
+        
+        if employee.apply_sfs:
+            sfs_deduction = gross_amount * Decimal('0.0304')  # 3.04%
+        
+        if employee.apply_isr:
+            # ISR simplificado - solo si supera umbral
+            if gross_amount > Decimal('34685'):  # Umbral mensual 2024
+                isr_deduction = gross_amount * Decimal('0.15')  # 15%
+        
+        return afp_deduction, sfs_deduction, isr_deduction
     
     def _is_full_fortnight(self, start_date, end_date):
         """

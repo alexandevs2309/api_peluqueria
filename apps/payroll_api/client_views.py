@@ -47,7 +47,9 @@ class ClientPayrollViewSet(viewsets.ViewSet):
                 'net_amount': float(settlement.net_amount),
                 'deductions_total': float(settlement.total_deductions),
                 'period_start': settlement.period_start,
-                'period_end': settlement.period_end
+                'period_end': settlement.period_end,
+                'can_pay': settlement.can_pay,
+                'pay_block_reason': settlement.pay_block_reason
             })
         
         return Response({'periods': results})
@@ -109,6 +111,13 @@ class ClientPayrollViewSet(viewsets.ViewSet):
                     status='READY'  # SOLO períodos listos
                 )
                 
+                # VALIDAR ciclo de pago
+                if not settlement.can_pay:
+                    return Response({
+                        'error': 'No se puede pagar en este momento',
+                        'reason': settlement.pay_block_reason
+                    }, status=400)
+                
                 # Crear pago simple
                 payment = PayrollPayment.objects.create(
                     employee=settlement.employee,
@@ -142,6 +151,65 @@ class ClientPayrollViewSet(viewsets.ViewSet):
         except PayrollSettlement.DoesNotExist:
             return Response({'error': 'Período no encontrado o no está listo'}, status=404)
     
+    @action(detail=False, methods=['get'], url_path='payments/(?P<payment_id>[^/.]+)/receipt')
+    def payment_receipt(self, request, payment_id=None):
+        """GET /api/client/payroll/payments/{id}/receipt/ - Recibo de pago"""
+        try:
+            payment = PayrollPayment.objects.select_related(
+                'employee__user', 'tenant', 'paid_by'
+            ).get(
+                payment_id=payment_id,
+                tenant=request.user.tenant
+            )
+            
+            # Formatear período
+            month_names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                          'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+            month = ((payment.period_index - 1) // 2) + 1
+            half = "1ra" if (payment.period_index % 2) == 1 else "2da"
+            period_display = f"{half} quincena {month_names[month-1]} {payment.period_year}"
+            
+            receipt_data = {
+                'payment_id': str(payment.payment_id),
+                'employee': {
+                    'name': payment.employee.user.full_name or payment.employee.user.email,
+                    'email': payment.employee.user.email
+                },
+                'period': {
+                    'display': period_display,
+                    'start_date': payment.period_start_date,
+                    'end_date': payment.period_end_date,
+                    'frequency': payment.period_frequency
+                },
+                'amounts': {
+                    'gross_amount': float(payment.gross_amount),
+                    'deductions': {
+                        'afp': float(payment.afp_deduction),
+                        'sfs': float(payment.sfs_deduction),
+                        'isr': float(payment.isr_deduction),
+                        'loans': float(payment.loan_deductions),
+                        'total': float(payment.total_deductions)
+                    },
+                    'net_amount': float(payment.net_amount)
+                },
+                'payment_info': {
+                    'method': payment.payment_method,
+                    'reference': payment.payment_reference or 'N/A',
+                    'paid_at': payment.paid_at.isoformat(),
+                    'paid_by': payment.paid_by.full_name if payment.paid_by else 'Sistema'
+                },
+                'company': {
+                    'name': 'Barbería App',
+                    'address': 'Dirección de la empresa',
+                    'phone': 'Teléfono de contacto'
+                }
+            }
+            
+            return Response(receipt_data)
+            
+        except PayrollPayment.DoesNotExist:
+            return Response({'error': 'Pago no encontrado'}, status=404)
+    
     def _ensure_current_periods(self, tenant):
         """Generar períodos automáticamente - SOLO quincenales"""
         today = timezone.now().date()
@@ -170,23 +238,26 @@ class ClientPayrollViewSet(viewsets.ViewSet):
         service = PayrollSettlementService()
         
         for employee in employees:
-            existing = PayrollSettlement.objects.filter(
+            existing_open = PayrollSettlement.objects.filter(
                 employee=employee,
                 period_year=current_year,
                 period_index=period_index,
-                frequency='biweekly'
+                frequency='biweekly',
+                status='OPEN'
             ).first()
             
-            if not existing:
-                settlement = PayrollSettlement.objects.create(
+            if not existing_open:
+                settlement, created = PayrollSettlement.objects.get_or_create(
                     employee=employee,
-                    tenant=tenant,
-                    frequency='biweekly',
-                    period_start=period_start,
-                    period_end=period_end,
                     period_year=current_year,
                     period_index=period_index,
-                    status='OPEN'
+                    frequency='biweekly',
+                    defaults={
+                        'tenant': tenant,
+                        'period_start': period_start,
+                        'period_end': period_end,
+                        'status': 'OPEN'
+                    }
                 )
     
     def _format_period(self, settlement):

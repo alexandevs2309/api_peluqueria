@@ -6,7 +6,7 @@ from django.conf import settings
 from apps.services_api.models import Service
 
 # Importar modelos de ganancias
-from .earnings_models import Earning, FortnightSummary
+from .earnings_models import Earning
 
 
 class Employee(models.Model):

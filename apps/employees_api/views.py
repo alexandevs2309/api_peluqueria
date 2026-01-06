@@ -11,7 +11,7 @@ from apps.subscriptions_api.utils import get_user_active_subscription
 from apps.settings_api.utils import validate_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule
 from apps.auth_api.models import UserRole
-from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
+from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer, EmployeePayrollConfigSerializer
 from apps.auth_api.permissions import IsSuperAdmin
 from apps.auth_api.permissions import (
     IsClientAdminOrStaff, CanViewFinancialData, IsSuperAdmin
@@ -191,6 +191,260 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
                 {'error': f'Error al actualizar: {str(e)}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+    @action(detail=True, methods=['get', 'post'], permission_classes=[IsAuthenticated, IsClientAdmin])
+    def loans(self, request, pk=None):
+        """GET/POST /api/employees/{id}/loans/ - Préstamos por empleado"""
+        employee = self.get_object()
+        
+        if request.method == 'GET':
+            from .advance_loans import AdvanceLoan
+            
+            loans = AdvanceLoan.objects.filter(
+                employee=employee
+            ).order_by('-created_at')
+            
+            data = []
+            for loan in loans:
+                data.append({
+                    'id': loan.id,
+                    'loan_type': loan.get_loan_type_display(),
+                    'amount': float(loan.amount),
+                    'status': loan.get_status_display(),
+                    'installments': loan.installments,
+                    'monthly_payment': float(loan.monthly_payment),
+                    'remaining_balance': float(loan.remaining_balance),
+                    'request_date': loan.request_date,
+                    'approval_date': loan.approval_date,
+                    'reason': loan.reason
+                })
+            
+            return Response({'loans': data})
+        
+        elif request.method == 'POST':
+            from .advance_loans import AdvanceLoan
+            from django.db import transaction
+            
+            loan_type = request.data.get('loan_type')
+            amount = request.data.get('amount')
+            reason = request.data.get('reason', '').strip()
+            installments = request.data.get('installments', 1)
+            
+            # Validaciones
+            if not amount or amount <= 0:
+                return Response({'error': 'Monto debe ser mayor a 0'}, status=400)
+            if amount > 100000:
+                return Response({'error': 'Monto excede límite máximo (RD$100,000)'}, status=400)
+            if installments < 1 or installments > 24:
+                return Response({'error': 'Cuotas deben estar entre 1 y 24'}, status=400)
+            if not reason or len(reason) > 500:
+                return Response({'error': 'Motivo requerido (máx. 500 caracteres)'}, status=400)
+            
+            try:
+                with transaction.atomic():
+                    loan = AdvanceLoan.objects.create(
+                        employee=employee,
+                        loan_type=loan_type,
+                        amount=amount,
+                        reason=reason,
+                        installments=installments
+                    )
+                    
+                    return Response({
+                        'message': 'Préstamo creado exitosamente',
+                        'loan_id': loan.id,
+                        'status': loan.status,
+                        'monthly_payment': float(loan.monthly_payment),
+                        'total_amount': float(loan.total_amount)
+                    }, status=201)
+                    
+            except Exception as e:
+                return Response({'error': f'Error creando préstamo: {str(e)}'}, status=400)
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsClientAdmin])
+    def loans_summary(self, request, pk=None):
+        """GET /api/employees/{id}/loans_summary/ - Resumen de préstamos"""
+        employee = self.get_object()
+        from .advance_loans import AdvanceLoan
+        from django.db.models import Sum, Count
+        
+        # Estadísticas generales
+        loans = AdvanceLoan.objects.filter(employee=employee)
+        active_loans = loans.filter(status='active')
+        
+        total_borrowed = loans.aggregate(total=Sum('amount'))['total'] or 0
+        total_remaining = active_loans.aggregate(total=Sum('remaining_balance'))['total'] or 0
+        active_count = active_loans.count()
+        
+        # Próximo pago (si hay préstamos activos)
+        next_payment = 0
+        if active_loans.exists():
+            next_payment = active_loans.aggregate(total=Sum('monthly_payment'))['total'] or 0
+        
+        return Response({
+            'total_borrowed': float(total_borrowed),
+            'total_remaining': float(total_remaining),
+            'active_loans_count': active_count,
+            'next_payment_amount': float(next_payment),
+            'can_request_new': True  # Sin límites según reglas de negocio
+        })
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsClientAdmin])
+    def payment_history(self, request, pk=None):
+        """GET /api/employees/{id}/payment_history/ - Historial de pagos (SOLO LECTURA)"""
+        employee = self.get_object()
+        from apps.employees_api.payroll_models import PayrollPayment
+        from apps.payroll_api.models import PayrollSettlement
+        
+        # Obtener pagos del empleado ordenados por fecha
+        payments = PayrollPayment.objects.filter(
+            employee=employee
+        ).select_related('tenant').order_by('-paid_at')
+        
+        # Obtener settlements para contexto adicional
+        settlements = PayrollSettlement.objects.filter(
+            employee=employee,
+            status='PAID'
+        ).select_related('employee__user')
+        
+        # Crear diccionario de settlements por período para lookup rápido
+        settlements_dict = {}
+        for settlement in settlements:
+            key = f"{settlement.period_year}-{settlement.period_index}"
+            settlements_dict[key] = settlement
+        
+        data = []
+        for payment in payments:
+            # Buscar settlement correspondiente
+            settlement_key = f"{payment.period_year}-{payment.period_index}"
+            settlement = settlements_dict.get(settlement_key)
+            
+            # Formatear período
+            period_display = self._format_payment_period(
+                payment.period_year, 
+                payment.period_index, 
+                payment.period_frequency
+            )
+            
+            data.append({
+                'id': str(payment.payment_id),
+                'paid_at': payment.paid_at,
+                'gross_amount': float(payment.gross_amount),
+                'net_amount': float(payment.net_amount),
+                'total_deductions': float(payment.total_deductions),
+                'payment_method': payment.get_payment_method_display(),
+                'payment_reference': payment.payment_reference or '',
+                'period_display': period_display,
+                'period_start': payment.period_start_date,
+                'period_end': payment.period_end_date,
+                'payment_type': payment.get_payment_type_display(),
+                'status': payment.get_status_display(),
+                # Detalles de descuentos
+                'afp_deduction': float(payment.afp_deduction),
+                'sfs_deduction': float(payment.sfs_deduction),
+                'isr_deduction': float(payment.isr_deduction),
+                'loan_deductions': float(payment.loan_deductions)
+            })
+        
+        return Response({
+            'employee_name': employee.user.full_name or employee.user.email,
+            'payments': data,
+            'total_payments': len(data)
+        })
+    
+    def _format_payment_period(self, year, period_index, frequency):
+        """Formatear período de pago para display"""
+        if frequency == 'biweekly':
+            month_names = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+                          'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+            month = ((period_index - 1) // 2) + 1
+            half = "1ra" if (period_index % 2) == 1 else "2da"
+            return f"{half} quincena {month_names[month-1]} {year}"
+        elif frequency == 'monthly':
+            month_names = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+                          'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+            return f"{month_names[period_index-1]} {year}"
+        elif frequency == 'weekly':
+            return f"Semana {period_index} - {year}"
+        else:
+            return f"Período {period_index} - {year}"
+
+    @action(detail=True, methods=['get'], permission_classes=[IsAuthenticated, IsClientAdmin])
+    def payment_stats(self, request, pk=None):
+        """GET /api/employees/{id}/payment_stats/ - Estadísticas de pagos (SOLO LECTURA)"""
+        employee = self.get_object()
+        from apps.employees_api.payroll_models import PayrollPayment
+        from django.db.models import Sum, Count, Avg
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        # Todos los pagos del empleado
+        all_payments = PayrollPayment.objects.filter(employee=employee, status='COMPLETED')
+        
+        # Pagos del último año
+        last_year = timezone.now() - timedelta(days=365)
+        recent_payments = all_payments.filter(paid_at__gte=last_year)
+        
+        # Estadísticas generales
+        total_stats = all_payments.aggregate(
+            total_payments=Count('id'),
+            total_gross=Sum('gross_amount'),
+            total_net=Sum('net_amount'),
+            total_deductions=Sum('total_deductions'),
+            avg_payment=Avg('net_amount')
+        )
+        
+        # Estadísticas del último año
+        recent_stats = recent_payments.aggregate(
+            recent_payments=Count('id'),
+            recent_gross=Sum('gross_amount'),
+            recent_net=Sum('net_amount'),
+            recent_deductions=Sum('total_deductions')
+        )
+        
+        # Último pago
+        last_payment = all_payments.order_by('-paid_at').first()
+        
+        return Response({
+            'employee_name': employee.user.full_name or employee.user.email,
+            'all_time': {
+                'total_payments': total_stats['total_payments'] or 0,
+                'total_gross': float(total_stats['total_gross'] or 0),
+                'total_net': float(total_stats['total_net'] or 0),
+                'total_deductions': float(total_stats['total_deductions'] or 0),
+                'average_payment': float(total_stats['avg_payment'] or 0)
+            },
+            'last_year': {
+                'payments_count': recent_stats['recent_payments'] or 0,
+                'total_gross': float(recent_stats['recent_gross'] or 0),
+                'total_net': float(recent_stats['recent_net'] or 0),
+                'total_deductions': float(recent_stats['recent_deductions'] or 0)
+            },
+            'last_payment': {
+                'date': last_payment.paid_at if last_payment else None,
+                'amount': float(last_payment.net_amount) if last_payment else 0,
+                'method': last_payment.get_payment_method_display() if last_payment else None
+            } if last_payment else None
+        })
+
+    @action(detail=True, methods=['get', 'put'], permission_classes=[IsAuthenticated, IsClientAdmin])
+    def payroll_config(self, request, pk=None):
+        """GET/PUT /api/employees/{id}/payroll-config/ - Configuración de nómina"""
+        employee = self.get_object()
+        
+        if request.method == 'GET':
+            serializer = EmployeePayrollConfigSerializer(employee)
+            return Response(serializer.data)
+        
+        elif request.method == 'PUT':
+            serializer = EmployeePayrollConfigSerializer(employee, data=request.data)
+            if serializer.is_valid():
+                serializer.save()
+                return Response({
+                    'message': 'Configuración de nómina actualizada correctamente',
+                    'data': serializer.data
+                })
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 class WorkScheduleViewSet(viewsets.ModelViewSet):
     queryset = WorkSchedule.objects.all()
