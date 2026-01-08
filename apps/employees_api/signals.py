@@ -1,21 +1,53 @@
-import logging
 from django.db.models.signals import post_save
 from django.dispatch import receiver
-from apps.pos_api.models import Sale
+from django.db import transaction
+from apps.auth_api.models import User
+from .models import Employee
+import logging
 
 logger = logging.getLogger(__name__)
 
-@receiver(post_save, sender=Sale)
-def create_earning_on_sale_completion(sender, instance, created, **kwargs):
+# Roles que requieren registro Employee automático
+EMPLOYEE_ROLES = ['Estilista', 'Cajera', 'Manager', 'Utility']
+
+@receiver(post_save, sender=User)
+def create_employee_for_staff_user(sender, instance, created, **kwargs):
     """
-    Signal para crear earning automáticamente cuando se completa una venta
+    Crear Employee automáticamente cuando se crea un User con rol de empleado.
+    Garantiza integridad de dominio User-Employee en SaaS multi-tenant.
     """
-    # Solo procesar si la venta está completada y tiene empleado
-    if instance.status == 'completed' and instance.employee:
-        from apps.pos_api.handlers import create_earnings_from_sale
-        
-        logger.info(f"Creando earnings para sale {instance.id}")
-        result = create_earnings_from_sale(instance)
-        logger.info(f"Resultado: {result}")
-    else:
-        logger.debug(f"Sale {instance.id} no cumple condiciones para crear earning")
+    # Solo procesar si es creación de usuario (no actualización)
+    if not created:
+        return
+    
+    # Solo para usuarios con roles de empleado
+    if not instance.role or instance.role not in EMPLOYEE_ROLES:
+        return
+    
+    # Usuario debe tener tenant asignado
+    if not instance.tenant:
+        logger.warning(f"User {instance.id} ({instance.email}) tiene rol empleado pero sin tenant")
+        return
+    
+    try:
+        with transaction.atomic():
+            # Crear Employee solo si no existe (idempotente)
+            employee, created_emp = Employee.objects.get_or_create(
+                user=instance,
+                defaults={
+                    'tenant': instance.tenant,
+                    'is_active': True,
+                    'specialty': '',
+                    'phone': '',
+                }
+            )
+            
+            if created_emp:
+                logger.info(f"Employee creado automáticamente para User {instance.id} ({instance.email}) en tenant {instance.tenant}")
+            else:
+                logger.info(f"Employee ya existe para User {instance.id} ({instance.email})")
+                
+    except Exception as e:
+        logger.error(f"Error creando Employee para User {instance.id}: {str(e)}")
+        # No re-raise para evitar fallar la creación del User
+        # El Employee se puede crear manualmente después si es necesario

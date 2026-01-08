@@ -6,7 +6,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
 from datetime import datetime, timedelta
 from .models import PayrollSettlement
@@ -29,12 +29,33 @@ class ClientPayrollViewSet(viewsets.ViewSet):
         # Generar períodos automáticamente
         self._ensure_current_periods(self.request.user.tenant)
         
-        # Obtener períodos simples
+        # Calcular período actual
+        today = timezone.now().date()
+        current_year = today.year
+        
+        if today.day <= 15:
+            period_index = (today.month - 1) * 2 + 1
+        else:
+            period_index = (today.month - 1) * 2 + 2
+        
+        # Obtener SOLO settlements del período actual
         settlements = PayrollSettlement.objects.filter(
             tenant=self.request.user.tenant,
             employee__in=employees,
-            status__in=['OPEN', 'READY', 'PAID']  # SOLO estados simples
-        ).select_related('employee__user').order_by('-period_year', '-period_index')
+            period_year=current_year,
+            period_index=period_index
+            # MOSTRAR TODOS LOS ESTADOS: OPEN, READY, PAID
+        ).select_related('employee__user').order_by(
+            # Orden lógico: OPEN → READY → PAID
+            models.Case(
+                models.When(status='OPEN', then=models.Value(1)),
+                models.When(status='READY', then=models.Value(2)),
+                models.When(status='PAID', then=models.Value(3)),
+                default=models.Value(4),
+                output_field=models.IntegerField()
+            ),
+            'employee__user__email'
+        )
         
         results = []
         for settlement in settlements:
@@ -53,6 +74,40 @@ class ClientPayrollViewSet(viewsets.ViewSet):
             })
         
         return Response({'periods': results})
+    
+    @action(detail=False, methods=['get'])
+    def history(self, request):
+        """GET /api/client/payroll/periods/history/ - Historial de pagos"""
+        # Solo empleados activos
+        employees = Employee.objects.filter(
+            tenant=self.request.user.tenant,
+            is_active=True
+        )
+        
+        # Obtener solo settlements pagados
+        settlements = PayrollSettlement.objects.filter(
+            tenant=self.request.user.tenant,
+            employee__in=employees,
+            status='PAID'  # SOLO pagados para historial
+        ).select_related('employee__user').order_by('-closed_at')
+        
+        results = []
+        for settlement in settlements:
+            results.append({
+                'id': settlement.id,
+                'employee_name': settlement.employee.user.full_name or settlement.employee.user.email,
+                'period_display': self._format_period(settlement),
+                'status': settlement.status.lower(),
+                'gross_amount': float(settlement.gross_amount),
+                'net_amount': float(settlement.net_amount),
+                'deductions_total': float(settlement.total_deductions),
+                'period_start': settlement.period_start,
+                'period_end': settlement.period_end,
+                'paid_at': settlement.closed_at,
+                'paid_by': settlement.closed_by.full_name if settlement.closed_by else 'Sistema'
+            })
+        
+        return Response({'history': results})
     
     @action(detail=True, methods=['post'])
     def close_period(self, request, pk=None):
@@ -88,6 +143,61 @@ class ClientPayrollViewSet(viewsets.ViewSet):
                 'gross_amount': float(settlement.gross_amount),
                 'net_amount': float(settlement.net_amount),
                 'deductions_total': float(settlement.total_deductions)
+            })
+            
+        except PayrollSettlement.DoesNotExist:
+            return Response({'error': 'Período no encontrado'}, status=404)
+    
+    @action(detail=True, methods=['post'])
+    def recalculate(self, request, pk=None):
+        """POST /api/client/payroll/periods/{id}/recalculate/ - Recálculo forzado"""
+        try:
+            settlement = PayrollSettlement.objects.get(
+                id=pk,
+                tenant=request.user.tenant
+            )
+            
+            # No permitir recálculo de períodos ya pagados
+            if settlement.status == 'PAID':
+                return Response({'error': 'No se puede recalcular un período ya pagado'}, status=400)
+            
+            # Guardar valores anteriores para auditoría
+            old_values = {
+                'fixed_salary': float(settlement.fixed_salary_amount),
+                'commission': float(settlement.commission_amount),
+                'gross': float(settlement.gross_amount),
+                'net': float(settlement.net_amount)
+            }
+            
+            # Recalcular usando servicio
+            service = PayrollSettlementService()
+            settlement = service.calculate_settlement(settlement)
+            
+            # Actualizar estado según resultado
+            if settlement.gross_amount > 0:
+                settlement.status = 'READY'
+                settlement.closed_at = timezone.now()
+                settlement.closed_by = request.user
+            else:
+                settlement.status = 'OPEN'
+                settlement.closed_at = None
+                settlement.closed_by = None
+            
+            settlement.save()
+            
+            return Response({
+                'message': 'Período recalculado exitosamente',
+                'settlement_id': settlement.id,
+                'status': settlement.status.lower(),
+                'previous_values': old_values,
+                'current_values': {
+                    'fixed_salary': float(settlement.fixed_salary_amount),
+                    'commission': float(settlement.commission_amount),
+                    'gross': float(settlement.gross_amount),
+                    'net': float(settlement.net_amount)
+                },
+                'recalculated_by': request.user.full_name or request.user.email,
+                'recalculated_at': timezone.now().isoformat()
             })
             
         except PayrollSettlement.DoesNotExist:
@@ -238,27 +348,30 @@ class ClientPayrollViewSet(viewsets.ViewSet):
         service = PayrollSettlementService()
         
         for employee in employees:
-            existing_open = PayrollSettlement.objects.filter(
+            # Obtener o crear settlement para el período actual
+            settlement, created = PayrollSettlement.objects.get_or_create(
                 employee=employee,
                 period_year=current_year,
                 period_index=period_index,
                 frequency='biweekly',
-                status='OPEN'
-            ).first()
+                defaults={
+                    'tenant': tenant,
+                    'period_start': period_start,
+                    'period_end': period_end,
+                    'status': 'OPEN'
+                }
+            )
             
-            if not existing_open:
-                settlement, created = PayrollSettlement.objects.get_or_create(
-                    employee=employee,
-                    period_year=current_year,
-                    period_index=period_index,
-                    frequency='biweekly',
-                    defaults={
-                        'tenant': tenant,
-                        'period_start': period_start,
-                        'period_end': period_end,
-                        'status': 'OPEN'
-                    }
-                )
+            # Calcular automáticamente si se creó o si está en OPEN
+            if created or settlement.status == 'OPEN':
+                settlement = service.calculate_settlement(settlement)
+                # Marcar como READY si tiene cualquier monto (salario fijo o comisión)
+                if settlement.gross_amount > 0:
+                    settlement.status = 'READY'
+                    settlement.save()
+                # Para empleados fixed sin earnings, mantener OPEN para que aparezcan
+                elif settlement.status == 'OPEN':
+                    settlement.save()
     
     def _format_period(self, settlement):
         """Formatear período para display"""

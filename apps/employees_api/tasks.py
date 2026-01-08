@@ -40,10 +40,10 @@ def create_earning_from_sale(self, sale_id, external_id):
             earning_amount = Decimal('0.00')
             
             if employee.salary_type == 'commission':
-                earning_amount = (sale.total * employee.commission_percentage) / 100
+                earning_amount = sale.total
             elif employee.salary_type == 'mixed':
                 # Solo comisión para ventas individuales, sueldo se maneja en períodos
-                earning_amount = (sale.total * employee.commission_percentage) / 100
+                earning_amount = sale.total
             # Para 'fixed', no se crean earnings por venta individual
             
             if earning_amount > 0:

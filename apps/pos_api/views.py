@@ -1,5 +1,6 @@
 from rest_framework import viewsets, permissions, status, serializers
 import logging
+import uuid
 logger = logging.getLogger(__name__)
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -88,23 +89,25 @@ class SaleViewSet(viewsets.ModelViewSet):
                     else employee.commission_percentage
                 )
                 
-                commission = service_amount * (commission_percentage / 100)
-                
-                if commission > 0:
+                if service_amount > 0:
                     # Crear external_id idempotente por servicio
                     external_id = f"sale-{sale.id}-service-{detail.object_id}-{sale.date_time.strftime('%Y%m%d%H%M%S')}"
                     
                     # Crear earning individual por servicio
-                    Earning.objects.create(
+                    earning = Earning.objects.create(
                         employee=employee,
                         sale=sale,
-                        amount=commission,
+                        amount=service_amount,
                         earning_type='commission',
                         percentage=commission_percentage,
                         description=f"Comisión {detail.name} - venta #{sale.id}",
                         external_id=external_id,
                         created_by=sale.user
                     )
+                    
+                    # Recalcular período activo inmediatamente
+                    logger.info(f"Actualizando settlement para empleado {employee.id} con earning {earning.id}")
+                    self._update_active_settlement(employee, earning)
                     
             except Exception as e:
                 # Log error pero continuar con otros servicios
@@ -114,6 +117,82 @@ class SaleViewSet(viewsets.ModelViewSet):
         # Marcar que se generaron earnings
         sale.earnings_generated = True
         sale.save(update_fields=['earnings_generated'])
+    
+    def _update_active_settlement(self, employee, earning):
+        """Recalcular settlement activo tras crear earning"""
+        from apps.payroll_api.models import PayrollSettlement
+        from apps.payroll_api.services import PayrollSettlementService
+        from django.utils import timezone
+        from datetime import date
+        
+        logger.info(f"Iniciando actualización de settlement para empleado {employee.id}")
+        
+        try:
+            # Calcular período actual basado en fecha del earning
+            earning_date = earning.date_earned.date()
+            year = earning_date.year
+            month = earning_date.month
+            day = earning_date.day
+            
+            logger.info(f"Fecha earning: {earning_date}, calculando período...")
+            
+            # Determinar índice de quincena
+            fortnight_in_month = 1 if day <= 15 else 2
+            period_index = (month - 1) * 2 + fortnight_in_month
+            
+            logger.info(f"Período calculado: {year}/{period_index}")
+            
+            # Calcular fechas del período
+            if fortnight_in_month == 1:
+                period_start = date(year, month, 1)
+                period_end = date(year, month, 15)
+            else:
+                period_start = date(year, month, 16)
+                # Último día del mes
+                if month == 12:
+                    period_end = date(year + 1, 1, 1) - timedelta(days=1)
+                else:
+                    period_end = date(year, month + 1, 1) - timedelta(days=1)
+            
+            # Buscar o crear settlement para este período
+            settlement, created = PayrollSettlement.objects.get_or_create(
+                employee=employee,
+                period_year=year,
+                period_index=period_index,
+                frequency='biweekly',
+                defaults={
+                    'settlement_id': uuid.uuid4(),
+                    'tenant': employee.tenant,
+                    'period_start': period_start,
+                    'period_end': period_end,
+                    'status': 'OPEN'
+                }
+            )
+            
+            logger.info(f"Settlement {'creado' if created else 'encontrado'}: {settlement.settlement_id}")
+            
+            # Solo recalcular si está abierto
+            if settlement.status == 'OPEN':
+                logger.info(f"Recalculando settlement {settlement.settlement_id}...")
+                # Recalcular usando servicio existente
+                service = PayrollSettlementService()
+                settlement = service.calculate_settlement(settlement)
+                
+                logger.info(f"Settlement recalculado - Gross: {settlement.gross_amount}")
+                
+                # Marcar como listo si tiene montos
+                if settlement.gross_amount > 0:
+                    settlement.status = 'READY'
+                    settlement.save()
+                    logger.info(f"Settlement marcado como READY")
+            else:
+                logger.info(f"Settlement no está OPEN, status: {settlement.status}")
+                    
+        except Exception as e:
+            # Log error pero no fallar la venta
+            logger.error(f"Error actualizando settlement para empleado {employee.id}: {str(e)}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
 
     def create(self, request, *args, **kwargs):
         logger.info(f"Creating sale for user {request.user}")

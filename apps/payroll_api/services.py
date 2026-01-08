@@ -13,13 +13,32 @@ class PayrollSettlementService:
     """
     
     @classmethod
-    def mark_as_paid(cls, settlement):
+    def mark_as_paid(cls, settlement, paid_by=None):
         """
-        Marcar settlement como pagado
+        Marcar settlement como pagado y aplicar descuentos de préstamos
         """
-        settlement.status = 'PAID'
-        settlement.save()
-        return settlement
+        from apps.employees_api.advance_loans import process_loan_deductions
+        from datetime import date
+        
+        with transaction.atomic():
+            # 1. Verificar que no esté ya pagado (idempotencia)
+            if settlement.status == 'PAID':
+                return settlement
+            
+            # 2. Aplicar descuentos de préstamos SOLO al pagar
+            loan_deductions_applied = process_loan_deductions(
+                employee=settlement.employee,
+                payment_amount=settlement.net_amount,  # Compatibilidad
+                fortnight_summary=None  # Se actualizará cuando se integre PayrollPayment
+            )
+            
+            # 3. Marcar settlement como pagado
+            settlement.status = 'PAID'
+            settlement.closed_at = timezone.now()
+            settlement.closed_by = paid_by
+            settlement.save()
+            
+            return settlement
     
     def calculate_settlement(self, settlement):
         """
