@@ -7,4 +7,7 @@ class EmployeesApiConfig(AppConfig):
     
     def ready(self):
         # Importar signals para registrarlos
-        import apps.employees_api.signals
+        try:
+            import apps.employees_api.signals
+        except ImportError:
+            pass

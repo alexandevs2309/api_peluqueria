@@ -226,8 +226,7 @@ def process_loan_deductions(employee, payment_amount, fortnight_summary):
             loan=loan,
             payment_date=date.today(),
             amount=deduction,
-            payment_number=payment_number,
-            payroll_payment=fortnight_summary
+            payment_number=payment_number
         )
         
         # Actualizar balance
