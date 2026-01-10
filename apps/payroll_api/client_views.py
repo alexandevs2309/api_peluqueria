@@ -65,6 +65,7 @@ class ClientPayrollViewSet(viewsets.ViewSet):
                 'period_display': self._format_period(settlement),
                 'status': settlement.status.lower(),
                 'gross_amount': float(settlement.gross_amount),
+                'total_salary_amount': float(settlement.gross_amount),  # Nuevo naming: salario total bruto
                 'net_amount': float(settlement.net_amount),
                 'deductions_total': float(settlement.total_deductions),
                 'period_start': settlement.period_start,
@@ -99,6 +100,7 @@ class ClientPayrollViewSet(viewsets.ViewSet):
                 'period_display': self._format_period(settlement),
                 'status': settlement.status.lower(),
                 'gross_amount': float(settlement.gross_amount),
+                'total_salary_amount': float(settlement.gross_amount),  # Nuevo naming: salario total bruto
                 'net_amount': float(settlement.net_amount),
                 'deductions_total': float(settlement.total_deductions),
                 'period_start': settlement.period_start,

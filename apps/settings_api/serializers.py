@@ -18,8 +18,17 @@ class SettingSerializer(serializers.ModelSerializer):
     currency = serializers.CharField(required=False)
     tax_percentage = serializers.DecimalField(required=False, max_digits=5, decimal_places=2)
     timezone = serializers.CharField(required=False)
-    business_hours = serializers.JSONField(required=False)
-    preferences = serializers.JSONField(required=False)
+    
+    # Campos JSON explícitos para OpenAPI
+    business_hours = serializers.DictField(
+        help_text="Horarios de negocio por día (ej: {'monday': '9:00-18:00'})",
+        required=False
+    )
+    preferences = serializers.DictField(
+        help_text="Preferencias y configuraciones del negocio",
+        required=False
+    )
+    
     logo = serializers.ImageField(required=False, allow_null=True)
     theme = serializers.CharField(required=False)
     branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=True, allow_null=True)
@@ -63,6 +72,13 @@ class SettingExportSerializer(serializers.ModelSerializer):
 
 
 class SystemSettingsSerializer(serializers.ModelSerializer):
+    # Campo supported_languages explícito para OpenAPI
+    supported_languages = serializers.ListField(
+        child=serializers.CharField(max_length=10),
+        help_text="Lista de códigos de idioma soportados (ej: ['es', 'en'])",
+        required=False
+    )
+    
     class Meta:
         model = SystemSettings
         fields = [

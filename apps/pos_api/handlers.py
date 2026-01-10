@@ -118,6 +118,7 @@ def create_earnings_from_sale(sale):
             earning_amount = Decimal('0.00')
             
             if employee.salary_type == 'commission':
+                # CORRECCIÓN: Almacenar monto bruto de venta, NO comisión pre-calculada
                 earning_amount = detail.price * detail.quantity
             elif employee.salary_type == 'mixed':
                 # Solo comisión para ventas individuales, sueldo se maneja en períodos
@@ -125,6 +126,8 @@ def create_earnings_from_sale(sale):
             # Para 'fixed', no se crean earnings por venta individual
             
             if earning_amount > 0:
+                logger.info(f"🔍 CREANDO EARNING - Sale: {sale.id}, Detail: {detail.id}, Amount: ${earning_amount}, Employee: {employee.user.email} ({employee.commission_percentage}%)")
+                
                 earning = Earning.objects.create(
                     employee=employee,
                     sale=sale,
@@ -136,6 +139,8 @@ def create_earnings_from_sale(sale):
                     external_id=external_id,
                     created_by=None  # Sistema automático
                 )
+                
+                logger.info(f"✅ EARNING CREADO - ID: {earning.id}, Amount: ${earning.amount}, External: {external_id}")
                 
                 earnings_created.append({
                     'earning_id': earning.id,

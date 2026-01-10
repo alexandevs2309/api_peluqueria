@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field
 
 from apps.services_api.models import Service
 from .models import Employee, EmployeeService, WorkSchedule
@@ -15,13 +16,15 @@ class UserBasicSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'full_name', 'first_name', 'last_name', 'role']
     
-    def get_first_name(self, obj):
+    @extend_schema_field(serializers.CharField)
+    def get_first_name(self, obj) -> str:
         if obj.full_name:
             parts = obj.full_name.split(' ', 1)
             return parts[0] if parts else ''
         return ''
     
-    def get_last_name(self, obj):
+    @extend_schema_field(serializers.CharField)
+    def get_last_name(self, obj) -> str:
         if obj.full_name:
             parts = obj.full_name.split(' ', 1)
             return parts[1] if len(parts) > 1 else ''
