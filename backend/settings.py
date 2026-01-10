@@ -18,7 +18,7 @@ env = environ.Env(
 environ.Env.read_env(BASE_DIR / '.env')
 SECRET_KEY = env('SECRET_KEY')
 
-# Sentry configuration
+# Sentry configuration con structlog
 SENTRY_DSN = env('SENTRY_DSN', default=None)
 if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
     sentry_sdk.init(
@@ -32,6 +32,12 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
         send_default_pii=False,
         environment=env('SENTRY_ENVIRONMENT', default='development'),
         release=env('SENTRY_RELEASE', default='1.0.0'),
+        # Filtrar logs estructurados
+        before_send=lambda event, hint: {
+            **event,
+            'extra': {k: v for k, v in event.get('extra', {}).items() 
+                     if k not in ['password', 'token', 'secret']}
+        }
     )
 
 # SECURITY WARNING: don't run with debug turned on in production!
@@ -92,11 +98,12 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
-    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',  # Validación de suscripciones y expiración
+    'apps.utils.middleware.RequestCorrelationMiddleware',  # Request correlation
+    'apps.tenants_api.rls_middleware.RLSTenantMiddleware',  # RLS Tenant isolation
+    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
+    'apps.audit_api.middleware.AuditLogMiddleware',
 ]
 
 
@@ -129,6 +136,9 @@ REST_FRAMEWORK = {
         'rest_framework.permissions.IsAuthenticated',
     ],
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.JSONRenderer',
+    ],
     'DEFAULT_FILTER_BACKENDS': [
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.SearchFilter',
@@ -168,10 +178,75 @@ CORS_ALLOW_CREDENTIALS = True
 
 
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'Sistema de Gestión de Peluquería API',
-    'DESCRIPTION': 'API para la gestión de citas, clientes, empleados y servicios de peluquería',
+    'TITLE': 'SaaS Peluquerías API',
+    'DESCRIPTION': '''API profesional para gestión integral de peluquerías.
+    
+    **Características principales:**
+    - Multi-tenancy con Row Level Security (RLS)
+    - Nómina automatizada con cálculos precisos
+    - POS integrado con control de inventario
+    - Audit trail completo
+    - Soft delete selectivo
+    
+    **Autenticación:** JWT Bearer tokens requeridos para todos los endpoints.
+    **Versionado:** Endpoints estables, versionado solo cuando sea necesario.
+    ''',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    'CONTACT': {
+        'name': 'Soporte Técnico',
+        'email': 'soporte@saaspeluquerias.com'
+    },
+    'LICENSE': {
+        'name': 'Propietario - SaaS Peluquerías',
+    },
+    'TAGS': [
+        # Core Business
+        {'name': 'auth', 'description': '🔐 Autenticación, autorización y sesiones'},
+        {'name': 'tenants', 'description': '🏢 Gestión multi-tenant y configuración'},
+        
+        # Business Operations
+        {'name': 'clients', 'description': '👥 Gestión de clientes y perfiles'},
+        {'name': 'employees', 'description': '👨‍💼 Gestión de empleados y roles'},
+        {'name': 'appointments', 'description': '📅 Citas, agenda y disponibilidad'},
+        {'name': 'services', 'description': '✂️ Servicios, precios y categorías'},
+        
+        # Financial Operations
+        {'name': 'pos', 'description': '💰 Punto de venta y transacciones'},
+        {'name': 'payroll', 'description': '💵 Nómina, cálculos y pagos'},
+        {'name': 'payments', 'description': '💳 Procesamiento de pagos'},
+        
+        # Operations Support
+        {'name': 'inventory', 'description': '📦 Inventario y control de stock'},
+        {'name': 'reports', 'description': '📊 Reportes y analytics'},
+        
+        # Platform Management
+        {'name': 'subscriptions', 'description': '📋 Planes y suscripciones'},
+        {'name': 'notifications', 'description': '🔔 Notificaciones y alertas'},
+    ],
+    'SERVERS': [
+        {'url': 'http://localhost:8000/api', 'description': 'Desarrollo Local'},
+        {'url': 'https://api.saaspeluquerias.com/api', 'description': 'Producción'},
+    ],
+    'SECURITY': [
+        {
+            'jwtAuth': []
+        }
+    ],
+    # Configuración avanzada
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SORT_OPERATIONS': False,
+    'DISABLE_ERRORS_AND_WARNINGS': False,
+    'SCHEMA_PATH_PREFIX': '/api/',
+    'SCHEMA_PATH_PREFIX_TRIM': True,
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.IsAuthenticated'] if not DEBUG else [],
+    
+    # Hooks de postprocesamiento
+    'POSTPROCESSING_HOOKS': [],
+    'ENUM_NAME_OVERRIDES': {
+        'PaymentMethodEnum': 'apps.pos_api.models.Payment.PaymentMethod',
+        'AppointmentStatusEnum': 'apps.appointments_api.models.Appointment.Status',
+    },
 }
 
 
@@ -359,32 +434,7 @@ X_FRAME_OPTIONS = 'DENY'
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
 # Logging
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'handlers': {
-        'console': {
-            'class': 'logging.StreamHandler',
-        },
-    },
-    'loggers': {
-        'django.request': {
-            'handlers': ['console'],
-            'level': 'ERROR',
-            'propagate': False,
-        },
-        'apps.appointments_api': {
-            'handlers': ['console'],
-            'level': 'ERROR',
-            'propagate': False,
-        },
-        '': {
-            'handlers': ['console'],
-            'level': 'DEBUG' if DEBUG else 'INFO',
-        },
-    },
-
-}
+from .logging_config_pro import LOGGING
 
 
 

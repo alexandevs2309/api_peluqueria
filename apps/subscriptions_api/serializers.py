@@ -7,6 +7,12 @@ from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, Su
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     features_list = serializers.SerializerMethodField()
     
+    # Campo features explícito para OpenAPI
+    features = serializers.DictField(
+        help_text="Características del plan de suscripción",
+        required=False
+    )
+    
     class Meta:
         model = SubscriptionPlan
         fields = [

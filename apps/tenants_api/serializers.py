@@ -6,6 +6,20 @@ from apps.subscriptions_api.serializers import SubscriptionPlanSerializer
 class TenantSerializer(serializers.ModelSerializer):
     owner_name = serializers.CharField(source="owner.username", read_only=True)
     subscription_plan_details = SubscriptionPlanSerializer(source="subscription_plan", read_only=True)
+    
+    # Campos JSON explícitos para OpenAPI
+    trial_notifications_sent = serializers.DictField(
+        help_text="Registro de notificaciones de trial enviadas",
+        required=False
+    )
+    billing_info = serializers.DictField(
+        help_text="Información de facturación del tenant",
+        required=False
+    )
+    settings = serializers.DictField(
+        help_text="Configuraciones específicas del tenant",
+        required=False
+    )
 
     class Meta:
         model = Tenant

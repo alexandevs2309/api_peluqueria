@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
+from drf_spectacular.utils import extend_schema_serializer, OpenApiExample
 from .models import ActiveSession
 from apps.tenants_api.models import Tenant
 
@@ -14,13 +15,47 @@ class ActiveSessionSerializer(serializers.ModelSerializer):
         model = ActiveSession
         fields = ['id', 'ip_address', 'user_agent', 'created_at', 'last_seen', 'is_active']
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            'Registro de usuario',
+            summary='Nuevo usuario con tenant',
+            description='Registro de usuario asociado a un tenant existente',
+            value={
+                'email': 'nuevo@peluqueria.com',
+                'full_name': 'Usuario Nuevo',
+                'phone': '+1-809-555-0123',
+                'password': 'password123',
+                'tenant_subdomain': 'mi-peluqueria'
+            },
+            request_only=True,
+        ),
+    ]
+)
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
-    tenant_subdomain = serializers.CharField(required=False)
+    """Registro de nuevo usuario en el sistema"""
+    password = serializers.CharField(
+        write_only=True, 
+        min_length=8,
+        help_text="Contraseña mínimo 8 caracteres",
+        style={'input_type': 'password'}
+    )
+    tenant_subdomain = serializers.CharField(
+        required=False,
+        help_text="Subdominio del tenant (requerido para usuarios no-admin)"
+    )
+    phone = serializers.CharField(
+        required=False,
+        help_text="Teléfono de contacto (formato: +1-809-555-0123)"
+    )
 
     class Meta:
         model = User
         fields = ['email', 'full_name', 'phone', 'password', 'tenant_subdomain']
+        extra_kwargs = {
+            'email': {'help_text': 'Email único del usuario'},
+            'full_name': {'help_text': 'Nombre completo del usuario'},
+        }
 
     def create(self, validated_data):
         tenant_subdomain = validated_data.pop('tenant_subdomain', None)
@@ -36,10 +71,34 @@ class RegisterSerializer(serializers.ModelSerializer):
             user.save()
         return user
 
+@extend_schema_serializer(
+    examples=[
+        OpenApiExample(
+            'Login con tenant',
+            summary='Autenticación exitosa',
+            description='Login de usuario con tenant específico',
+            value={
+                'email': 'admin@peluqueria.com',
+                'password': 'password123',
+                'tenant_subdomain': 'mi-peluqueria'
+            },
+            request_only=True,
+        ),
+    ]
+)
 class LoginSerializer(serializers.Serializer):
-    email = serializers.EmailField()
-    password = serializers.CharField()
-    tenant_subdomain = serializers.CharField(required=False)
+    """Autenticación de usuario con soporte multi-tenant"""
+    email = serializers.EmailField(
+        help_text="Email del usuario registrado"
+    )
+    password = serializers.CharField(
+        help_text="Contraseña del usuario",
+        style={'input_type': 'password'}
+    )
+    tenant_subdomain = serializers.CharField(
+        required=False,
+        help_text="Subdominio del tenant (opcional para SuperAdmin)"
+    )
 
     def validate(self, data):
         email = data.get('email')

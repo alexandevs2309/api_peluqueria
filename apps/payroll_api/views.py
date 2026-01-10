@@ -40,7 +40,9 @@ class PayrollSettlementViewSet(viewsets.ModelViewSet):
                 'status': settlement.status,
                 'fixed_salary_amount': float(settlement.fixed_salary_amount),
                 'commission_amount': float(settlement.commission_amount),
+                'commission_salary_amount': float(settlement.commission_amount),  # Nuevo naming
                 'gross_amount': float(settlement.gross_amount),
+                'total_salary_amount': float(settlement.gross_amount),  # Nuevo naming
                 'net_amount': float(settlement.net_amount),
                 'created_at': settlement.created_at,
                 'closed_at': settlement.closed_at
@@ -127,6 +129,7 @@ class PayrollPaymentViewSet(viewsets.ViewSet):
                 'employee_name': payment.employee.user.full_name or payment.employee.user.email,
                 'payment_type': payment.payment_type,
                 'gross_amount': float(payment.gross_amount),
+                'total_salary_amount': float(payment.gross_amount),  # Nuevo naming
                 'net_amount': float(payment.net_amount),
                 'payment_method': payment.payment_method,
                 'payment_reference': payment.payment_reference,

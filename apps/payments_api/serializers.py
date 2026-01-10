@@ -6,7 +6,8 @@ class PaymentProviderSerializer(serializers.ModelSerializer):
         model = PaymentProvider
         fields = ['id', 'name', 'is_active']
 
-class PaymentSerializer(serializers.ModelSerializer):
+class PaymentGatewaySerializer(serializers.ModelSerializer):
+    """Serializer para pagos de gateway (renombrado para evitar conflicto)."""
     provider_name = serializers.CharField(source='provider.get_name_display', read_only=True)
     
     class Meta:

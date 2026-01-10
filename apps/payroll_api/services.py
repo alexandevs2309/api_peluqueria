@@ -2,9 +2,12 @@ from decimal import Decimal
 from datetime import datetime, timedelta
 from django.db import transaction
 from django.utils import timezone
-from .models import PayrollSettlement, SettlementEarning
+from .models import PayrollSettlement, SettlementEarning, MonthlyLegalDeductions
 from apps.employees_api.earnings_models import Earning
 from apps.employees_api.advance_loans import AdvanceLoan
+import logging
+
+logger = logging.getLogger(__name__)
 
 class PayrollSettlementService:
     """
@@ -44,15 +47,20 @@ class PayrollSettlementService:
         """
         Calcula liquidación completa para un settlement
         """
+        logger.info(f"📈 INICIANDO CALCULATE_SETTLEMENT - ID: {settlement.id}, Employee: {settlement.employee.user.email}")
+        
         with transaction.atomic():
             # 1. Calcular salario fijo prorrateado
             fixed_amount = self._calculate_fixed_salary(settlement)
+            logger.info(f"📈 Fixed salary: ${fixed_amount}")
             
             # 2. Agregar earnings por período
             commission_amount = self._calculate_commission(settlement)
+            logger.info(f"📈 Commission amount: ${commission_amount}")
             
             # 3. Calcular total bruto
             gross_amount = fixed_amount + commission_amount
+            logger.info(f"📈 Gross amount: ${gross_amount}")
             
             # 4. Calcular deducciones (préstamos + legales)
             loan_deductions = self._calculate_loan_deductions(settlement)
@@ -72,6 +80,8 @@ class PayrollSettlementService:
             settlement.total_deductions = total_deductions
             settlement.net_amount = net_amount
             settlement.save()
+            
+            logger.info(f"✅ SETTLEMENT ACTUALIZADO - Gross: ${settlement.gross_amount}, Net: ${settlement.net_amount}")
             
             return settlement
     
@@ -121,12 +131,22 @@ class PayrollSettlementService:
             date_earned__date__lte=settlement.period_end
         )
         
-        total_earnings = sum(earning.amount for earning in earnings)
+        logger.info(f"📊 CALCULANDO COMISIÓN - Settlement: {settlement.id}, Employee: {employee.user.email}")
+        logger.info(f"📊 Período: {settlement.period_start} a {settlement.period_end}")
+        logger.info(f"📊 Earnings encontrados: {earnings.count()}")
+        
+        total_earnings = Decimal('0.00')
+        for earning in earnings:
+            logger.info(f"📊   - Earning {earning.id}: ${earning.amount} (external: {earning.external_id})")
+            total_earnings += earning.amount
+        
         commission_amount = total_earnings * commission_rate
+        
+        logger.info(f"📊 RESULTADO - Total earnings: ${total_earnings}, Rate: {commission_rate} ({employee.commission_percentage}%), Commission: ${commission_amount}")
         
         # Crear relaciones de trazabilidad
         for earning in earnings:
-            SettlementEarning.objects.get_or_create(
+            se, created = SettlementEarning.objects.get_or_create(
                 settlement=settlement,
                 earning=earning,
                 defaults={
@@ -135,6 +155,10 @@ class PayrollSettlementService:
                     'commission_amount': earning.amount * commission_rate
                 }
             )
+            if created:
+                logger.info(f"🔗 SettlementEarning creado - Earning: {earning.id}, Commission: ${se.commission_amount}")
+            else:
+                logger.info(f"🔗 SettlementEarning existente - Earning: {earning.id}, Commission: ${se.commission_amount}")
         
         return commission_amount
     
@@ -162,25 +186,59 @@ class PayrollSettlementService:
     
     def _calculate_legal_deductions(self, settlement, gross_amount):
         """
-        Calcula descuentos legales (AFP, SFS, ISR)
+        Calcula descuentos legales (AFP, SFS, ISR) - APLICACIÓN MENSUAL
+        Cumple normativa RD: UNA aplicación por mes fiscal
         Retorna tupla (afp, sfs, isr)
         """
         employee = settlement.employee
+        
+        # Determinar mes fiscal
+        settlement_month = settlement.period_start.month
+        settlement_year = settlement.period_start.year
+        
+        # Obtener o crear control mensual
+        monthly_control, created = MonthlyLegalDeductions.objects.get_or_create(
+            employee=employee,
+            year=settlement_year,
+            month=settlement_month,
+            defaults={'total_monthly_gross': Decimal('0.00')}
+        )
+        
+        # Acumular salario bruto mensual
+        monthly_control.total_monthly_gross += gross_amount
+        monthly_control.save()
+        
+        # Determinar si es última quincena del mes
+        is_last_fortnight = self._is_last_fortnight_of_month(settlement)
+        
+        # REGLA: Descuentos legales SOLO en última quincena del mes
+        if not is_last_fortnight or monthly_control.applied_in_settlement:
+            return Decimal('0.00'), Decimal('0.00'), Decimal('0.00')
+        
+        # Calcular descuentos sobre salario mensual acumulado
+        monthly_gross = monthly_control.total_monthly_gross
         
         afp_deduction = Decimal('0.00')
         sfs_deduction = Decimal('0.00')
         isr_deduction = Decimal('0.00')
         
         if employee.apply_afp:
-            afp_deduction = gross_amount * Decimal('0.0287')  # 2.87%
+            afp_deduction = monthly_gross * Decimal('0.0287')  # 2.87%
         
         if employee.apply_sfs:
-            sfs_deduction = gross_amount * Decimal('0.0304')  # 3.04%
+            sfs_deduction = monthly_gross * Decimal('0.0304')  # 3.04%
         
         if employee.apply_isr:
-            # ISR simplificado - solo si supera umbral
-            if gross_amount > Decimal('34685'):  # Umbral mensual 2024
-                isr_deduction = gross_amount * Decimal('0.15')  # 15%
+            # ISR simplificado - sobre salario mensual
+            if monthly_gross > Decimal('34685'):  # Umbral mensual 2024
+                isr_deduction = monthly_gross * Decimal('0.15')  # 15%
+        
+        # Registrar aplicación
+        monthly_control.afp_applied = afp_deduction
+        monthly_control.sfs_applied = sfs_deduction
+        monthly_control.isr_applied = isr_deduction
+        monthly_control.applied_in_settlement = settlement
+        monthly_control.save()
         
         return afp_deduction, sfs_deduction, isr_deduction
     
@@ -220,3 +278,10 @@ class PayrollSettlementService:
                 next_month = date.replace(month=date.month + 1, day=1)
             last_day = (next_month - timedelta(days=1)).day
             return last_day - 15  # días de la segunda quincena
+    
+    def _is_last_fortnight_of_month(self, settlement):
+        """
+        Determina si el settlement corresponde a la última quincena del mes
+        """
+        # Si el período termina después del día 15, es segunda quincena
+        return settlement.period_end.day > 15

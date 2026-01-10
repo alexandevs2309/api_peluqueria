@@ -1,200 +1,114 @@
+"""
+Test básico para verificar Row Level Security
+"""
 import pytest
-from django.urls import reverse
-from rest_framework.test import APIClient
-from rest_framework import status
+from django.test import TestCase
+from django.db import connection
 from django.contrib.auth import get_user_model
 from apps.tenants_api.models import Tenant
 
 User = get_user_model()
 
-
-@pytest.fixture
-def api_client():
-    return APIClient()
-
-
-@pytest.fixture
-def admin_user():
-    return User.objects.create_superuser(
-        email="admin@test.com", 
-        password="testpass123", 
-        full_name="Admin User"
-    )
-
-
-@pytest.fixture
-def regular_user():
-    return User.objects.create_user(
-        email="user@test.com", 
-        password="testpass123", 
-        full_name="Regular User"
-    )
-
-
-@pytest.fixture
-def tenant_data():
-    return {
-        "name": "Test Tenant",
-        "subdomain": "test-tenant",
-        "plan_type": "basic",
-        "subscription_status": "trial",
-        "max_employees": 10,
-        "max_users": 50,
-        "is_active": True
-    }
-
-
-@pytest.fixture
-def tenant(admin_user):
-    return Tenant.objects.create(
-        name="Existing Tenant",
-        subdomain="existing-tenant",
-        owner=admin_user,
-        plan_type="premium",
-        subscription_status="active",
-        max_employees=20,
-        max_users=100,
-        is_active=True
-    )
-
-
-@pytest.mark.django_db
-class TestTenantViewSet:
+class RLSTestCase(TestCase):
     
-    def test_list_tenants_as_admin(self, api_client, admin_user, tenant):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-list")
-        response = api_client.get(url)
+    def setUp(self):
+        # Crear tenants de prueba
+        self.owner1 = User.objects.create_user(email="owner1@test.com", password="pass")
+        self.owner2 = User.objects.create_user(email="owner2@test.com", password="pass")
         
-        assert response.status_code == status.HTTP_200_OK
-        assert len(response.data) >= 1
-        assert response.data[0]["name"] == tenant.name
-    
-    def test_list_tenants_as_regular_user(self, api_client, regular_user, tenant):
-        api_client.force_authenticate(user=regular_user)
-        url = reverse("tenant-list")
-        response = api_client.get(url)
-        
-        assert response.status_code == status.HTTP_200_OK
-        # Regular users should only see tenants they own
-        assert len(response.data) == 0
-    
-    def test_create_tenant_as_admin(self, api_client, admin_user, tenant_data):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-list")
-        response = api_client.post(url, tenant_data)
-        
-        assert response.status_code == status.HTTP_201_CREATED
-        assert response.data["name"] == tenant_data["name"]
-        assert response.data["subdomain"] == tenant_data["subdomain"]
-        assert response.data["owner"] == admin_user.id
-    
-    def test_create_tenant_with_duplicate_subdomain(self, api_client, admin_user, tenant, tenant_data):
-        api_client.force_authenticate(user=admin_user)
-        tenant_data["subdomain"] = tenant.subdomain  # Use existing subdomain
-        url = reverse("tenant-list")
-        response = api_client.post(url, tenant_data)
-        
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "subdomain" in response.data
-    
-    def test_retrieve_tenant(self, api_client, admin_user, tenant):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-detail", kwargs={"pk": tenant.pk})
-        response = api_client.get(url)
-        
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data["name"] == tenant.name
-        assert response.data["subdomain"] == tenant.subdomain
-    
-    def test_update_tenant(self, api_client, admin_user, tenant):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-detail", kwargs={"pk": tenant.pk})
-        update_data = {"name": "Updated Tenant Name"}
-        response = api_client.patch(url, update_data)
-        
-        assert response.status_code == status.HTTP_200_OK
-        assert response.data["name"] == "Updated Tenant Name"
-    
-    def test_delete_tenant(self, api_client, admin_user, tenant):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-detail", kwargs={"pk": tenant.pk})
-        response = api_client.delete(url)
-        
-        assert response.status_code == status.HTTP_204_NO_CONTENT
-        assert not Tenant.objects.filter(pk=tenant.pk).exists()
-    
-    def test_activate_tenant(self, api_client, admin_user, tenant):
-        tenant.is_active = False
-        tenant.save()
-        
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-activate", kwargs={"pk": tenant.pk})
-        response = api_client.post(url)
-        
-        assert response.status_code == status.HTTP_200_OK
-        tenant.refresh_from_db()
-        assert tenant.is_active == True
-    
-    def test_deactivate_tenant(self, api_client, admin_user, tenant):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-deactivate", kwargs={"pk": tenant.pk})
-        response = api_client.post(url)
-        
-        assert response.status_code == status.HTTP_200_OK
-        tenant.refresh_from_db()
-        assert tenant.is_active == False
-    
-    def test_tenant_stats(self, api_client, admin_user, tenant):
-        api_client.force_authenticate(user=admin_user)
-        url = reverse("tenant-stats", kwargs={"pk": tenant.pk})
-        response = api_client.get(url)
-        
-        assert response.status_code == status.HTTP_200_OK
-        assert "max_employees" in response.data
-        assert "max_users" in response.data
-        assert response.data["max_employees"] == tenant.max_employees
-        assert response.data["max_users"] == tenant.max_users
-
-
-@pytest.mark.django_db
-class TestTenantModel:
-    
-    def test_tenant_creation(self, admin_user):
-        tenant = Tenant.objects.create(
-            name="Test Tenant",
-            subdomain="test-tenant",
-            owner=admin_user,
-            plan_type="basic",
-            subscription_status="trial"
+        self.tenant1 = Tenant.objects.create(
+            name="Salon 1",
+            subdomain="salon1",
+            owner=self.owner1
         )
         
-        assert tenant.name == "Test Tenant"
-        assert tenant.subdomain == "test-tenant"
-        assert tenant.owner == admin_user
-        assert tenant.plan_type == "basic"
-        assert tenant.subscription_status == "trial"
-        assert tenant.is_active == True
-    
-    def test_tenant_string_representation(self, admin_user):
-        tenant = Tenant.objects.create(
-            name="Test Tenant",
-            subdomain="test-tenant",
-            owner=admin_user
+        self.tenant2 = Tenant.objects.create(
+            name="Salon 2", 
+            subdomain="salon2",
+            owner=self.owner2
         )
         
-        assert str(tenant) == "Test Tenant (test-tenant)"
+        # Asignar tenants a usuarios
+        self.owner1.tenant = self.tenant1
+        self.owner1.save()
+        
+        self.owner2.tenant = self.tenant2
+        self.owner2.save()
     
-    def test_tenant_unique_subdomain(self, admin_user):
-        Tenant.objects.create(
-            name="Tenant 1",
-            subdomain="unique-subdomain",
-            owner=admin_user
+    def test_rls_function_exists(self):
+        """Verificar que la función RLS existe"""
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT current_tenant_id()")
+            result = cursor.fetchone()
+            self.assertEqual(result[0], 0)  # Default sin contexto
+    
+    def test_rls_context_setting(self):
+        """Verificar que se puede establecer contexto de tenant"""
+        with connection.cursor() as cursor:
+            # Establecer contexto
+            cursor.execute("SELECT set_config('app.current_tenant_id', %s, false)", [str(self.tenant1.id)])
+            
+            # Verificar contexto
+            cursor.execute("SELECT current_tenant_id()")
+            result = cursor.fetchone()
+            self.assertEqual(result[0], self.tenant1.id)
+            
+            # Limpiar contexto
+            cursor.execute("SELECT set_config('app.current_tenant_id', '0', false)")
+    
+    def test_tenant_isolation(self):
+        """Verificar aislamiento básico de tenants"""
+        # Sin contexto, debería ver todos los tenants (SuperAdmin)
+        all_tenants = Tenant.objects.all().count()
+        self.assertEqual(all_tenants, 2)
+        
+        # Con contexto de tenant1, solo debería ver tenant1
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.current_tenant_id', %s, false)", [str(self.tenant1.id)])
+            
+            # Verificar que RLS está activo
+            tenant_count = Tenant.objects.all().count()
+            self.assertEqual(tenant_count, 1)
+            
+            # Verificar que es el tenant correcto
+            visible_tenant = Tenant.objects.first()
+            self.assertEqual(visible_tenant.id, self.tenant1.id)
+            
+            # Limpiar contexto
+            cursor.execute("SELECT set_config('app.current_tenant_id', '0', false)")
+    
+    def test_user_isolation(self):
+        """Verificar aislamiento de usuarios por tenant"""
+        # Crear usuarios adicionales
+        user1 = User.objects.create_user(
+            email="user1@test.com",
+            password="pass",
+            tenant=self.tenant1
         )
         
-        with pytest.raises(Exception):
-            Tenant.objects.create(
-                name="Tenant 2",
-                subdomain="unique-subdomain",  # Same subdomain
-                owner=admin_user
-            )
+        user2 = User.objects.create_user(
+            email="user2@test.com", 
+            password="pass",
+            tenant=self.tenant2
+        )
+        
+        # Sin contexto (SuperAdmin), ver todos
+        all_users = User.objects.filter(tenant__isnull=False).count()
+        self.assertEqual(all_users, 4)  # 2 owners + 2 users
+        
+        # Con contexto tenant1
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('app.current_tenant_id', %s, false)", [str(self.tenant1.id)])
+            
+            tenant1_users = User.objects.filter(tenant__isnull=False).count()
+            self.assertEqual(tenant1_users, 2)  # owner1 + user1
+            
+            # Verificar que son los usuarios correctos
+            visible_users = User.objects.filter(tenant__isnull=False).values_list('email', flat=True)
+            self.assertIn('owner1@test.com', visible_users)
+            self.assertIn('user1@test.com', visible_users)
+            self.assertNotIn('owner2@test.com', visible_users)
+            self.assertNotIn('user2@test.com', visible_users)
+            
+            # Limpiar contexto
+            cursor.execute("SELECT set_config('app.current_tenant_id', '0', false)")

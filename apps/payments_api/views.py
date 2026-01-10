@@ -9,12 +9,12 @@ import json
 
 from .models import Payment, PaymentProvider
 from .services import StripeService, OnboardingService, NotificationService
-from .serializers import PaymentSerializer
+from .serializers import PaymentGatewaySerializer
 from apps.subscriptions_api.models import SubscriptionPlan
 
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
-    serializer_class = PaymentSerializer
+    serializer_class = PaymentGatewaySerializer
     permission_classes = [IsAuthenticated]
     
     def get_queryset(self):
