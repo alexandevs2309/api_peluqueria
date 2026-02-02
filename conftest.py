@@ -1,5 +1,13 @@
-import pytest
+import os
+import django
 from django.conf import settings
+
+# Configurar Django settings antes de importar cualquier cosa
+if not settings.configured:
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+    django.setup()
+
+import pytest
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from faker import Faker

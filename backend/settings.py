@@ -44,9 +44,9 @@ if DEBUG:
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.contenttypes',
     'django.contrib.admin',
     'django.contrib.auth',
+    'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
@@ -62,24 +62,21 @@ INSTALLED_APPS = [
     'celery',
     'django_celery_beat',
 
-# Apps personalizadas
-    'apps.appointments_api',
+# Apps personalizadas (auth_api PRIMERO)
     'apps.auth_api',
+    'apps.tenants_api',
+    'apps.roles_api',
+    'apps.appointments_api',
     'apps.clients_api',
     'apps.employees_api',
     'apps.services_api',
     'apps.inventory_api',
     'apps.pos_api',
-
     'apps.billing_api',
-    
-
     'apps.reports_api',
     'apps.settings_api',
-    'apps.roles_api',
     'apps.subscriptions_api',
     'apps.audit_api',
-    'apps.tenants_api',
     'apps.payments_api',
     'apps.notifications_api',
 ]
@@ -143,15 +140,15 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': THROTTLE_RATES,
 }
 
-STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef'),
-STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_1234567890abcdef'),
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef')
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_1234567890abcdef')
 
 GEO_LOCK_ENABLED = True
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),  # 8 horas para sesión normal
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),  # 30 días para remember me
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),  # Reducido de 8 horas a 30 min
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),     # Reducido de 30 días a 7 días
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'HS256',
@@ -207,7 +204,7 @@ DATABASES = {
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': env('REDIS_URL', default='redis://localhost:6379/1'),
+        'LOCATION': env('REDIS_URL', default='redis://localhost:6379/0'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
             'PASSWORD': env('REDIS_PASSWORD', default=''),
@@ -301,9 +298,11 @@ USE_TZ = True
 
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [
-    BASE_DIR / 'static',
-]
+STATICFILES_DIRS = []
+
+# Solo agregar directorio static si existe
+if (BASE_DIR / 'static').exists():
+    STATICFILES_DIRS.append(BASE_DIR / 'static')
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
@@ -319,7 +318,6 @@ STATICFILES_FINDERS = [
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # Email configuration
-
 if "pytest" in sys.modules:
     CELERY_TASK_ALWAYS_EAGER = True
     CELERY_TASK_EAGER_PROPAGATES = True
@@ -327,7 +325,7 @@ if "pytest" in sys.modules:
 else:
     # SendGrid configuration
     SENDGRID_API_KEY = env('SENDGRID_API_KEY', default='')
-    DEFAULT_FROM_EMAIL = env('SENDGRID_FROM_EMAIL', default='desarrollojavascript00@gmail.com')
+    DEFAULT_FROM_EMAIL = env('SENDGRID_FROM_EMAIL', default='noreply@yourdomain.com')
     
     if SENDGRID_API_KEY and SENDGRID_API_KEY.startswith('SG.'):
         # Use SMTP with SendGrid
@@ -340,7 +338,6 @@ else:
     else:
         # Fallback to console for development
         EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-    
 
 # Security settings
 SECURE_SSL_REDIRECT = not DEBUG
@@ -356,13 +353,24 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 
-# Logging
+# Logging mejorado con seguridad
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+    },
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+        'security': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
         },
     },
     'loggers': {
@@ -371,9 +379,14 @@ LOGGING = {
             'level': 'ERROR',
             'propagate': False,
         },
-        'apps.appointments_api': {
-            'handlers': ['console'],
-            'level': 'ERROR',
+        'django.security': {
+            'handlers': ['security'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+        'apps.auth_api': {
+            'handlers': ['security'],
+            'level': 'INFO',
             'propagate': False,
         },
         '': {
@@ -381,7 +394,6 @@ LOGGING = {
             'level': 'DEBUG' if DEBUG else 'INFO',
         },
     },
-
 }
 
 

@@ -81,14 +81,14 @@ ls -la media/
 ls -la staticfiles/
 
 echo ""
-echo "✅ Preparación de producción completada!"
+echo " Preparación de producción completada!"
 echo ""
-echo "🚀 Para iniciar en producción:"
+echo " Para iniciar en producción:"
 echo "   docker compose -f docker-compose.prod.yml up -d"
 echo ""
-echo "📊 Para monitorear:"
+echo " Para monitorear:"
 echo "   docker compose -f docker-compose.prod.yml logs -f"
 echo ""
-echo "🛑 Para detener:"
+echo " Para detener:"
 echo "   docker compose -f docker-compose.prod.yml down"
 echo ""
