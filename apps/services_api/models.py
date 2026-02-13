@@ -7,6 +7,27 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+class ServiceCategory(models.Model):
+    name = models.CharField(max_length=100)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='service_categories')
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Categoría de Servicio'
+        verbose_name_plural = 'Categorías de Servicios'
+        unique_together = ('name', 'tenant')
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['tenant']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return self.name
+
 class Service(models.Model):
     name = models.CharField(max_length=100)
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='services')
@@ -17,7 +38,7 @@ class Service(models.Model):
         )
 
     description = models.TextField(blank=True, null=True)
-    category = models.CharField(max_length=50, blank=True, null=True)
+    categories = models.ManyToManyField(ServiceCategory, blank=True, related_name='services')
     duration = models.PositiveIntegerField(default=30, help_text="Duración en minutos")
     allowed_roles = models.ManyToManyField(Role, blank=True, related_name='services')
     is_active = models.BooleanField(default=True)
