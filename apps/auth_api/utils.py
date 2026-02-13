@@ -7,7 +7,9 @@ def get_client_ip(request):
     return request.META.get('REMOTE_ADDR')
 
 def get_user_agent(request):
-    return request.META.get('HTTP_USER_AGENT', '')
+    user_agent = request.META.get('HTTP_USER_AGENT', '')
+    # Truncar a 255 caracteres para evitar error DataError
+    return user_agent[:255] if user_agent else ''
 
 def get_client_jti(token:str):
     try:

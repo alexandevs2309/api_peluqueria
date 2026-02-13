@@ -24,8 +24,15 @@ class TenantViewSet(viewsets.ModelViewSet):
     """
     queryset = Tenant.objects.all()
     serializer_class = TenantSerializer
-    permission_classes = [IsSuperAdmin]  # SOLO SuperAdmin
-    pagination_class = None  # Disable pagination for tenants list
+    permission_classes = [IsSuperAdmin]
+    pagination_class = None
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete']
+
+    def get_permissions(self):
+        # Permitir acceso autenticado para subscription_status
+        if self.action == 'subscription_status':
+            return [permissions.IsAuthenticated()]
+        return super().get_permissions()
 
     def get_queryset(self):
         # SuperAdmin ve todos los tenants
@@ -118,6 +125,13 @@ class TenantViewSet(viewsets.ModelViewSet):
             return response.Response(serializer.data)
         return response.Response({"error": "No tenant assigned"}, status=404)
     
+    @decorators.action(detail=False, methods=["get"])
+    def subscription_status(self, request):
+        """Check subscription status - will trigger middleware validation"""
+        if request.user.tenant:
+            return response.Response({"status": "active"})
+        return response.Response({"error": "No tenant assigned"}, status=403)
+    
     @decorators.action(detail=False, methods=["post"])
     def bulk_activate(self, request):
         """Bulk activate tenants"""
@@ -133,3 +147,12 @@ class TenantViewSet(viewsets.ModelViewSet):
         tenants = Tenant.objects.filter(id__in=tenant_ids)
         tenants.update(is_active=False)
         return response.Response({"deactivated": len(tenants)})
+    
+    @decorators.action(detail=False, methods=["post"])
+    def bulk_delete(self, request):
+        """Bulk delete tenants"""
+        tenant_ids = request.data.get('tenant_ids', [])
+        tenants = Tenant.objects.filter(id__in=tenant_ids)
+        count = tenants.count()
+        tenants.delete()
+        return response.Response({"deleted": count})

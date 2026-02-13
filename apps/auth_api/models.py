@@ -101,9 +101,9 @@ class User(AbstractBaseUser, PermissionsMixin):
 class LoginAudit(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="login_audits")
     ip_address = models.GenericIPAddressField(null=True, blank=True,)
-    user_agent = models.TextField(null=True, blank=True,)
+    user_agent = models.CharField(max_length=255, blank=True, null=True)
     successful = models.BooleanField(default=False)
-    message = models.TextField(null=True, blank=True,)
+    message = models.CharField(max_length=255, blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -129,7 +129,7 @@ class AccessLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     event_type = models.CharField(max_length=30, choices=EVENT_CHOICES)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.TextField(blank=True)
+    user_agent = models.CharField(max_length=255, blank=True, null=True)
     timestamp = models.DateTimeField(auto_now_add=True)
 
 
@@ -146,9 +146,9 @@ class ActiveSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sessions_active")
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, null=True, blank=True)
     ip_address = models.GenericIPAddressField(blank=True, null=True)
-    user_agent = models.TextField(blank=True , null=True) 
-    token_jti = models.CharField(max_length=255, unique=True)
-    refresh_token = models.CharField(max_length=255, unique=True)
+    user_agent = models.CharField(max_length=255, blank=True, null=True) 
+    token_jti = models.TextField(unique=True)
+    refresh_token = models.TextField(unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)

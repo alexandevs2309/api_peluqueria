@@ -27,22 +27,22 @@ class InvoiceSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "user", "is_paid", "issued_at", "status", "paid_at"]
     
     def get_user_email(self, obj):
-        return obj.user.email if obj.user else "Sin usuario"
+        return obj.user.email if obj.user else None
     
     def get_user_name(self, obj):
         if obj.user:
             return getattr(obj.user, 'full_name', None) or f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.email
-        return "Sin usuario"
+        return None
     
     def get_tenant_name(self, obj):
         if obj.user and hasattr(obj.user, 'tenant') and obj.user.tenant:
             return obj.user.tenant.name
-        return "Sin tenant"
+        return None
     
     def get_plan_name(self, obj):
-        if obj.subscription and obj.subscription.plan:
+        if obj.subscription and hasattr(obj.subscription, 'plan') and obj.subscription.plan:
             return obj.subscription.plan.get_name_display()
-        return "Sin plan"
+        return None
     
     def validate_amount(self, value):
         """Validar que el monto sea positivo"""
