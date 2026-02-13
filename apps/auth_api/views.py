@@ -44,6 +44,28 @@ from .authentication import DualJWTAuthentication
 
 User = get_user_model()
 
+# Helper function to safely create audit logs
+def safe_create_login_audit(user, request, successful, message):
+    """Crear LoginAudit truncando campos largos"""
+    return LoginAudit.objects.create(
+        user=user,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request)[:255] if get_user_agent(request) else '',
+        successful=successful,
+        message=str(message)[:255] if message else '',
+        timestamp=now()
+    )
+
+def safe_create_access_log(user, event_type, request):
+    """Crear AccessLog truncando campos largos"""
+    return AccessLog.objects.create(
+        user=user,
+        event_type=event_type,
+        ip_address=get_client_ip(request),
+        user_agent=get_user_agent(request)[:255] if get_user_agent(request) else '',
+        timestamp=now()
+    )
+
 class RegisterThrottle(AnonRateThrottle):
     scope = 'register'
 
@@ -182,13 +204,11 @@ class LoginView(generics.GenericAPIView):
             else:
                 user = User.objects.filter(email=email).first()
             
-            LoginAudit.objects.create(
+            safe_create_login_audit(
                 user=user,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                request=request,
                 successful=False,
-                message=f"Credenciales inválidas - Tenant: {tenant_subdomain or 'unknown'}",
-                timestamp=now()
+                message=f"Credenciales inválidas - Tenant: {tenant_subdomain or 'unknown'}"
             )
             raise
         
@@ -202,9 +222,9 @@ class LoginView(generics.GenericAPIView):
             LoginAudit.objects.create(
                 user=user,
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 successful=False,
-                message="Cuenta inactiva",
+                message="Cuenta inactiva"[:255],
                 timestamp=now()
             )
             return Response({"detail": "Cuenta inactiva. Contacte al administrador."}, status=status.HTTP_403_FORBIDDEN)
@@ -228,7 +248,7 @@ class LoginView(generics.GenericAPIView):
         ActiveSession.objects.create(
             user=user,
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             token_jti=jti,
             refresh_token=refresh_token,
             is_active=True,
@@ -239,21 +259,24 @@ class LoginView(generics.GenericAPIView):
             user=user,
             event_type='LOGIN',
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             timestamp=now()
         )
         LoginAudit.objects.create(
             user=user,
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             successful=True,
-            message="Inicio de sesión exitoso",
+            message="Inicio de sesión exitoso"[:255],
             timestamp=now()
         )
 
-        user_role = user.role or 'ClientStaff'
+        user_role = user.role or 'CLIENT_STAFF'
         if not user_role and user.roles.exists():
             user_role = user.roles.first().name
+        
+        # Normalizar rol para frontend: Client-Admin -> CLIENT_ADMIN
+        user_role = user_role.upper().replace('-', '_')
         
         response_data = {
             'user': {
@@ -324,7 +347,7 @@ class LogoutView(APIView):
                             user=request.user,
                             event_type='LOGOUT',
                             ip_address=get_client_ip(request),
-                            user_agent=get_user_agent(request),
+                            user_agent=get_user_agent(request)[:255],
                             timestamp=now()
                         )
                 except ActiveSession.DoesNotExist:
@@ -358,7 +381,7 @@ class ChangePasswordView(generics.UpdateAPIView):
                 user=user,
                 event_type='PASSWORD_CHANGE',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
 
@@ -392,16 +415,28 @@ class PasswordResetRequestView(APIView):
             user = User.objects.get(email=serializer.validated_data['email'])
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
-            reset_url = f"http://localhost:4200/reset-password/{uid}/{token}/"
+            
+            # Use environment variable for frontend URL
+            frontend_url = settings.FRONTEND_URL if hasattr(settings, 'FRONTEND_URL') else 'http://localhost:4200'
+            reset_url = f"{frontend_url}/auth/reset-password/{uid}/{token}"
 
             AccessLog.objects.create(
                 user=user,
                 event_type='PASSWORD_RESET_REQUEST',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
 
+            # En desarrollo, imprimir en consola
+            if settings.DEBUG:
+                print("\n" + "="*80)
+                print(f"🔑 ENLACE DE RECUPERACIÓN DE CONTRASEÑA")
+                print("="*80)
+                print(f"Usuario: {user.email}")
+                print(f"Enlace: {reset_url}")
+                print("="*80 + "\n")
+            
             if "pytest" in sys.modules:
                 send_mail(
                     "Restablecer contraseña",
@@ -433,7 +468,7 @@ class PasswordResetConfirmView(APIView):
             user=user,
             event_type='PASSWORD_RESET_CONFIRM',
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             timestamp=now()
         )
 
@@ -477,7 +512,7 @@ class ActiveSessionsView(generics.ListAPIView):
                 user=request.user,
                 event_type='ACTIVE_SESSIONS_VIEW',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
             return self.get_paginated_response(serializer.data)  # Devolver respuesta paginada
@@ -486,7 +521,7 @@ class ActiveSessionsView(generics.ListAPIView):
             user=request.user,
             event_type='ACTIVE_SESSIONS_VIEW',
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             timestamp=now()
         )
         return Response(serializer.data)
@@ -502,7 +537,7 @@ class TerminateSessionView(APIView):
                 user=request.user,
                 event_type='SESSION_TERMINATED',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
             return Response({"detail": "Sesión terminada exitosamente."}, status=status.HTTP_200_OK)
@@ -522,7 +557,7 @@ class VerifyEmailView(APIView):
                 user=user,
                 event_type='EMAIL_VERIFIED',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
             return Response({"detail": "Correo verificado exitosamente."}, status=status.HTTP_200_OK)
@@ -552,7 +587,7 @@ class MFASetupView(APIView):
             user=user,
             event_type='MFA_SETUP',
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             timestamp=now()
         )
         return Response({"qr_code": qr_code, "secret": secret})
@@ -572,7 +607,7 @@ class MFAVerifyView(APIView):
                 user=user,
                 event_type='MFA_VERIFIED',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
             return Response({"detail": "MFA verificado y habilitado."})
@@ -601,9 +636,9 @@ class MFALoginVerifyView(APIView):
             LoginAudit.objects.create(
                 user=user,
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 successful=False,
-                message="Código MFA inválido",
+                message="Código MFA inválido"[:255],
                 timestamp=now()
             )
             return Response({"error": "Código MFA inválido."}, status=status.HTTP_400_BAD_REQUEST)
@@ -616,7 +651,7 @@ class MFALoginVerifyView(APIView):
         ActiveSession.objects.create(
             user=user,
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             token_jti=jti,
             refresh_token=refresh_token,
             is_active=True,
@@ -627,15 +662,15 @@ class MFALoginVerifyView(APIView):
             user=user,
             event_type='LOGIN_MFA',
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             timestamp=now()
         )
         LoginAudit.objects.create(
             user=user,
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=get_user_agent(request)[:255],
             successful=True,
-            message="Inicio de sesión con MFA exitoso",
+            message="Inicio de sesión con MFA exitoso"[:255],
             timestamp=now()
         )
 
@@ -676,6 +711,7 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     permission_classes = [IsAuthenticated]
     serializer_class = UserListSerializer
+    http_method_names = ['get', 'post', 'put', 'patch', 'delete']
     
     def destroy(self, request, *args, **kwargs):
         """Override destroy to add logging and proper deletion"""
@@ -694,7 +730,7 @@ class UserViewSet(viewsets.ModelViewSet):
                 user=request.user,
                 event_type='USER_DELETED',
                 ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                user_agent=get_user_agent(request)[:255],
                 timestamp=now()
             )
             
@@ -823,6 +859,24 @@ class UserViewSet(viewsets.ModelViewSet):
             'tenant_id': user.tenant_id,
             'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
         } for user in users])
+    
+    @action(detail=False, methods=['post'])
+    def bulk_delete(self, request):
+        """Bulk delete users"""
+        user_ids = request.data.get('user_ids', [])
+        users = self.get_queryset().filter(id__in=user_ids)
+        
+        # Prevent deleting last superuser
+        if users.filter(is_superuser=True).exists():
+            remaining_superusers = User.objects.filter(is_superuser=True).exclude(id__in=user_ids).count()
+            if remaining_superusers == 0:
+                return Response({
+                    'error': 'Cannot delete all superusers'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        
+        count = users.count()
+        users.delete()
+        return Response({'deleted': count})
 
 
 class VerifyAuthView(APIView):

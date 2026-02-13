@@ -20,10 +20,10 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             '/api/subscriptions/plans/',  # Permitir ver planes
             '/api/subscriptions/register/',  # Permitir registro
             '/api/subscriptions/register-with-plan/',  # Permitir registro con plan
+            '/api/subscriptions/renew/',  # Permitir renovación
             '/api/payments/',
             '/api/billing/',
             '/api/settings/contact/',
-            '/api/pos/',  # Permitir operaciones POS
         ]
         
         for exempt_path in exempt_paths:

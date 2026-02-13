@@ -15,6 +15,27 @@ import re
 
 User = get_user_model()
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def check_email_availability(request):
+    """
+    Endpoint para verificar si un email está disponible para registro
+    """
+    email = request.GET.get('email', '').strip()
+    
+    if not email:
+        return Response({
+            'error': 'Email es requerido'
+        }, status=status.HTTP_400_BAD_REQUEST)
+    
+    # Verificar si el email ya existe
+    exists = User.objects.filter(email__iexact=email).exists()
+    
+    return Response({
+        'available': not exists,
+        'email': email
+    }, status=status.HTTP_200_OK)
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register_with_plan(request):
@@ -117,6 +138,18 @@ def register_with_plan(request):
                     )
                     print(f"Suscripción trial creada: {user_subscription.id} hasta {trial_end}")
 
+                    # Crear factura inicial (pendiente para después del trial)
+                    from apps.billing_api.models import Invoice
+                    invoice = Invoice.objects.create(
+                        user=user,
+                        subscription=user_subscription,
+                        amount=subscription_plan.price,
+                        description=f"{subscription_plan.get_name_display()} - Primer mes",
+                        due_date=trial_end,
+                        status='pending'
+                    )
+                    print(f"Factura creada: #{invoice.id} por ${invoice.amount} vence {trial_end}")
+
                     # Crear sucursal principal por defecto
                     default_branch = Branch.objects.create(
                         tenant=tenant,
@@ -192,16 +225,23 @@ def generate_unique_subdomain(business_name, user_id):
     
     # Limpiar nombre del negocio
     clean_name = re.sub(r'[^a-zA-Z0-9]', '', business_name.lower())
-    clean_name = clean_name[:20]  # Máximo 20 caracteres
+    clean_name = clean_name[:15]  # Máximo 15 caracteres para dejar espacio al user_id
     
-    # Generar subdomain base
+    # Generar subdomain base (máximo 50 caracteres total)
     base_subdomain = f"{clean_name}{user_id}"
+    
+    # Asegurar que no exceda 50 caracteres
+    if len(base_subdomain) > 50:
+        base_subdomain = base_subdomain[:50]
     
     # Verificar unicidad
     subdomain = base_subdomain
     counter = 1
     while Tenant.objects.filter(subdomain=subdomain).exists():
-        subdomain = f"{base_subdomain}{counter}"
+        # Asegurar que con el counter tampoco exceda 50
+        suffix = str(counter)
+        max_base_len = 50 - len(suffix)
+        subdomain = f"{base_subdomain[:max_base_len]}{suffix}"
         counter += 1
     
     return subdomain

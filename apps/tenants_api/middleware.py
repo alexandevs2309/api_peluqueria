@@ -32,6 +32,8 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/subscriptions/plans/',  # Allow subscription plans access
             '/api/subscriptions/register/',  # Allow registration
             '/api/subscriptions/register-with-plan/',  # Allow registration with plan
+            '/api/subscriptions/renew/',  # Allow subscription renewal
+            '/api/tenants/subscription-status/',  # Allow subscription status check
             '/api/settings/contact/',  # Allow contact forms
             '/api/settings/admin/',  # Allow super admin endpoints
         ]
@@ -79,20 +81,32 @@ class TenantMiddleware(MiddlewareMixin):
         
         # Verificar y manejar trial expirado
         if request.tenant:
-            request.tenant.check_and_suspend_expired_trial()
-            access_level = request.tenant.get_access_level()
+            # Verificar rutas que no requieren validación de suscripción
+            subscription_exempt_paths = [
+                '/api/subscriptions/renew/',
+                '/api/tenants/subscription-status/',
+                '/api/subscriptions/plans/',
+            ]
             
-            if access_level == 'blocked':
-                return JsonResponse({
-                    'error': 'Access blocked',
-                    'code': 'SUBSCRIPTION_REQUIRED',
-                    'message': 'Your trial has expired. Please subscribe to continue using the service.',
-                    'upgrade_url': '/subscriptions/upgrade/'
-                }, status=402)
-            elif access_level == 'grace':
-                # Permitir acceso pero agregar header de advertencia
-                response = None
-                request.grace_period = True
+            is_subscription_exempt = any(
+                request.path.startswith(path) for path in subscription_exempt_paths
+            )
+            
+            if not is_subscription_exempt:
+                request.tenant.check_and_suspend_expired_trial()
+                access_level = request.tenant.get_access_level()
+                
+                if access_level == 'blocked':
+                    return JsonResponse({
+                        'error': 'Access blocked',
+                        'code': 'SUBSCRIPTION_REQUIRED',
+                        'message': 'Your trial has expired. Please subscribe to continue using the service.',
+                        'upgrade_url': '/subscriptions/upgrade/'
+                    }, status=402)
+                elif access_level == 'grace':
+                    # Permitir acceso pero agregar header de advertencia
+                    response = None
+                    request.grace_period = True
             
             # Enviar notificaciones de trial
             self.check_trial_notifications(request.tenant)

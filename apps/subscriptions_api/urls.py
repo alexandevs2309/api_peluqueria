@@ -9,7 +9,7 @@ from .views import (
     OnboardingView,
     RenewSubscriptionView,
 )
-from .registration_views import register_with_plan
+from .registration_views import register_with_plan, check_email_availability
 
 router = DefaultRouter()
 router.register(r'plans', SubscriptionPlanViewSet, basename='subscription-plan')
@@ -21,6 +21,7 @@ urlpatterns = [
     path("me/active/", MyActiveSubscriptionView.as_view(), name="my-active-subscription"),
     path("me/entitlements/", MyEntitlementsView.as_view(), name="my-entitlements"),
     path("register/", register_with_plan, name="register-with-plan"),
+    path("check-email/", check_email_availability, name="check-email-availability"),
     path("onboard/", OnboardingView.as_view(), name="onboarding"),
     path("renew/", RenewSubscriptionView.as_view(), name="renew-subscription"),
 ]
