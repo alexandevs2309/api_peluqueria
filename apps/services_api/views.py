@@ -3,8 +3,18 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
-from .models import Service
-from .serializers import ServiceSerializer
+from .models import Service, ServiceCategory
+from .serializers import ServiceSerializer, ServiceCategorySerializer
+
+class ServiceCategoryViewSet(viewsets.ModelViewSet):
+    serializer_class = ServiceCategorySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return ServiceCategory.objects.filter(tenant=self.request.user.tenant, is_active=True)
+    
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user.tenant)
 
 class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = ServiceSerializer
@@ -15,7 +25,7 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         filters.SearchFilter,
         filters.OrderingFilter
     ]
-    filterset_fields = ['price', 'is_active', 'category']
+    filterset_fields = ['price', 'is_active']
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'price']
     ordering = ['name']
