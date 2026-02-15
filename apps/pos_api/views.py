@@ -151,73 +151,83 @@ class SaleViewSet(viewsets.ModelViewSet):
         # Validar caja abierta y obtener la sesión
         open_register = self._validate_cash_register()
         
-        # Calcular totales automáticamente
-        details = self.request.data.get('details', [])
-        total = Decimal('0')
+        # Usar transacción atómica para evitar race conditions
+        from django.db import transaction
         
-        for detail in details:
-            try:
-                quantity = Decimal(str(detail.get('quantity', 1)))
-                if quantity <= 0:
-                    raise serializers.ValidationError(f"La cantidad debe ser mayor a 0")
+        with transaction.atomic():
+            # Calcular totales y validar stock con LOCKS
+            details = self.request.data.get('details', [])
+            total = Decimal('0')
+            
+            # Lista para almacenar productos bloqueados
+            locked_products = []
+            
+            for detail in details:
+                try:
+                    quantity = Decimal(str(detail.get('quantity', 1)))
+                    if quantity <= 0:
+                        raise serializers.ValidationError(f"La cantidad debe ser mayor a 0")
+                        
+                    price = Decimal(str(detail.get('price', 0)))
+                    if price < 0:
+                        raise serializers.ValidationError(f"El precio no puede ser negativo")
+                        
+                    total += quantity * price
                     
-                price = Decimal(str(detail.get('price', 0)))
-                if price < 0:
-                    raise serializers.ValidationError(f"El precio no puede ser negativo")
-                    
-                total += quantity * price
-                
-                # Validar stock si es producto
-                if detail.get('content_type') == 'product':
-                    from apps.inventory_api.models import Product
-                    try:
-                        object_id = int(detail.get('object_id'))
-                        product = Product.objects.get(id=object_id)
-                        if not product.is_active:
-                            raise serializers.ValidationError(f"El producto {product.name} no está activo")
-                        if product.stock < quantity:
-                            raise serializers.ValidationError(
-                                f"Stock insuficiente para {product.name}. Disponible: {product.stock}"
-                            )
-                    except (Product.DoesNotExist, ValueError, TypeError):
-                        raise serializers.ValidationError("Producto no encontrado o ID inválido")
-            except (InvalidOperation, TypeError):
-                raise serializers.ValidationError("Valores inválidos para cantidad o precio")
-        
-        # Aplicar descuento
-        discount = Decimal(str(self.request.data.get('discount', 0)))
-        total_with_discount = total - discount
-        
-        # Determinar el empleado para la venta
-        sale_employee = None
-        employee_id = self.request.data.get('employee_id')
-        if employee_id:
-            from apps.employees_api.models import Employee
-            try:
-                sale_employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
-            except Employee.DoesNotExist:
-                pass
-        
-        # Obtener o crear período activo para el empleado
-        active_period = None
-        if sale_employee:
-            active_period = self._get_or_create_active_period(sale_employee)
-        
-        # Guardar venta - asignar sesión de caja
-        sale = serializer.save(
-            user=self.request.user,
-            employee=sale_employee,
-            period=active_period,
-            cash_register=open_register,
-            total=total_with_discount
-        )
-        
-        # Actualizar inventario
-        for detail in details:
-            if detail.get('content_type') == 'product':
-                from apps.inventory_api.models import Product, StockMovement
-                product = Product.objects.get(id=detail.get('object_id'))
-                quantity = int(detail.get('quantity', 1))
+                    # Validar y BLOQUEAR stock si es producto
+                    if detail.get('content_type') == 'product':
+                        from apps.inventory_api.models import Product
+                        try:
+                            object_id = int(detail.get('object_id'))
+                            # LOCK: Bloquear fila para actualización
+                            product = Product.objects.select_for_update().get(id=object_id)
+                            
+                            if not product.is_active:
+                                raise serializers.ValidationError(f"El producto {product.name} no está activo")
+                            
+                            # Validar stock DESPUÉS del lock
+                            if product.stock < quantity:
+                                raise serializers.ValidationError(
+                                    f"Stock insuficiente para {product.name}. Disponible: {product.stock}, Solicitado: {quantity}"
+                                )
+                            
+                            locked_products.append((product, quantity))
+                        except (Product.DoesNotExist, ValueError, TypeError):
+                            raise serializers.ValidationError("Producto no encontrado o ID inválido")
+                except (InvalidOperation, TypeError):
+                    raise serializers.ValidationError("Valores inválidos para cantidad o precio")
+            
+            # Aplicar descuento
+            discount = Decimal(str(self.request.data.get('discount', 0)))
+            total_with_discount = total - discount
+            
+            # Determinar el empleado para la venta
+            sale_employee = None
+            employee_id = self.request.data.get('employee_id')
+            if employee_id:
+                from apps.employees_api.models import Employee
+                try:
+                    sale_employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
+                except Employee.DoesNotExist:
+                    pass
+            
+            # Obtener o crear período activo para el empleado
+            active_period = None
+            if sale_employee:
+                active_period = self._get_or_create_active_period(sale_employee)
+            
+            # Guardar venta - asignar sesión de caja
+            sale = serializer.save(
+                user=self.request.user,
+                employee=sale_employee,
+                period=active_period,
+                cash_register=open_register,
+                total=total_with_discount
+            )
+            
+            # Actualizar inventario de productos bloqueados
+            for product, quantity in locked_products:
+                from apps.inventory_api.models import StockMovement
                 
                 # Reducir stock
                 product.stock -= quantity
@@ -229,32 +239,32 @@ class SaleViewSet(viewsets.ModelViewSet):
                     quantity=-quantity,
                     reason=f"Venta #{sale.id}"
                 )
-        
-        # Actualizar cita si existe
-        appointment_id = self.request.data.get('appointment_id')
-        if appointment_id:
-            from apps.appointments_api.models import Appointment
-            try:
-                appointment = Appointment.objects.get(id=appointment_id)
-                appointment.status = "completed"
-                appointment.sale = sale  # Vincular venta con cita
-                appointment.save()
-                
-                # Actualizar última visita del cliente
-                if appointment.client:
-                    appointment.client.last_visit = timezone.now()
-                    appointment.client.save()
+            
+            # Actualizar cita si existe
+            appointment_id = self.request.data.get('appointment_id')
+            if appointment_id:
+                from apps.appointments_api.models import Appointment
+                try:
+                    appointment = Appointment.objects.get(id=appointment_id)
+                    appointment.status = "completed"
+                    appointment.sale = sale  # Vincular venta con cita
+                    appointment.save()
                     
-                # Crear ganancia automática para el empleado
-                if sale_employee:
-                    self._create_employee_earning(sale, sale_employee.user)
-                    
-            except Appointment.DoesNotExist:
-                pass
-        
-        # Si no hay cita pero hay empleado asignado, crear ganancia
-        elif sale_employee:
-            self._create_employee_earning(sale, sale_employee.user)
+                    # Actualizar última visita del cliente
+                    if appointment.client:
+                        appointment.client.last_visit = timezone.now()
+                        appointment.client.save()
+                        
+                    # Crear ganancia automática para el empleado
+                    if sale_employee:
+                        self._create_employee_earning(sale, sale_employee.user)
+                        
+                except Appointment.DoesNotExist:
+                    pass
+            
+            # Si no hay cita pero hay empleado asignado, crear ganancia
+            elif sale_employee:
+                self._create_employee_earning(sale, sale_employee.user)
        
             
 
@@ -455,6 +465,54 @@ class SaleViewSet(viewsets.ModelViewSet):
             results=serializer.data,
             count=queryset.count()
         ))
+
+    @action(detail=False, methods=['post'])
+    def validate_stock(self, request):
+        """Validar stock en tiempo real antes de confirmar venta"""
+        from apps.inventory_api.models import Product
+        from django.db import transaction
+        
+        items = request.data.get('items', [])
+        errors = []
+        
+        with transaction.atomic():
+            for item in items:
+                if item.get('type') == 'product':
+                    try:
+                        product_id = int(item.get('id'))
+                        quantity = int(item.get('quantity', 1))
+                        
+                        # Bloquear producto para lectura
+                        product = Product.objects.select_for_update().get(id=product_id)
+                        
+                        if product.stock < quantity:
+                            errors.append({
+                                'product_id': product_id,
+                                'product_name': product.name,
+                                'requested': quantity,
+                                'available': product.stock,
+                                'message': f'{product.name}: Stock insuficiente. Disponible: {product.stock}, Solicitado: {quantity}'
+                            })
+                    except Product.DoesNotExist:
+                        errors.append({
+                            'product_id': product_id,
+                            'message': f'Producto {product_id} no encontrado'
+                        })
+                    except (ValueError, TypeError):
+                        errors.append({
+                            'message': 'ID de producto o cantidad inválidos'
+                        })
+        
+        if errors:
+            return Response({
+                'valid': False,
+                'errors': errors
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        return Response({
+            'valid': True,
+            'message': 'Stock disponible para todos los productos'
+        })
 
    
 
