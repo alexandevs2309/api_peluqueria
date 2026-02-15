@@ -17,6 +17,7 @@ class Sale(models.Model):
     employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     period = models.ForeignKey('employees_api.FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
+    cash_register = models.ForeignKey('CashRegister', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     date_time = models.DateTimeField(default=timezone.now)
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
     discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -28,7 +29,7 @@ class Sale(models.Model):
         ('mixed', 'Mixed'),
         ('other', 'Other')
     ], default='cash')
-    closed = models.BooleanField(default=False)  # Útil para arqueo de caja
+    closed = models.BooleanField(default=False)
 
     class Meta:
         ordering = ['-date_time']
@@ -183,10 +184,15 @@ class Receipt(models.Model):
 class PosConfiguration(models.Model):
     """Configuración del POS por tenant"""
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='pos_config')
+    business_name = models.CharField(max_length=255, blank=True)
+    address = models.TextField(blank=True)
+    phone = models.CharField(max_length=50, blank=True)
+    email = models.EmailField(blank=True)
+    website = models.URLField(blank=True)
     currency = models.CharField(max_length=3, default='USD')
     currency_symbol = models.CharField(max_length=5, default='$')
-    tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=0.0000)  # 0.1600 = 16%
-    tax_included = models.BooleanField(default=False)  # Si el precio incluye impuestos
+    tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=0.0000)
+    tax_included = models.BooleanField(default=False)
     receipt_template = models.TextField(default='default')
     receipt_footer = models.TextField(blank=True)
     auto_print_receipt = models.BooleanField(default=False)

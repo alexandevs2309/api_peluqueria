@@ -148,7 +148,7 @@ class SaleViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
 
-        # Validar caja abierta
+        # Validar caja abierta y obtener la sesión
         open_register = self._validate_cash_register()
         
         # Calcular totales automáticamente
@@ -203,11 +203,12 @@ class SaleViewSet(viewsets.ModelViewSet):
         if sale_employee:
             active_period = self._get_or_create_active_period(sale_employee)
         
-        # Guardar venta - asignar al empleado que realizó el servicio
+        # Guardar venta - asignar sesión de caja
         sale = serializer.save(
-            user=self.request.user,  # Usuario que registra la venta
-            employee=sale_employee,  # Empleado que realizó el servicio
-            period=active_period,    # Período activo
+            user=self.request.user,
+            employee=sale_employee,
+            period=active_period,
+            cash_register=open_register,
             total=total_with_discount
         )
         
@@ -547,11 +548,9 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         })
     
     def _calculate_cash_sales(self, register):
-        """Calcular ventas en efectivo del día del tenant"""
-        # Incluir ventas con empleado del tenant y ventas sin empleado del usuario
+        """Calcular ventas en efectivo de ESTA sesión de caja"""
         cash_sales = Sale.objects.filter(
-            Q(employee__tenant=register.user.tenant) | Q(user__tenant=register.user.tenant, employee__isnull=True),
-            date_time__date=register.opened_at.date(),
+            cash_register=register,
             payment_method='cash'
         ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
         return cash_sales
@@ -606,15 +605,28 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
 @api_view(['GET'])  
 def daily_summary(request):
         today = timezone.localdate()
-        if request.user.is_superuser:
-            sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
-        elif request.user.tenant:
-            sales = Sale.objects.filter(
-                Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
-                date_time__date=today
-            )
+        
+        # Obtener sesión de caja abierta
+        open_register = CashRegister.objects.filter(
+            user=request.user,
+            is_open=True,
+            opened_at__date=today
+        ).first()
+        
+        if open_register:
+            # Filtrar ventas de esta sesión de caja
+            sales = Sale.objects.filter(cash_register=open_register)
         else:
-            sales = Sale.objects.none()
+            # No hay caja abierta, mostrar ventas del día
+            if request.user.is_superuser:
+                sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
+            elif request.user.tenant:
+                sales = Sale.objects.filter(
+                    Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
+                    date_time__date=today
+                )
+            else:
+                sales = Sale.objects.none()
 
         total = sales.aggregate(total=Sum('total'))['total'] or 0
         paid = sales.aggregate(paid=Sum('paid'))['paid'] or 0
