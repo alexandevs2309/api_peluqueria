@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from .views import EmployeeViewSet, WorkScheduleViewSet
-from .earnings_views import EarningViewSet, FortnightSummaryViewSet
+from .earnings_views import EarningViewSet, FortnightSummaryViewSet, PayrollViewSet
 from .notifications_views import recent_earnings_notifications, mark_notification_read
 
 @api_view(['GET'])
@@ -31,6 +31,7 @@ router.register(r'employees', EmployeeViewSet , basename='employee')
 router.register(r'schedules', WorkScheduleViewSet , basename='work_schedule')
 router.register(r'earnings', EarningViewSet, basename='earning')
 router.register(r'fortnight-summaries', FortnightSummaryViewSet, basename='fortnight-summary')
+router.register(r'payroll', PayrollViewSet, basename='payroll')
 
 urlpatterns = [
     path('', include(router.urls)),

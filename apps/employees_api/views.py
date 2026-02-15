@@ -148,6 +148,38 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             'sales_last_month': sales_count,
             'services_count': EmployeeService.objects.filter(employee=employee).count()
         })
+    
+    @action(detail=True, methods=['get', 'put'], url_path='payroll_config')
+    def payroll_config(self, request, pk=None):
+        employee = self.get_object()
+        
+        if request.method == 'GET':
+            return Response({
+                'payment_type': employee.payment_type or 'commission',
+                'fixed_salary': float(employee.fixed_salary or 0),
+                'commission_rate': float(employee.commission_rate or 40)
+            })
+        
+        elif request.method == 'PUT':
+            payment_type = request.data.get('payment_type')
+            if payment_type and payment_type not in ['fixed', 'commission', 'mixed']:
+                return Response({'error': 'payment_type inválido'}, status=400)
+            
+            if payment_type:
+                employee.payment_type = payment_type
+            if 'fixed_salary' in request.data:
+                employee.fixed_salary = request.data['fixed_salary']
+            if 'commission_rate' in request.data:
+                employee.commission_rate = request.data['commission_rate']
+            
+            employee.save()
+            
+            return Response({
+                'message': 'Configuración actualizada',
+                'payment_type': employee.payment_type,
+                'fixed_salary': float(employee.fixed_salary or 0),
+                'commission_rate': float(employee.commission_rate or 40)
+            })
 
 class WorkScheduleViewSet(viewsets.ModelViewSet):
     queryset = WorkSchedule.objects.all()
