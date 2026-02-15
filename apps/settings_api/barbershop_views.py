@@ -11,6 +11,23 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         """Get barbershop settings"""
         try:
             settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
+            
+            # Cargar configuración POS si existe
+            pos_config = None
+            try:
+                from apps.pos_api.models import PosConfiguration
+                pos = PosConfiguration.objects.filter(user=request.user).first()
+                if pos:
+                    pos_config = {
+                        'business_name': pos.business_name,
+                        'address': pos.address,
+                        'phone': pos.phone,
+                        'email': pos.email,
+                        'website': pos.website
+                    }
+            except:
+                pass
+            
             return Response({
                 'name': settings.name,
                 'logo': settings.logo.url if settings.logo else None,
@@ -20,6 +37,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 'default_fixed_salary': float(settings.default_fixed_salary),
                 'business_hours': settings.business_hours,
                 'contact': settings.contact,
+                'pos_config': pos_config,
                 'tax_rate': float(settings.tax_rate),
                 'service_discount_limit': float(settings.service_discount_limit),
                 'cancellation_policy_hours': settings.cancellation_policy_hours,
@@ -49,6 +67,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'email': '',
                     'address': ''
                 },
+                'pos_config': None,
                 'tax_rate': 0.0,
                 'service_discount_limit': 20.0,
                 'cancellation_policy_hours': 24,
@@ -59,6 +78,20 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     def create(self, request):
         """Save barbershop settings"""
         data = request.data
+        
+        # Guardar configuración POS si viene en los datos
+        if 'pos_config' in data and data['pos_config']:
+            try:
+                from apps.pos_api.models import PosConfiguration
+                pos, created = PosConfiguration.objects.get_or_create(user=request.user)
+                pos.business_name = data['pos_config'].get('business_name', '')
+                pos.address = data['pos_config'].get('address', '')
+                pos.phone = data['pos_config'].get('phone', '')
+                pos.email = data['pos_config'].get('email', '')
+                pos.website = data['pos_config'].get('website', '')
+                pos.save()
+            except Exception as e:
+                pass
         
         settings, created = BarbershopSettings.objects.get_or_create(
             tenant=request.user.tenant,
