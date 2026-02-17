@@ -15,26 +15,10 @@ class SaleViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def _create_employee_earning(self, sale, employee_user):
-        """Crea ganancia automática para el empleado"""
-        from apps.employees_api.models import Employee
-        from apps.employees_api.tasks import create_earning_from_sale
-        
-        try:
-            employee = Employee.objects.get(user=employee_user, tenant=sale.user.tenant)
-            
-            # Obtener porcentaje de comisión desde configuración o usar valor por defecto
-            pos_config = PosConfiguration.objects.filter(user=employee_user).first()
-            commission_percentage = pos_config.commission_percentage if pos_config else 50
-            
-            # Crear ganancia de forma asíncrona
-            create_earning_from_sale.delay(
-                sale_id=sale.id,
-                employee_id=employee.id,
-                percentage=commission_percentage
-            )
-            
-        except Employee.DoesNotExist:
-            pass
+        """Crea ganancia automática para el empleado - DEPRECATED"""
+        # Esta función ya no es necesaria porque las comisiones se calculan
+        # automáticamente desde los snapshots de Sale en PayrollPeriod
+        pass
 
     def create(self, request, *args, **kwargs):
         logger.info(f"Creating sale for user {request.user}")
@@ -87,19 +71,18 @@ class SaleViewSet(viewsets.ModelViewSet):
     
     def _get_or_create_active_period(self, employee):
         """Obtiene o crea el período activo para el empleado"""
-        from apps.employees_api.earnings_models import FortnightSummary
-        from datetime import datetime
+        from apps.employees_api.earnings_models import PayrollPeriod
         
-        # Buscar cualquier período activo (no cerrado) para el empleado
-        active_period = FortnightSummary.objects.filter(
+        # Buscar período abierto o pendiente
+        active_period = PayrollPeriod.objects.filter(
             employee=employee,
-            closed_at__isnull=True
+            status__in=['open', 'pending_approval']
         ).first()
         
         if active_period:
             return active_period
         
-        # No hay período activo, crear uno nuevo para la quincena actual o siguiente
+        # Crear período para quincena actual
         today = timezone.now().date()
         
         if today.day <= 15:
@@ -107,41 +90,17 @@ class SaleViewSet(viewsets.ModelViewSet):
             end_date = today.replace(day=15)
         else:
             start_date = today.replace(day=16)
-            last_day = (today.replace(month=today.month+1, day=1) - timezone.timedelta(days=1)).day
+            last_day = (today.replace(month=today.month+1 if today.month < 12 else 1, 
+                                     year=today.year if today.month < 12 else today.year+1, day=1) 
+                       - timezone.timedelta(days=1)).day
             end_date = today.replace(day=last_day)
         
-        year = start_date.year
-        month = start_date.month
-        fortnight_in_month = 1 if start_date.day <= 15 else 2
-        fortnight_number = (month - 1) * 2 + fortnight_in_month
-        
-        # Verificar si ya existe un período cerrado para esta quincena
-        existing_closed = FortnightSummary.objects.filter(
+        period = PayrollPeriod.objects.create(
             employee=employee,
-            fortnight_year=year,
-            fortnight_number=fortnight_number,
-            closed_at__isnull=False
-        ).exists()
-        
-        if existing_closed:
-            # Si ya hay un período cerrado para esta quincena, crear el siguiente
-            if fortnight_number < 24:  # No es la última quincena del año
-                fortnight_number += 1
-            else:
-                # Es la última quincena del año, crear la primera del siguiente año
-                year += 1
-                fortnight_number = 1
-        
-        # Usar get_or_create para evitar duplicados
-        period, created = FortnightSummary.objects.get_or_create(
-            employee=employee,
-            fortnight_year=year,
-            fortnight_number=fortnight_number,
-            defaults={
-                'total_earnings': 0,
-                'total_services': 0,
-                'is_paid': False
-            }
+            period_type='biweekly',
+            period_start=start_date,
+            period_end=end_date,
+            status='open'
         )
         return period
 
@@ -224,6 +183,11 @@ class SaleViewSet(viewsets.ModelViewSet):
                 cash_register=open_register,
                 total=total_with_discount
             )
+            
+            # NUEVO: Recalcular período después de guardar venta
+            if active_period:
+                active_period.calculate_amounts()
+                active_period.save()
             
             # Actualizar inventario de productos bloqueados
             for product, quantity in locked_products:
@@ -351,37 +315,117 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def refund(self, request, pk=None):
-        sale = self.get_object()
+        from django.db import transaction
+        from apps.employees_api.adjustment_models import CommissionAdjustment
+        from apps.employees_api.earnings_models import PayrollPeriod
+        from django.db import IntegrityError
+        import calendar
         
-        if sale.closed:
-            return Response(
-                {'error': 'No se puede reembolsar una venta cerrada'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        # Restaurar inventario
-        for detail in sale.details.all():
-            if detail.content_type == 'product':
-                from apps.inventory_api.models import Product, StockMovement
-                try:
-                    product = Product.objects.get(id=detail.object_id)
-                    product.stock += detail.quantity
-                    product.save()
-                    
-                    StockMovement.objects.create(
-                        product=product,
-                        quantity=detail.quantity,
-                        reason=f"Reembolso venta #{sale.id}"
+        with transaction.atomic():
+            # Bloquear venta para evitar doble refund
+            sale = Sale.objects.select_for_update().get(pk=pk)
+            
+            if sale.closed:
+                return Response(
+                    {'error': 'No se puede reembolsar una venta cerrada'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verificar si ya existe refund (doble protección)
+            if hasattr(sale, 'refund'):
+                return Response(
+                    {'error': 'Esta venta ya fue reembolsada'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Restaurar inventario
+            for detail in sale.details.all():
+                if detail.content_type == 'product':
+                    from apps.inventory_api.models import Product, StockMovement
+                    try:
+                        product = Product.objects.get(id=detail.object_id)
+                        product.stock += detail.quantity
+                        product.save()
+                        
+                        StockMovement.objects.create(
+                            product=product,
+                            quantity=detail.quantity,
+                            reason=f"Reembolso venta #{sale.id}"
+                        )
+                    except Product.DoesNotExist:
+                        pass
+            
+            # Crear CommissionAdjustment si hay comisión
+            if sale.employee and sale.commission_amount_snapshot and sale.commission_amount_snapshot > 0:
+                # Validación de tenant (hardening)
+                if sale.employee.tenant_id != request.user.tenant_id:
+                    return Response(
+                        {'error': 'No autorizado para reembolsar esta venta'},
+                        status=status.HTTP_403_FORBIDDEN
                     )
-                except Product.DoesNotExist:
-                    pass
-        
-        # Marcar como reembolsada
-        sale.total = Decimal('0')
-        sale.paid = Decimal('0')
-        sale.save()
-        
-        return Response({'detail': 'Venta reembolsada correctamente'})
+                
+                # Determinar período destino
+                target_period = sale.period
+                
+                # Si período original está finalizado, buscar/crear período abierto
+                if target_period and target_period.is_finalized:
+                    target_period = PayrollPeriod.objects.filter(
+                        employee=sale.employee,
+                        status__in=['open', 'pending_approval']
+                    ).first()
+                    
+                    # Si no existe período abierto, crear uno para quincena actual
+                    if not target_period:
+                        today = timezone.now().date()
+                        
+                        if today.day <= 15:
+                            start_date = today.replace(day=1)
+                            end_date = today.replace(day=15)
+                        else:
+                            start_date = today.replace(day=16)
+                            # Usar calendar.monthrange para obtener último día del mes
+                            last_day = calendar.monthrange(today.year, today.month)[1]
+                            end_date = today.replace(day=last_day)
+                        
+                        target_period = PayrollPeriod.objects.create(
+                            employee=sale.employee,
+                            period_type='biweekly',
+                            period_start=start_date,
+                            period_end=end_date,
+                            status='open'
+                        )
+                
+                # Crear adjustment negativo
+                if target_period:
+                    try:
+                        CommissionAdjustment.objects.create(
+                            sale=sale,
+                            payroll_period=target_period,
+                            employee=sale.employee,
+                            amount=-sale.commission_amount_snapshot,
+                            reason='refund',
+                            description=f'Reembolso de venta #{sale.id}',
+                            created_by=request.user,
+                            tenant=sale.employee.tenant
+                        )
+                        
+                        # Recalcular período afectado (idempotente, no hace save interno)
+                        target_period.calculate_amounts()
+                        target_period.save()
+                        
+                    except IntegrityError:
+                        # Ya existe adjustment para este refund
+                        return Response(
+                            {'error': 'Ya existe un ajuste de comisión para este reembolso'},
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+            
+            # Marcar como reembolsada
+            sale.total = Decimal('0')
+            sale.paid = Decimal('0')
+            sale.save()
+            
+            return Response({'detail': 'Venta reembolsada correctamente'})
     
     @action(detail=True, methods=['get'])
     def print_receipt(self, request, pk=None):

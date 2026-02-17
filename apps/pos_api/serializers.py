@@ -57,7 +57,7 @@ class SaleSerializer(serializers.ModelSerializer):
         appointment = validated_data.get('appointment')
         sale = Sale.objects.create(**validated_data)
 
-        # Crear detalles y pagos
+        # Crear detalles
         for detail in details_data:
             # Convertir content_type string a ContentType object
             from django.contrib.contenttypes.models import ContentType
@@ -67,34 +67,14 @@ class SaleSerializer(serializers.ModelSerializer):
                 content_type = ContentType.objects.get(app_label='inventory_api', model='product')
             
             detail['content_type'] = content_type
-            obj = SaleDetail.objects.create(sale=sale, **detail)
-            
-            # Lógica de stock para productos (protegida contra path traversal)
-            if obj.content_type.model == 'product':
-                try:
-                    # Validar que object_id sea un entero válido
-                    object_id = int(obj.object_id)
-                    if object_id <= 0:
-                        raise ValueError("ID inválido")
-                    product = Product.objects.get(id=object_id)
-                except (Product.DoesNotExist, ValueError, TypeError):
-                    raise serializers.ValidationError("Producto no encontrado o ID inválido")
-                if product.stock < obj.quantity:
-                    raise serializers.ValidationError(f"Stock insuficiente para el producto {product.name}. Stock actual: {product.stock}, cantidad solicitada: {obj.quantity}.")
-                product.stock -= obj.quantity
-                product.save()
-                StockMovement.objects.create(
-                    product=product,
-                    quantity=-obj.quantity,
-                    reason=f"Venta de {obj.quantity} unidades de {product.name}"
-                )
+            SaleDetail.objects.create(sale=sale, **detail)
+            # Stock ya se descuenta en perform_create() con transacciones atómicas
 
         for payment in payments_data:
             Payment.objects.create(sale=sale, **payment)
 
-        # ✅ Si existe appointment, cambiar estado a 'completed' y guardar (validación mejorada)
+        # Si existe appointment, cambiar estado a 'completed'
         if appointment and isinstance(appointment, Appointment):
-            # Validar estados permitidos
             allowed_statuses = ["completed", "cancelled", "no_show"]
             new_status = "completed"
             if new_status not in allowed_statuses:

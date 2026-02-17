@@ -2,8 +2,10 @@ from django.db import models
 from django.conf import settings
 from apps.services_api.models import Service
 
-# Importar modelos de ganancias
-from .earnings_models import Earning, FortnightSummary
+# Importar modelos de otros archivos para que Django los reconozca
+from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
+from .adjustment_models import CommissionAdjustment
+from .compensation_models import EmployeeCompensationHistory
 
 class Employee(models.Model):
     PAYMENT_TYPE_CHOICES = [
