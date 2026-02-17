@@ -1,6 +1,6 @@
 from django.contrib import admin
 from .models import Employee, EmployeeService, WorkSchedule
-from .earnings_models import Earning, FortnightSummary, PaymentReceipt, PayrollPeriod, PayrollDeduction, PayrollConfiguration
+from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 
 @admin.register(Employee)
 class EmployeeAdmin(admin.ModelAdmin):

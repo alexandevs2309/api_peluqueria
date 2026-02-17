@@ -13,10 +13,17 @@ from django.utils.crypto import get_random_string
 User = get_user_model()
 
 class Sale(models.Model):
+    STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('confirmed', 'Confirmed'),
+        ('void', 'Void'),
+        ('refunded', 'Refunded'),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales', null=True, blank=True)
     employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
-    period = models.ForeignKey('employees_api.FortnightSummary', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
+    period = models.ForeignKey('employees_api.PayrollPeriod', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     cash_register = models.ForeignKey('CashRegister', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     date_time = models.DateTimeField(default=timezone.now)
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
@@ -30,11 +37,128 @@ class Sale(models.Model):
         ('other', 'Other')
     ], default='cash')
     closed = models.BooleanField(default=False)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='confirmed')
+    
+    # Snapshot de comisión (FASE 1 - Payroll Determinístico)
+    commission_rate_snapshot = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Tasa de comisión vigente al momento de la venta'
+    )
+    commission_amount_snapshot = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Monto de comisión calculado al momento de la venta'
+    )
+    
+    # Campos de auditoría
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_updated')
+    created_at = models.DateTimeField(auto_now_add=True, null=True)
+    updated_at = models.DateTimeField(auto_now=True, null=True)
 
     class Meta:
         ordering = ['-date_time']
         verbose_name = 'Sale'
         verbose_name_plural = 'Sales'
+        indexes = [
+            models.Index(fields=['date_time', 'user']),
+            models.Index(fields=['date_time', 'employee']),
+            models.Index(fields=['status']),
+        ]
+    
+    def save(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        
+        # Permitir creación inicial
+        if self.pk is None:
+            # Nueva venta: establecer status=confirmed por defecto
+            if not self.status:
+                self.status = 'confirmed'
+            
+            # NUEVO: Capturar snapshots de comisión al crear
+            if self.employee and self.employee.commission_rate:
+                self.commission_rate_snapshot = self.employee.commission_rate
+                # Calcular monto de comisión
+                from decimal import Decimal
+                commission_rate = Decimal(str(self.employee.commission_rate)) / Decimal('100')
+                self.commission_amount_snapshot = self.total * commission_rate
+            
+            return super().save(*args, **kwargs)
+        
+        # Venta existente: verificar inmutabilidad
+        try:
+            old_instance = Sale.objects.get(pk=self.pk)
+        except Sale.DoesNotExist:
+            return super().save(*args, **kwargs)
+        
+        # PROTECCIÓN CRÍTICA: Si snapshot existe, period es INMUTABLE
+        if old_instance.commission_amount_snapshot is not None:
+            if old_instance.period_id != self.period_id:
+                raise ValidationError(
+                    "No se puede cambiar el período de una venta con snapshot de comisión. "
+                    "La comisión ya fue calculada y asignada."
+                )
+        
+        # VALIDACIÓN: Evitar reasignación de period si está aprobado/pagado
+        if old_instance.period_id != self.period_id and old_instance.period_id is not None:
+            try:
+                from apps.employees_api.earnings_models import PayrollPeriod
+                old_period = PayrollPeriod.objects.get(pk=old_instance.period_id)
+                if old_period.status in ['approved', 'paid']:
+                    raise ValidationError(
+                        f"No se puede reasignar la venta a otro período. "
+                        f"El período actual está {old_period.get_status_display()}."
+                    )
+            except PayrollPeriod.DoesNotExist:
+                pass
+        
+        # Permitir modificación solo si status=draft
+        if old_instance.status != 'draft':
+            # Permitir cambios SOLO en el campo status (para transiciones void/refunded)
+            if old_instance.status != self.status:
+                # Validar transiciones permitidas
+                allowed_transitions = {
+                    'confirmed': ['void', 'refunded'],
+                    'void': [],
+                    'refunded': [],
+                }
+                if self.status not in allowed_transitions.get(old_instance.status, []):
+                    raise ValidationError(
+                        f"No se puede cambiar status de '{old_instance.status}' a '{self.status}'"
+                    )
+                # Solo permitir cambio de status, nada más
+                self.total = old_instance.total
+                self.discount = old_instance.discount
+                self.paid = old_instance.paid
+                self.payment_method = old_instance.payment_method
+                self.client_id = old_instance.client_id
+                self.employee_id = old_instance.employee_id
+                self.period_id = old_instance.period_id
+                return super().save(*args, **kwargs)
+            
+            # Intentando modificar otros campos
+            raise ValidationError(
+                f"No se puede modificar una venta con status '{old_instance.status}'. "
+                "Solo se permiten modificaciones en ventas con status 'draft'."
+            )
+        
+        # Status es draft: permitir modificación
+        return super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+        
+        if self.status != 'draft':
+            raise ValidationError(
+                f"No se puede eliminar una venta con status '{self.status}'. "
+                "Solo se permiten eliminaciones de ventas con status 'draft'."
+            )
+        return super().delete(*args, **kwargs)
 
 class SaleDetail(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='details')

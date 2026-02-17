@@ -5,249 +5,6 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-class Earning(models.Model):
-    """Registro de ganancias por empleado"""
-    
-    EARNING_TYPE_CHOICES = [
-        ('service', 'Servicio'),
-        ('commission', 'Comisión'),
-        ('tip', 'Propina'),
-        ('bonus', 'Bono'),
-        ('adjustment', 'Ajuste'),
-    ]
-    
-    employee = models.ForeignKey(
-        'employees_api.Employee', 
-        on_delete=models.CASCADE, 
-        related_name='earnings'
-    )
-    sale = models.ForeignKey(
-        'pos_api.Sale', 
-        on_delete=models.CASCADE, 
-        related_name='earnings',
-        null=True, blank=True
-    )
-    appointment = models.ForeignKey(
-        'appointments_api.Appointment', 
-        on_delete=models.CASCADE, 
-        related_name='earnings',
-        null=True, blank=True
-    )
-    
-    amount = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2,
-        validators=[MinValueValidator(Decimal('0.00'))],
-        help_text="Monto de la ganancia"
-    )
-    earning_type = models.CharField(
-        max_length=20, 
-        choices=EARNING_TYPE_CHOICES, 
-        default='service'
-    )
-    percentage = models.DecimalField(
-        max_digits=5, 
-        decimal_places=2, 
-        null=True, 
-        blank=True,
-        validators=[MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('100.00'))],
-        help_text="Porcentaje de comisión (0-100)"
-    )
-    
-    description = models.TextField(blank=True)
-    date_earned = models.DateTimeField(default=timezone.now)
-    
-    # Campos de quincena
-    fortnight_year = models.IntegerField()
-    fortnight_number = models.IntegerField()  # 1-24 (2 por mes)
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True)
-    
-    class Meta:
-        ordering = ['-date_earned']
-        indexes = [
-            models.Index(fields=['employee', 'fortnight_year', 'fortnight_number']),
-            models.Index(fields=['date_earned']),
-        ]
-    
-    def save(self, *args, **kwargs):
-        # Validar campos requeridos
-        if not self.employee_id:
-            raise ValueError("Employee es requerido")
-        if not self.amount:
-            self.amount = Decimal('0.00')
-        
-        # Calcular quincena automáticamente
-        if not self.fortnight_year or not self.fortnight_number:
-            self.fortnight_year, self.fortnight_number = self.calculate_fortnight(self.date_earned)
-        
-        super().save(*args, **kwargs)
-    
-    @staticmethod
-    def calculate_fortnight(date):
-        """Calcula año y número de quincena (1-24)"""
-        year = date.year
-        month = date.month
-        day = date.day
-        
-        # Quincena 1: días 1-15, Quincena 2: días 16-fin de mes
-        fortnight_in_month = 1 if day <= 15 else 2
-        fortnight_number = (month - 1) * 2 + fortnight_in_month
-        
-        return year, fortnight_number
-    
-    @property
-    def fortnight_display(self):
-        """Muestra la quincena en formato legible"""
-        month = ((self.fortnight_number - 1) // 2) + 1
-        half = "1ra" if (self.fortnight_number % 2) == 1 else "2da"
-        months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-                 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-        return f"{half} quincena {months[month-1]} {self.fortnight_year}"
-    
-    def __str__(self):
-        return f"{self.employee} - ${self.amount} ({self.fortnight_display})"
-
-class FortnightSummary(models.Model):
-    """Resumen de ganancias por quincena"""
-    
-    employee = models.ForeignKey(
-        'employees_api.Employee', 
-        on_delete=models.CASCADE, 
-        related_name='fortnight_summaries'
-    )
-    
-    fortnight_year = models.IntegerField()
-    fortnight_number = models.IntegerField()
-    
-    total_earnings = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        default=Decimal('0.00'),
-        validators=[MinValueValidator(Decimal('0.00'))],
-        help_text="Total de ganancias de la quincena"
-    )
-    total_services = models.IntegerField(
-        default=0,
-        validators=[MinValueValidator(0)],
-        help_text="Número de servicios realizados"
-    )
-    total_commissions = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        default=Decimal('0.00'),
-        validators=[MinValueValidator(Decimal('0.00'))],
-        help_text="Total de comisiones"
-    )
-    total_tips = models.DecimalField(
-        max_digits=10, 
-        decimal_places=2, 
-        default=Decimal('0.00'),
-        validators=[MinValueValidator(Decimal('0.00'))],
-        help_text="Total de propinas"
-    )
-    
-    is_paid = models.BooleanField(default=False)
-    paid_at = models.DateTimeField(null=True, blank=True)
-    paid_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
-    closed_at = models.DateTimeField(null=True, blank=True)  # Cuando se cierra el período
-    
-    # Campos de pago detallado
-    payment_method = models.CharField(
-        max_length=20,
-        choices=[
-            ('cash', 'Efectivo'),
-            ('transfer', 'Transferencia'),
-            ('check', 'Cheque'),
-            ('other', 'Otro')
-        ],
-        null=True, blank=True
-    )
-    amount_paid = models.DecimalField(
-        max_digits=10, decimal_places=2, null=True, blank=True,
-        help_text="Monto real pagado"
-    )
-    payment_reference = models.CharField(
-        max_length=100, null=True, blank=True,
-        help_text="Referencia bancaria o número de cheque"
-    )
-    payment_notes = models.TextField(
-        null=True, blank=True,
-        help_text="Notas adicionales del pago"
-    )
-    
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-    
-    class Meta:
-        unique_together = ('employee', 'fortnight_year', 'fortnight_number')
-        ordering = ['-fortnight_year', '-fortnight_number']
-        indexes = [
-            models.Index(fields=['employee', 'fortnight_year', 'fortnight_number']),
-            models.Index(fields=['is_paid']),
-        ]
-    
-    def save(self, *args, **kwargs):
-        # Validar campos requeridos
-        if not self.employee_id:
-            raise ValueError("Employee es requerido")
-        if self.total_earnings is None:
-            self.total_earnings = Decimal('0.00')
-        if self.total_services is None:
-            self.total_services = 0
-        if self.total_commissions is None:
-            self.total_commissions = Decimal('0.00')
-        if self.total_tips is None:
-            self.total_tips = Decimal('0.00')
-        
-        super().save(*args, **kwargs)
-    
-    @property
-    def fortnight_display(self):
-        """Muestra la quincena en formato legible"""
-        if not self.fortnight_number or not self.fortnight_year:
-            return "Quincena no definida"
-        
-        month = ((self.fortnight_number - 1) // 2) + 1
-        half = "1ra" if (self.fortnight_number % 2) == 1 else "2da"
-        months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-                 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
-        
-        if month < 1 or month > 12:
-            return f"Quincena {self.fortnight_number} - {self.fortnight_year}"
-        
-        return f"{half} quincena {months[month-1]} {self.fortnight_year}"
-    
-    def __str__(self):
-        return f"{self.employee} - {self.fortnight_display} - ${self.total_earnings}"
-
-class PaymentReceipt(models.Model):
-    """Recibos de pago de nómina"""
-    
-    fortnight_summary = models.OneToOneField(
-        FortnightSummary,
-        on_delete=models.CASCADE,
-        related_name='receipt'
-    )
-    receipt_number = models.CharField(max_length=50, unique=True)
-    generated_at = models.DateTimeField(auto_now_add=True)
-    pdf_file = models.FileField(upload_to='payment_receipts/', null=True, blank=True)
-    
-    class Meta:
-        verbose_name = 'Payment Receipt'
-        verbose_name_plural = 'Payment Receipts'
-        ordering = ['-generated_at']
-    
-    def save(self, *args, **kwargs):
-        if not self.receipt_number:
-            self.receipt_number = f"PR{self.fortnight_summary.employee.id:03d}{self.fortnight_summary.fortnight_year}{self.fortnight_summary.fortnight_number:02d}"
-        super().save(*args, **kwargs)
-    
-    def __str__(self):
-        return f"Recibo {self.receipt_number} - {self.fortnight_summary.employee}"
-
-
 # ============================================
 # MODELOS DE NÓMINA (PAYROLL)
 # ============================================
@@ -269,6 +26,11 @@ class PayrollPeriod(models.Model):
         ('rejected', 'Rechazado'),
     ]
     
+    # Alias para compatibilidad con código existente
+    LEGACY_STATUS_MAP = {
+        'ready': 'approved',  # ready se mapea a approved
+    }
+    
     employee = models.ForeignKey(
         'employees_api.Employee',
         on_delete=models.CASCADE,
@@ -280,11 +42,24 @@ class PayrollPeriod(models.Model):
     period_end = models.DateField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
     
+    # Snapshots de compensación (determinismo)
+    payment_type_snapshot = models.CharField(max_length=10, null=True, blank=True, help_text='Tipo de pago vigente al crear período')
+    fixed_salary_snapshot = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Salario fijo vigente al crear período')
+    
     base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     commission_earnings = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     gross_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     deductions_total = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     net_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
+    
+    # Snapshot inmutable del cálculo (se guarda al aprobar)
+    calculation_snapshot = models.JSONField(null=True, blank=True, help_text='Snapshot del cálculo al momento de aprobación')
+    
+    # FASE 3: Flag de finalización (Payroll Determinístico)
+    is_finalized = models.BooleanField(
+        default=False,
+        help_text='Indica si el período está finalizado y no debe recalcularse'
+    )
     
     can_pay = models.BooleanField(default=True)
     pay_block_reason = models.TextField(null=True, blank=True)
@@ -316,44 +91,200 @@ class PayrollPeriod(models.Model):
             models.Index(fields=['employee', 'period_start', 'period_end']),
             models.Index(fields=['status']),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['employee', 'period_start', 'period_end'],
+                name='unique_employee_period'
+            )
+        ]
+    
+    def save(self, *args, **kwargs):
+        """Override save para proteger períodos aprobados/pagados"""
+        from django.core.exceptions import ValidationError
+        
+        # Permitir creación inicial
+        if self.pk is None:
+            # Capturar snapshots de compensación al crear
+            if not self.payment_type_snapshot:
+                self.payment_type_snapshot = self.employee.payment_type
+            if not self.fixed_salary_snapshot:
+                self.fixed_salary_snapshot = self.employee.fixed_salary
+            return super().save(*args, **kwargs)
+        
+        # Verificar si existe instancia anterior
+        try:
+            old_instance = PayrollPeriod.objects.get(pk=self.pk)
+        except PayrollPeriod.DoesNotExist:
+            return super().save(*args, **kwargs)
+        
+        # PROTECCIÓN: Si está aprobado o pagado, solo permitir cambios específicos
+        if old_instance.status in ['approved', 'paid']:
+            # Campos permitidos para cambiar (solo transiciones de estado y notificaciones)
+            allowed_changes = {
+                'status',  # Para transición approved -> paid
+                'payment_method',  # Para mark_as_paid
+                'payment_reference',  # Para mark_as_paid
+                'paid_at',  # Para mark_as_paid
+                'paid_by',  # Para mark_as_paid
+                'notification_sent',  # Para notificaciones
+                'notification_sent_at',  # Para notificaciones
+                'updated_at',  # Auto-actualizado
+            }
+            
+            # Detectar cambios en campos protegidos
+            protected_fields_changed = []
+            for field in self._meta.fields:
+                field_name = field.name
+                if field_name in allowed_changes:
+                    continue
+                
+                old_value = getattr(old_instance, field_name)
+                new_value = getattr(self, field_name)
+                
+                if old_value != new_value:
+                    protected_fields_changed.append(field_name)
+            
+            if protected_fields_changed:
+                raise ValidationError(
+                    f"No se puede modificar un período con status '{old_instance.status}'. "
+                    f"Campos protegidos: {', '.join(protected_fields_changed)}"
+                )
+            
+            # Validar transiciones de estado permitidas
+            if old_instance.status != self.status:
+                allowed_transitions = {
+                    'approved': ['paid'],
+                    'paid': [],  # No se puede cambiar desde paid
+                }
+                
+                if self.status not in allowed_transitions.get(old_instance.status, []):
+                    raise ValidationError(
+                        f"Transición de estado no permitida: '{old_instance.status}' -> '{self.status}'"
+                    )
+        
+        return super().save(*args, **kwargs)
     
     def calculate_amounts(self):
-        employee = self.employee
+        """Calcula montos del período usando snapshots (Payroll Determinístico)
         
-        if employee.payment_type in ['fixed', 'mixed']:
-            if self.period_type == 'monthly':
-                self.base_salary = employee.fixed_salary
-            elif self.period_type == 'biweekly':
-                self.base_salary = employee.fixed_salary / 2
-            elif self.period_type == 'weekly':
-                self.base_salary = employee.fixed_salary / 4
-        else:
-            self.base_salary = Decimal('0.00')
+        IDEMPOTENTE: Puede llamarse múltiples veces sin efectos secundarios.
+        Solo actualiza campos de cálculo, no modifica estado.
+        """
         
-        if employee.payment_type in ['commission', 'mixed']:
-            earnings = Earning.objects.filter(
-                employee=employee,
-                date_earned__gte=self.period_start,
-                date_earned__lte=self.period_end
-            )
-            self.commission_earnings = sum(e.amount for e in earnings)
-        else:
-            self.commission_earnings = Decimal('0.00')
+        # PROTECCIÓN: Si está finalizado, NO recalcular
+        if hasattr(self, 'is_finalized') and self.is_finalized:
+            return
         
-        self.gross_amount = self.base_salary + self.commission_earnings
-        deductions = self.deductions.all()
-        self.deductions_total = sum(d.amount for d in deductions)
-        self.net_amount = self.gross_amount - self.deductions_total
+        # PROTECCIÓN: Si ya está aprobado/pagado y tiene snapshot, no recalcular
+        if self.status in ['approved', 'paid'] and self.calculation_snapshot:
+            return
         
+        # NUEVO: Usar servicio de cálculo desde snapshots
+        try:
+            from apps.employees_api.payroll_services import PayrollCalculationService
+            
+            calculation = PayrollCalculationService.calculate_from_snapshots(self)
+            
+            # Aplicar resultados (IDEMPOTENTE: solo asigna valores)
+            self.base_salary = calculation['base_salary']
+            self.commission_earnings = calculation['commission_earnings']
+            self.gross_amount = calculation['gross_amount']
+            
+            # Calcular deducciones y neto
+            deductions = self.deductions.all()
+            self.deductions_total = sum(d.amount for d in deductions)
+            self.net_amount = self.gross_amount - self.deductions_total
+            
+        except ImportError:
+            # Fallback a lógica antigua si el servicio no existe aún
+            employee = self.employee
+            
+            # Calcular salario base según tipo de pago y período
+            if employee.payment_type in ['fixed', 'mixed']:
+                if self.period_type == 'monthly':
+                    self.base_salary = employee.fixed_salary
+                elif self.period_type == 'biweekly':
+                    self.base_salary = employee.fixed_salary / 2
+                elif self.period_type == 'weekly':
+                    self.base_salary = employee.fixed_salary / 4
+            else:
+                self.base_salary = Decimal('0.00')
+            
+            # Calcular comisiones desde las ventas del período
+            if employee.payment_type in ['commission', 'mixed']:
+                from apps.pos_api.models import Sale
+                sales = Sale.objects.filter(
+                    employee=employee,
+                    date_time__date__gte=self.period_start,
+                    date_time__date__lte=self.period_end
+                )
+                total_sales = sum(sale.total for sale in sales)
+                commission_rate = employee.commission_rate / 100
+                self.commission_earnings = Decimal(str(total_sales)) * Decimal(str(commission_rate))
+            else:
+                self.commission_earnings = Decimal('0.00')
+            
+            # Calcular totales
+            self.gross_amount = self.base_salary + self.commission_earnings
+            deductions = self.deductions.all()
+            self.deductions_total = sum(d.amount for d in deductions)
+            self.net_amount = self.gross_amount - self.deductions_total
+        
+        # Validar si se puede pagar
         if self.status == 'open':
             self.can_pay = False
             self.pay_block_reason = "El período aún está abierto"
+        elif self.status == 'pending_approval':
+            self.can_pay = False
+            self.pay_block_reason = "El período está pendiente de aprobación"
         elif self.net_amount <= 0:
             self.can_pay = False
             self.pay_block_reason = "El monto neto es cero o negativo"
         else:
             self.can_pay = True
             self.pay_block_reason = None
+    
+    def _create_calculation_snapshot(self):
+        """Crea snapshot inmutable del cálculo al aprobar"""
+        from apps.pos_api.models import Sale
+        
+        # Obtener ventas del período
+        sales = Sale.objects.filter(
+            employee=self.employee,
+            date_time__date__gte=self.period_start,
+            date_time__date__lte=self.period_end
+        ).values('id', 'total', 'date_time')
+        
+        self.calculation_snapshot = {
+            'calculated_at': timezone.now().isoformat(),
+            'employee': {
+                'id': self.employee.id,
+                'payment_type': self.employee.payment_type,
+                'fixed_salary': float(self.employee.fixed_salary),
+                'commission_rate': float(self.employee.commission_rate)
+            },
+            'period': {
+                'type': self.period_type,
+                'start': self.period_start.isoformat(),
+                'end': self.period_end.isoformat()
+            },
+            'calculation': {
+                'base_salary': float(self.base_salary),
+                'commission_earnings': float(self.commission_earnings),
+                'gross_amount': float(self.gross_amount),
+                'deductions_total': float(self.deductions_total),
+                'net_amount': float(self.net_amount)
+            },
+            'sales': [
+                {
+                    'id': sale['id'],
+                    'total': float(sale['total']),
+                    'date': sale['date_time'].isoformat()
+                } for sale in sales
+            ],
+            'sales_count': len(sales),
+            'total_sales': float(sum(sale['total'] for sale in sales))
+        }
     
     def close_period(self):
         """Cierra el período y lo envía para aprobación"""
@@ -366,9 +297,15 @@ class PayrollPeriod(models.Model):
         """Aprueba el período para pago"""
         if self.status != 'pending_approval':
             raise ValueError("Solo se pueden aprobar períodos pendientes")
+        
+        # Calcular montos finales y crear snapshot ANTES de aprobar
+        self.calculate_amounts()
+        self._create_calculation_snapshot()
+        
         self.status = 'approved'
         self.approved_at = timezone.now()
         self.approved_by = approved_by
+        self.is_finalized = True  # NUEVO: Finalizar al aprobar
         self.save()
     
     def reject(self, rejected_by, reason):
@@ -390,6 +327,7 @@ class PayrollPeriod(models.Model):
         self.payment_reference = payment_reference
         self.paid_at = timezone.now()
         self.paid_by = paid_by
+        self.is_finalized = True  # NUEVO: Asegurar finalización
         self.save()
     
     @property
@@ -407,8 +345,9 @@ class PayrollDeduction(models.Model):
         ('tax', 'Impuesto'),
         ('social_security', 'Seguro Social'),
         ('health_insurance', 'Seguro Médico'),
-        ('advance', 'Adelanto'),
-        ('loan', 'Préstamo'),
+        ('advance', 'Anticipo de Sueldo'),
+        ('loan', 'Préstamo Personal'),
+        ('emergency_loan', 'Préstamo de Emergencia'),
         ('other', 'Otro'),
     ]
     
@@ -416,6 +355,7 @@ class PayrollDeduction(models.Model):
     deduction_type = models.CharField(max_length=20, choices=DEDUCTION_TYPE_CHOICES)
     amount = models.DecimalField(max_digits=10, decimal_places=2, validators=[MinValueValidator(Decimal('0.00'))])
     description = models.TextField(blank=True)
+    installments = models.IntegerField(default=1, validators=[MinValueValidator(1)], help_text='Número de cuotas para el préstamo')
     is_automatic = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)

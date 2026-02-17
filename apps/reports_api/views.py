@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from apps.tenants_api.models import Tenant
 from apps.billing_api.models import Invoice
 from apps.auth_api.models import User
+from .pagination import ReportsPagination
 
 class IsSuperAdmin:
     def has_permission(self, request, view):
@@ -22,6 +23,7 @@ class IsSuperAdmin:
 def employee_report(request):
     """Reporte básico de empleados"""
     from apps.employees_api.models import Employee
+    from apps.pos_api.models import Sale
     
     tenant = request.user.tenant
     
@@ -34,29 +36,37 @@ def employee_report(request):
         tenant=tenant, is_active=True
     ).values('specialty').annotate(count=Count('id'))
     
-    # Top performers simulados
-    employees = Employee.objects.filter(tenant=tenant, is_active=True)[:5]
-    top_performers = []
-    for i, employee in enumerate(employees):
-        top_performers.append({
-            'employee_name': employee.user.full_name,
-            'appointments': 25 - (i * 3),
-            'sales': 2000.0 - (i * 200),
-            'specialty': employee.specialty or 'General'
-        })
+    # Top performers REALES desde ventas
+    top_performers = Sale.objects.filter(
+        employee__tenant=tenant,
+        employee__isnull=False
+    ).values(
+        'employee__user__full_name',
+        'employee__specialty'
+    ).annotate(
+        total_sales=Sum('total'),
+        sales_count=Count('id')
+    ).order_by('-total_sales')[:5]
+    
+    top_performers_list = [{
+        'employee_name': p['employee__user__full_name'],
+        'sales': float(p['total_sales']),
+        'sales_count': p['sales_count'],
+        'specialty': p['employee__specialty'] or 'General'
+    } for p in top_performers]
     
     return Response({
         'total_employees': total_employees,
         'active_employees': active_employees,
         'employees_by_specialty': list(employees_by_specialty),
-        'top_performers': top_performers
+        'top_performers': top_performers_list
     })
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def sales_report(request):
     """Reporte básico de ventas"""
-    from apps.pos_api.models import Sale
+    from apps.pos_api.models import Sale, SaleDetail
     from django.utils import timezone
     from datetime import datetime, timedelta
     
@@ -93,14 +103,14 @@ def sales_report(request):
             'sales': float(day_sales)
         })
     
-    # Servicios más vendidos (simulado por ahora)
-    top_services = [
-        {'service__name': 'Corte Clásico', 'total_sold': 45, 'total_revenue': 2250},
-        {'service__name': 'Barba', 'total_sold': 32, 'total_revenue': 1600},
-        {'service__name': 'Corte + Barba', 'total_sold': 28, 'total_revenue': 1680},
-        {'service__name': 'Afeitado', 'total_sold': 15, 'total_revenue': 450},
-        {'service__name': 'Tratamiento', 'total_sold': 8, 'total_revenue': 400}
-    ]
+    # Servicios más vendidos REALES
+    top_services = SaleDetail.objects.filter(
+        sale__user__tenant=tenant,
+        content_type__model='service'
+    ).values('name').annotate(
+        total_sold=Sum('quantity'),
+        total_revenue=Sum('price')
+    ).order_by('-total_revenue')[:5]
     
     return Response({
         'total_sales': float(total_sales),
@@ -276,7 +286,7 @@ class AdminReportsView(views.APIView):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def appointments_calendar_data(request):
-    """Datos para calendario de citas"""
+    """Datos para calendario de citas con paginación"""
     from apps.appointments_api.models import Appointment
     
     start_date = request.GET.get('start')
@@ -296,6 +306,13 @@ def appointments_calendar_data(request):
         date_time__gte=start,
         date_time__lte=end
     ).select_related('client', 'stylist', 'service')
+    
+    # Aplicar paginación si hay muchos resultados
+    if appointments.count() > 100:
+        paginator = ReportsPagination()
+        page = paginator.paginate_queryset(appointments, request)
+        if page is not None:
+            appointments = page
     
     events = []
     for apt in appointments:
@@ -389,7 +406,7 @@ def kpi_dashboard(request):
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def services_performance(request):
-    """Rendimiento de servicios"""
+    """Rendimiento de servicios con paginación"""
     from apps.pos_api.models import SaleDetail
     from apps.services_api.models import Service
     from django.db.models import Sum, Count
@@ -406,11 +423,21 @@ def services_performance(request):
     ).values('name').annotate(
         total_sales=Sum('price'),
         quantity_sold=Sum('quantity')
-    ).order_by('-total_sales')[:10]
+    ).order_by('-total_sales')
+    
+    # Aplicar paginación
+    paginator = ReportsPagination()
+    page = paginator.paginate_queryset(services_data, request)
+    
+    if page is not None:
+        return paginator.get_paginated_response({
+            'period_days': days,
+            'services': list(page)
+        })
     
     return Response({
         'period_days': days,
-        'top_services': list(services_data)
+        'services': list(services_data)
     })
 
 @api_view(['GET'])
