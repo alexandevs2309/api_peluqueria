@@ -233,7 +233,15 @@ class SaleViewSet(viewsets.ModelViewSet):
             
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().select_related(
+            'client',
+            'employee',
+            'user',
+            'user__tenant'
+        ).prefetch_related(
+            'details',
+            'details__content_type'
+        )
         user = self.request.user
         
         # SuperAdmin puede ver todo
@@ -734,16 +742,33 @@ def daily_summary(request):
         paid = sales.aggregate(paid=Sum('paid'))['paid'] or 0
 
         by_method = sales.values('payment_method').annotate(total=Sum('paid'))
+        
+        # Usar agregación SQL para calcular by_type
+        from .models import SaleDetail
+        from django.db.models import F, Case, When, DecimalField
+        
+        sale_ids = sales.values_list('id', flat=True)
+        by_type_data = SaleDetail.objects.filter(sale_id__in=sale_ids).aggregate(
+            products=Sum(
+                Case(
+                    When(content_type__model='product', then=F('quantity') * F('price')),
+                    default=0,
+                    output_field=DecimalField()
+                )
+            ),
+            services=Sum(
+                Case(
+                    When(~Q(content_type__model='product'), then=F('quantity') * F('price')),
+                    default=0,
+                    output_field=DecimalField()
+                )
+            )
+        )
+        
         by_type = {
-            'services': 0,
-            'products': 0,
+            'services': float(by_type_data['services'] or 0),
+            'products': float(by_type_data['products'] or 0),
         }
-        for sale in sales:
-            for d in sale.details.all():
-                if d.content_type == 'product':
-                    by_type['products'] += d.quantity * d.price
-                else:
-                    by_type['services'] += d.quantity * d.price
 
         return Response({
             'date': today,
@@ -759,9 +784,17 @@ def daily_summary(request):
 @api_view(['GET'])
 def dashboard_stats(request):
     """Estadísticas para el dashboard del POS"""
+    from django.core.cache import cache
     from .models import SaleDetail
-    from django.db.models import Count
+    from django.db.models import Count, F, Sum, Case, When, DecimalField
     from datetime import datetime, timedelta
+    
+    # Cache key basado en usuario y tenant
+    cache_key = f'dashboard_stats_{request.user.id}_{getattr(request.user.tenant, "id", "none")}'
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        return Response(cached_data)
     
     today = timezone.localdate()
     if request.user.is_superuser:
@@ -779,18 +812,19 @@ def dashboard_stats(request):
         sales_today = Sale.objects.none()
         all_sales = Sale.objects.none()
     
-    total_sales = sales_today.aggregate(total=Sum('total'))['total'] or 0
-    total_transactions = sales_today.count()
+    total_sales = all_sales.aggregate(total=Sum('total'))['total'] or 0
+    total_transactions = all_sales.count()
     avg_ticket = total_sales / total_transactions if total_transactions > 0 else 0
     
-    # Top productos vendidos hoy
+    # Top productos vendidos hoy usando agregación SQL - OPTIMIZADO
     if request.user.is_superuser:
         product_filter = Q(sale__user=request.user) | Q(sale__employee__user=request.user)
     elif request.user.tenant:
         product_filter = Q(sale__employee__tenant=request.user.tenant) | Q(sale__user__tenant=request.user.tenant, sale__employee__isnull=True)
     else:
-        product_filter = Q(pk__isnull=True)  # No results
+        product_filter = Q(pk__isnull=True)
     
+    # ELIMINADO LOOP N+1: Usar agregación SQL directa
     top_products = SaleDetail.objects.filter(
         product_filter,
         sale__date_time__date=today,
@@ -799,23 +833,27 @@ def dashboard_stats(request):
         sold=Sum('quantity')
     ).order_by('-sold')[:5]
     
-    # Ingresos mensuales de los últimos 6 meses
+    # Ingresos mensuales usando agregación SQL - OPTIMIZADO
     monthly_revenue = []
     current_date = today.replace(day=1)
     
+    # Usar una sola query para todos los meses
+    six_months_ago = current_date - timedelta(days=180)
+    monthly_data = all_sales.filter(
+        date_time__gte=six_months_ago
+    ).extra(
+        select={'month': "DATE_TRUNC('month', date_time)"}
+    ).values('month').annotate(
+        total=Sum('total')
+    ).order_by('month')
+    
+    # Crear diccionario para lookup rápido
+    monthly_dict = {item['month'].strftime('%Y-%m'): float(item['total']) for item in monthly_data}
+    
     for i in range(6):
         month_start = current_date
-        if current_date.month == 12:
-            month_end = current_date.replace(year=current_date.year + 1, month=1, day=1) - timedelta(days=1)
-        else:
-            month_end = current_date.replace(month=current_date.month + 1, day=1) - timedelta(days=1)
-        
-        month_sales = all_sales.filter(
-            date_time__gte=month_start,
-            date_time__lt=month_end + timedelta(days=1)
-        )
-        
-        month_total = month_sales.aggregate(total=Sum('total'))['total'] or 0
+        month_key = month_start.strftime('%Y-%m')
+        month_total = monthly_dict.get(month_key, 0)
         
         month_names = {
             1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
@@ -824,7 +862,7 @@ def dashboard_stats(request):
         
         monthly_revenue.insert(0, {
             'month': month_names[current_date.month],
-            'revenue': float(month_total)
+            'revenue': month_total
         })
         
         if current_date.month == 1:
@@ -832,14 +870,19 @@ def dashboard_stats(request):
         else:
             current_date = current_date.replace(month=current_date.month - 1)
     
-    return Response({
+    data = {
         'total_sales': float(total_sales),
         'total_transactions': total_transactions,
         'average_ticket': float(avg_ticket),
         'top_products': list(top_products),
         'hourly_data': [],
         'monthly_revenue': monthly_revenue
-    })
+    }
+    
+    # Cache por 60 segundos
+    cache.set(cache_key, data, 60)
+    
+    return Response(data)
 
 @api_view(['GET'])
 def active_promotions(request):

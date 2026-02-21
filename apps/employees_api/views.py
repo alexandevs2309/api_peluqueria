@@ -10,7 +10,7 @@ from apps.roles_api.permissions import IsActiveAndRolePermission, role_permissio
 from apps.subscriptions_api.utils import get_user_active_subscription
 from apps.settings_api.utils import validate_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule
-from apps.auth_api.models import UserRole
+from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
 from .permissions import IsAdminOrOwnStylist, role_permission_for
 
@@ -30,23 +30,23 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         
-        # SuperAdmin puede ver todo
+        # ✅ ESTANDARIZADO: Usar is_superuser
         if user.is_superuser:
-            return Employee.objects.all()
+            return Employee.objects.select_related('user', 'tenant').all()
             
         # Usuario debe tener tenant
         if not user.tenant:
             return Employee.objects.none()
             
         # Filtrar por tenant del usuario
-        return Employee.objects.filter(tenant=user.tenant)
+        return Employee.objects.select_related('user', 'tenant').filter(tenant=user.tenant)
     
 
     def perform_create(self, serializer):
         user = self.request.user
         
-        # SuperAdmin puede crear para cualquier tenant
-        if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
+        # ✅ ESTANDARIZADO: Usar is_superuser
+        if user.is_superuser:
             tenant = user.tenant or Tenant.objects.first()
         else:
             if not user.tenant:

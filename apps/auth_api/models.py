@@ -1,10 +1,7 @@
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
-
-
-
-from apps.roles_api.models import Role, UserRole
+from django.core.exceptions import ValidationError
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -84,14 +81,26 @@ class User(AbstractBaseUser, PermissionsMixin):
             models.Index(fields=['email']),
             models.Index(fields=['email', 'tenant']),
         ]
+        constraints = [
+            models.CheckConstraint(
+                check=models.Q(tenant__isnull=False) | models.Q(is_superuser=True),
+                name='user_must_have_tenant_or_be_superuser',
+                violation_error_message='Los usuarios no superadmin deben tener un tenant asignado.'
+            )
+        ]
+
+    def clean(self):
+        """Validación estructural multi-tenant"""
+        super().clean()
+        if not self.is_superuser and not self.tenant_id:
+            raise ValidationError({
+                'tenant': 'Los usuarios no superadmin deben tener un tenant asignado.'
+            })
 
     def save(self, *args, **kwargs):
-        # Enforce tenant for client roles (all except SuperAdmin)
-        # Temporarily disabled for registration process
-        # TODO: Re-enable after fixing registration flow
-        # client_roles = ['Client-Admin', 'Client-Staff', 'Estilista', 'Cajera', 'Manager', 'Utility']
-        # if self.role in client_roles and not self.tenant:
-        #     raise ValueError(f"Role {self.role} must have a tenant assigned.")
+        # Validar antes de guardar (excepto en creación de superuser)
+        if not kwargs.pop('skip_validation', False):
+            self.full_clean()
         super().save(*args, **kwargs)
 
     def __str__(self):

@@ -27,8 +27,8 @@ class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         queryset = super().get_queryset()
         user = self.request.user
         
-        # SuperAdmin puede ver todo
-        if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
+        # ✅ ESTANDARIZADO: Usar is_superuser
+        if user.is_superuser:
             return queryset
             
         # Filtrar por tenant del usuario
@@ -42,8 +42,8 @@ class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         if not user.is_authenticated:
             raise ValueError("No hay usuario autenticado")
             
-        # SuperAdmin puede crear para cualquier tenant
-        if user.is_superuser or user.roles.filter(name='Super-Admin').exists():
+        # ✅ ESTANDARIZADO: Usar is_superuser
+        if user.is_superuser:
             # Para SuperAdmin, usar el primer tenant disponible o crear sin tenant
             tenant = user.tenant or Tenant.objects.first()
             serializer.save(

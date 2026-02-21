@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from apps.subscriptions_api.models import UserSubscription
 
 
@@ -13,6 +14,7 @@ class Invoice(models.Model):
     is_paid = models.BooleanField(default=False)
     paid_at = models.DateTimeField(null=True, blank=True)
     payment_method = models.CharField(max_length=100, blank=True)  # Ej: "manual", "stripe", "paypal"
+    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, db_index=True)  # Para reconciliación
     status = models.CharField(max_length=50, choices=[
         ("pending", "Pending"),
         ("paid", "Paid"),
@@ -22,9 +24,27 @@ class Invoice(models.Model):
 
     class Meta:
         ordering = ["-issued_at"]
+        indexes = [
+            models.Index(fields=['user', 'issued_at']),
+            models.Index(fields=['status']),
+            models.Index(fields=['is_paid']),
+            models.Index(fields=['issued_at']),
+            models.Index(fields=['stripe_payment_intent_id']),
+        ]
 
     def __str__(self):
         return f"Invoice #{self.id} - {self.user.email}"
+    
+    def save(self, *args, **kwargs):
+        if self.pk:
+            original = Invoice.objects.get(pk=self.pk)
+            if original.amount != self.amount:
+                raise ValidationError("No se puede modificar el monto de una factura ya creada.")
+            if original.user_id != self.user_id:
+                raise ValidationError("No se puede cambiar el usuario de la factura.")
+            if original.subscription_id != self.subscription_id:
+                raise ValidationError("No se puede cambiar la suscripción asociada.")
+        super().save(*args, **kwargs)
 
 
 class PaymentAttempt(models.Model):

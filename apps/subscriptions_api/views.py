@@ -35,9 +35,9 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             from rest_framework.permissions import AllowAny
             return [AllowAny()]
-        # Solo SuperAdmin puede crear/eliminar planes
-        if self.action in ['create', 'destroy']:
-            from apps.tenants_api.views import IsSuperAdmin
+        # Solo SuperAdmin puede crear/eliminar/modificar planes
+        if self.action in ['create', 'destroy', 'update', 'partial_update']:
+            from apps.auth_api.permissions import IsSuperAdmin
             return [IsSuperAdmin()]
         return super().get_permissions()
     

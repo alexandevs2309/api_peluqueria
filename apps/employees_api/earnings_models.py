@@ -90,6 +90,7 @@ class PayrollPeriod(models.Model):
         indexes = [
             models.Index(fields=['employee', 'period_start', 'period_end']),
             models.Index(fields=['status']),
+            models.Index(fields=['employee']),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -117,19 +118,65 @@ class PayrollPeriod(models.Model):
         except PayrollPeriod.DoesNotExist:
             return super().save(*args, **kwargs)
         
-        # PROTECCIÓN: Si está aprobado o pagado, solo permitir cambios específicos
-        if old_instance.status in ['approved', 'paid']:
-            # Campos permitidos para cambiar (solo transiciones de estado y notificaciones)
-            allowed_changes = {
-                'status',  # Para transición approved -> paid
-                'payment_method',  # Para mark_as_paid
-                'payment_reference',  # Para mark_as_paid
-                'paid_at',  # Para mark_as_paid
-                'paid_by',  # Para mark_as_paid
-                'notification_sent',  # Para notificaciones
-                'notification_sent_at',  # Para notificaciones
-                'updated_at',  # Auto-actualizado
+        # FIX 1: SNAPSHOTS INMUTABLES
+        if old_instance.payment_type_snapshot != self.payment_type_snapshot:
+            raise ValidationError("No se puede modificar payment_type_snapshot")
+        if old_instance.fixed_salary_snapshot != self.fixed_salary_snapshot:
+            raise ValidationError("No se puede modificar fixed_salary_snapshot")
+        if old_instance.calculation_snapshot != self.calculation_snapshot:
+            raise ValidationError("No se puede modificar calculation_snapshot")
+        
+        # FIX 3: is_finalized BLOQUEA TODO
+        if old_instance.is_finalized:
+            # Solo permitir cambios administrativos mínimos
+            allowed_when_finalized = {
+                'payment_method',
+                'payment_reference',
+                'paid_at',
+                'paid_by',
+                'notification_sent',
+                'notification_sent_at',
+                'updated_at',
             }
+            
+            for field in self._meta.fields:
+                field_name = field.name
+                if field_name in allowed_when_finalized:
+                    continue
+                
+                old_value = getattr(old_instance, field_name)
+                new_value = getattr(self, field_name)
+                
+                if old_value != new_value:
+                    raise ValidationError(
+                        f"No se puede modificar '{field_name}' en un período finalizado"
+                    )
+        
+        # FIX 2: BLOQUEO TOTAL POST-APPROVED/PAID
+        if old_instance.status in ['approved', 'paid']:
+            # Campos permitidos para cambiar
+            allowed_changes = {
+                'status',
+                'payment_method',
+                'payment_reference',
+                'paid_at',
+                'paid_by',
+                'notification_sent',
+                'notification_sent_at',
+                'updated_at',
+            }
+            
+            # Validar explícitamente campos financieros
+            if old_instance.base_salary != self.base_salary:
+                raise ValidationError("No se puede modificar base_salary en período aprobado/pagado")
+            if old_instance.commission_earnings != self.commission_earnings:
+                raise ValidationError("No se puede modificar commission_earnings en período aprobado/pagado")
+            if old_instance.gross_amount != self.gross_amount:
+                raise ValidationError("No se puede modificar gross_amount en período aprobado/pagado")
+            if old_instance.deductions_total != self.deductions_total:
+                raise ValidationError("No se puede modificar deductions_total en período aprobado/pagado")
+            if old_instance.net_amount != self.net_amount:
+                raise ValidationError("No se puede modificar net_amount en período aprobado/pagado")
             
             # Detectar cambios en campos protegidos
             protected_fields_changed = []
@@ -154,7 +201,7 @@ class PayrollPeriod(models.Model):
             if old_instance.status != self.status:
                 allowed_transitions = {
                     'approved': ['paid'],
-                    'paid': [],  # No se puede cambiar desde paid
+                    'paid': [],
                 }
                 
                 if self.status not in allowed_transitions.get(old_instance.status, []):
@@ -177,6 +224,10 @@ class PayrollPeriod(models.Model):
         
         # PROTECCIÓN: Si ya está aprobado/pagado y tiene snapshot, no recalcular
         if self.status in ['approved', 'paid'] and self.calculation_snapshot:
+            return
+        
+        # FIX 3: Bloquear recalcular si está finalizado
+        if self.status in ['approved', 'paid']:
             return
         
         # NUEVO: Usar servicio de cálculo desde snapshots
@@ -334,6 +385,18 @@ class PayrollPeriod(models.Model):
     def period_display(self):
         return f"{self.period_start.strftime('%d/%m/%Y')} - {self.period_end.strftime('%d/%m/%Y')}"
     
+    def delete(self, *args, **kwargs):
+        """FIX 5: Bloquear hard delete de períodos aprobados/pagados"""
+        from django.core.exceptions import ValidationError
+        
+        if self.status in ['approved', 'paid']:
+            raise ValidationError(
+                f"No se puede eliminar un período con status '{self.status}'. "
+                "Use soft delete si es necesario."
+            )
+        
+        super().delete(*args, **kwargs)
+    
     def __str__(self):
         return f"{self.employee} - {self.period_display} - {self.status}"
 
@@ -362,9 +425,41 @@ class PayrollDeduction(models.Model):
     
     class Meta:
         ordering = ['deduction_type']
+        indexes = [
+            models.Index(fields=['period']),
+        ]
     
     def __str__(self):
         return f"{self.get_deduction_type_display()} - ${self.amount}"
+    
+    def save(self, *args, **kwargs):
+        """FIX 4: Hacer PayrollDeduction inmutable después de creación"""
+        from django.core.exceptions import ValidationError
+        
+        if self.pk is not None:
+            # Bloquear modificación de campos críticos
+            original = PayrollDeduction.objects.get(pk=self.pk)
+            
+            if original.amount != self.amount:
+                raise ValidationError("No se puede modificar el monto de una deducción")
+            
+            if original.deduction_type != self.deduction_type:
+                raise ValidationError("No se puede modificar el tipo de deducción")
+            
+            # Validar que el período no esté finalizado
+            if hasattr(self.period, 'is_finalized') and self.period.is_finalized:
+                raise ValidationError("No se puede modificar una deducción de un período finalizado")
+        
+        super().save(*args, **kwargs)
+    
+    def delete(self, *args, **kwargs):
+        """FIX 4: Bloquear eliminación si período está finalizado"""
+        from django.core.exceptions import ValidationError
+        
+        if hasattr(self.period, 'is_finalized') and self.period.is_finalized:
+            raise ValidationError("No se puede eliminar una deducción de un período finalizado")
+        
+        super().delete(*args, **kwargs)
 
 
 class PayrollConfiguration(models.Model):

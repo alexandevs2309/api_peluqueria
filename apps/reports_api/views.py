@@ -123,8 +123,16 @@ def sales_report(request):
 @permission_classes([IsAuthenticated])
 def dashboard_stats(request):
     """Estadísticas para dashboard"""
+    from django.core.cache import cache
     from apps.clients_api.models import Client
     from apps.employees_api.models import Employee
+    
+    # Cache key basado en tenant
+    cache_key = f'dashboard_stats_{getattr(request.user.tenant, "id", "none")}'
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        return Response(cached_data)
     
     tenant = request.user.tenant
     
@@ -132,12 +140,17 @@ def dashboard_stats(request):
     total_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
     active_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
     
-    return Response({
+    data = {
         'total_clients': total_clients,
         'monthly_appointments': 25,  # Simulado por ahora
         'monthly_revenue': 15420.50,  # Simulado por ahora
         'active_employees': active_employees
-    })
+    }
+    
+    # Cache por 60 segundos
+    cache.set(cache_key, data, 60)
+    
+    return Response(data)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
@@ -245,22 +258,23 @@ class AdminReportsView(views.APIView):
                     'revenue': float(month_revenue)
                 })
             
-            # Top tenants por revenue
-            top_tenants = []
-            for tenant in Tenant.objects.filter(is_active=True)[:10]:
-                tenant_revenue = invoices.filter(
-                    user__tenant=tenant,
-                    is_paid=True
-                ).aggregate(Sum('amount'))['amount__sum'] or 0
-                
-                if tenant_revenue > 0:
-                    top_tenants.append({
-                        'tenant_name': tenant.name,
-                        'revenue': float(tenant_revenue),
-                        'plan': tenant.subscription_plan.name if tenant.subscription_plan else 'FREE'
-                    })
+            # Top tenants por revenue - OPTIMIZADO: Una sola query
+            top_tenants_data = Invoice.objects.filter(
+                issued_at__gte=start_date,
+                issued_at__lte=end_date,
+                is_paid=True
+            ).values(
+                'user__tenant__name',
+                'user__tenant__subscription_plan__name'
+            ).annotate(
+                total_revenue=Sum('amount')
+            ).order_by('-total_revenue')[:5]
             
-            top_tenants.sort(key=lambda x: x['revenue'], reverse=True)
+            top_tenants = [{
+                'tenant_name': item['user__tenant__name'],
+                'revenue': float(item['total_revenue']),
+                'plan': item['user__tenant__subscription_plan__name'] or 'FREE'
+            } for item in top_tenants_data]
             
             return Response({
                 'period': period,
@@ -344,11 +358,19 @@ def appointments_calendar_data(request):
 @permission_classes([IsAuthenticated])
 def kpi_dashboard(request):
     """KPIs principales para dashboard"""
+    from django.core.cache import cache
     from apps.clients_api.models import Client
     from apps.employees_api.models import Employee
     from apps.pos_api.models import Sale
     from apps.appointments_api.models import Appointment
     from django.db.models import Sum, Count, Avg
+    
+    # Cache key basado en tenant
+    cache_key = f'kpi_dashboard_{getattr(request.user.tenant, "id", "none")}'
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        return Response(cached_data)
     
     tenant = request.user.tenant
     today = timezone.now().date()
@@ -387,7 +409,7 @@ def kpi_dashboard(request):
         date_time__date__gte=month_start
     ).aggregate(avg=Avg('total'))['avg'] or 0
     
-    return Response({
+    data = {
         'monthly': {
             'revenue': float(monthly_revenue),
             'appointments': monthly_appointments,
@@ -401,7 +423,12 @@ def kpi_dashboard(request):
             'clients': total_clients,
             'employees': active_employees
         }
-    })
+    }
+    
+    # Cache por 60 segundos
+    cache.set(cache_key, data, 60)
+    
+    return Response(data)
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

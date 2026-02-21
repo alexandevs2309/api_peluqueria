@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
@@ -11,10 +12,18 @@ class PayrollViewSet(viewsets.ViewSet):
     """ViewSet para gestión de nómina"""
     permission_classes = [IsAuthenticated]
     
+    def _require_admin_role(self, request):
+        """Validar que el usuario tenga rol de administrador"""
+        if not request.user.roles.filter(name__in=['Super-Admin', 'Client-Admin']).exists():
+            raise PermissionDenied("No autorizado para operaciones de nómina.")
+    
     def get_queryset(self):
         user = self.request.user
         if hasattr(user, 'tenant'):
-            return PayrollPeriod.objects.filter(employee__tenant=user.tenant)
+            return PayrollPeriod.objects.select_related(
+                'employee__user',
+                'employee__tenant'
+            ).prefetch_related('deductions').filter(employee__tenant=user.tenant)
         return PayrollPeriod.objects.none()
     
     @action(detail=False, methods=['get'], url_path='client/payroll')
@@ -51,6 +60,8 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='client/payroll/register_payment')
     def register_payment(self, request):
         """Endpoint compatible con frontend: POST /payroll/client/payroll/register_payment/"""
+        self._require_admin_role(request)
+        
         period_id = request.data.get('period_id')
         payment_method = request.data.get('payment_method')
         payment_reference = request.data.get('payment_reference', '')
@@ -59,21 +70,22 @@ class PayrollViewSet(viewsets.ViewSet):
             return Response({'error': 'period_id y payment_method son requeridos'}, status=400)
         
         try:
-            period = PayrollPeriod.objects.get(id=period_id)
-            
-            if period.employee.tenant != request.user.tenant:
-                return Response({'error': 'No tienes permiso'}, status=403)
-            
-            if period.status == 'paid':
-                return Response({'error': 'Ya fue pagado'}, status=400)
-            
-            if period.status != 'approved':
-                return Response({'error': 'El período debe estar aprobado antes de pagar'}, status=400)
-            
-            if not period.can_pay:
-                return Response({'error': period.pay_block_reason}, status=400)
-            
             with transaction.atomic():
+                # 🔒 BLOQUEO REAL DE FILA
+                period = PayrollPeriod.objects.select_for_update().get(id=period_id)
+                
+                if period.employee.tenant != request.user.tenant:
+                    return Response({'error': 'No tienes permiso'}, status=403)
+                
+                if period.status == 'paid':
+                    return Response({'error': 'Ya fue pagado'}, status=400)
+                
+                if period.status != 'approved':
+                    return Response({'error': 'El período debe estar aprobado antes de pagar'}, status=400)
+                
+                if not period.can_pay:
+                    return Response({'error': period.pay_block_reason}, status=400)
+                
                 period.mark_as_paid(payment_method, payment_reference, request.user)
                 self._send_payment_notification(period)
             
@@ -91,6 +103,8 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='client/payroll/(?P<period_id>[^/.]+)/recalculate')
     def recalculate_period(self, request, period_id=None):
         """Recalcular período manualmente (solo si está open o pending)"""
+        self._require_admin_role(request)
+        
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
@@ -136,6 +150,8 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='client/payroll/(?P<period_id>[^/.]+)/approve')
     def approve_period(self, request, period_id=None):
         """Aprobar período para pago"""
+        self._require_admin_role(request)
+        
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
@@ -157,6 +173,8 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='client/payroll/(?P<period_id>[^/.]+)/reject')
     def reject_period(self, request, period_id=None):
         """Rechazar período"""
+        self._require_admin_role(request)
+        
         reason = request.data.get('reason', 'Sin motivo especificado')
         
         try:

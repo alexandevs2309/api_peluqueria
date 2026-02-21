@@ -82,6 +82,8 @@ class RegisterView(generics.CreateAPIView):
     throttle_classes = [RegisterThrottle]
 
     def perform_create(self, serializer):
+        from django.db import transaction
+        
         # Obtener datos para validación
         email = serializer.validated_data['email']
         ip_address = get_client_ip(self.request)
@@ -100,11 +102,9 @@ class RegisterView(generics.CreateAPIView):
                 'blocked_until': blocked_until.isoformat() if blocked_until else None
             })
         
-        user = serializer.save()
-        
-        # Crear tenant automáticamente para el usuario
-        try:
-            # Obtener plan FREE por defecto para nuevos registros
+        # Transacción atómica para garantizar tenant antes de usuario
+        with transaction.atomic():
+            # Obtener plan FREE por defecto
             free_plan = SubscriptionPlan.objects.filter(name='free').first()
             if not free_plan:
                 free_plan = SubscriptionPlan.objects.filter(name='basic').first()
@@ -112,7 +112,8 @@ class RegisterView(generics.CreateAPIView):
                 free_plan = SubscriptionPlan.objects.first()
             
             # Crear subdomain único
-            subdomain = re.sub(r'[^a-zA-Z0-9]', '', user.full_name.lower())[:50]
+            full_name = serializer.validated_data.get('full_name', 'barbershop')
+            subdomain = re.sub(r'[^a-zA-Z0-9]', '', full_name.lower())[:50]
             if not subdomain:
                 subdomain = 'barbershop'
             
@@ -123,45 +124,45 @@ class RegisterView(generics.CreateAPIView):
                 counter += 1
             
             # Crear nombre de tenant único
-            tenant_name = f'Barbería de {user.full_name}'
+            tenant_name = f'Barbería de {full_name}'
             counter = 1
             original_name = tenant_name
             while Tenant.objects.filter(name=tenant_name).exists():
                 tenant_name = f'{original_name} {counter}'
                 counter += 1
             
-            # Crear tenant
+            # Crear tenant PRIMERO
             tenant = Tenant.objects.create(
                 name=tenant_name,
                 subdomain=subdomain,
-                owner=user,
+                owner=None,
                 subscription_plan=free_plan,
                 is_active=True
             )
             
-            # Asignar tenant al usuario
-            user.tenant = tenant
-            user.save()
+            # Crear usuario con tenant asignado
+            user = serializer.save(tenant=tenant)
+            
+            # Actualizar owner del tenant
+            tenant.owner = user
+            tenant.save(update_fields=['owner'])
             
             # Asignar rol Client-Admin
-            client_admin_role = Role.objects.get(name='Client-Admin')
-            UserRole.objects.create(
-                user=user,
-                role=client_admin_role,
-                tenant=tenant
-            )
+            try:
+                client_admin_role = Role.objects.get(name='Client-Admin')
+                UserRole.objects.create(
+                    user=user,
+                    role=client_admin_role,
+                    tenant=tenant
+                )
+            except Role.DoesNotExist:
+                pass
             
             # Registrar en sistema anti-fraude si es plan FREE
             if free_plan and free_plan.name == 'free':
-                AntiFraudValidator.record_free_signup(user.email, get_client_ip(self.request))
-            
-            print(f'Usuario {user.email} creado con tenant {tenant.name} y rol Client-Admin')
-                
-        except Exception as e:
-            print(f'Error creando tenant y rol: {e}')
-            import traceback
-            traceback.print_exc()
+                AntiFraudValidator.record_free_signup(user.email, ip_address)
         
+        # Enviar email de verificación (fuera de transacción)
         email_subject = "Verifica tu correo"
         email_body = f"Hola {user.full_name}, verifica tu correo en: http://localhost:4200/verify-email/{user.email_verification_token}/"
         email_from = "no-reply@peluqueria.com"
@@ -171,9 +172,6 @@ class RegisterView(generics.CreateAPIView):
             send_email_async(email_subject, email_body, email_from, email_to)
         else:
             send_email_async.delay(email_subject, email_body, email_from, email_to)
-        
-        # No devolver Response desde perform_create, solo procesar
-        # La respuesta se maneja automáticamente por CreateAPIView
 
 class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer

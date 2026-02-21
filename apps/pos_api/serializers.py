@@ -28,7 +28,7 @@ class SaleSerializer(serializers.ModelSerializer):
     details = SaleDetailSerializer(many=True)
     payments = PaymentSerializer(many=True)
     appointment = serializers.PrimaryKeyRelatedField(queryset=Appointment.objects.all(), required=False)
-    client_name = serializers.CharField(source='client.name', read_only=True)
+    client_name = serializers.CharField(source='client.full_name', read_only=True)
 
     class Meta:
         model = Sale

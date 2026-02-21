@@ -1,5 +1,5 @@
 from rest_framework import permissions
-from apps.auth_api.models import UserRole
+from apps.roles_api.models import UserRole
 
 class RolePermission(permissions.BasePermission):
     def __init__(self, allowed_roles=None):

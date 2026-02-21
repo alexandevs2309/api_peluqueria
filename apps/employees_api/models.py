@@ -39,6 +39,11 @@ class Employee(models.Model):
 
     class Meta:
         ordering = ['user__email']
+        indexes = [
+            models.Index(fields=['tenant']),
+            models.Index(fields=['is_active']),
+            models.Index(fields=['tenant', 'is_active']),
+        ]
 
     def __str__(self):
         return self.user.email
