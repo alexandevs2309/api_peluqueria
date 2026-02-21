@@ -20,7 +20,8 @@ class TestPayrollDeterministic:
     @pytest.fixture
     def setup_data(self):
         """Setup común para todos los tests"""
-        tenant = Tenant.objects.create(name="Test Tenant")
+        owner = User.objects.create_user(email='owner2@test.com', password='pass', full_name='Owner2')
+        tenant = Tenant.objects.create(name="Test Tenant", subdomain='test-tenant-deterministic', owner=owner)
         user = User.objects.create_user(
             username="testuser",
             email="test@test.com",

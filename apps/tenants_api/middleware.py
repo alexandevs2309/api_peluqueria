@@ -50,8 +50,20 @@ class TenantMiddleware(MiddlewareMixin):
                 validated_token = jwt_auth.get_validated_token(token_str)
                 tenant_id = validated_token.get('tenant_id')
                 if tenant_id:
-                    tenant = Tenant.objects.get(id=tenant_id)
-                    request.tenant = tenant
+                    try:
+                        tenant = Tenant.objects.get(
+                            id=tenant_id,
+                            deleted_at__isnull=True,
+                            is_active=True
+                        )
+                        request.tenant = tenant
+                    except Tenant.DoesNotExist:
+                        return JsonResponse({
+                            'error': 'TENANT_INACTIVE',
+                            'code': 'TENANT_INACTIVE',
+                            'message': 'This account has been deactivated. Please contact support for assistance.',
+                            'support_email': 'support@barbershop.com'
+                        }, status=403)
                 else:
                     request.tenant = None
             else:
@@ -67,7 +79,16 @@ class TenantMiddleware(MiddlewareMixin):
                     (hasattr(request.user, 'role') and request.user.role == 'super_admin')):
                     request.tenant = None
                 elif hasattr(request.user, 'tenant') and request.user.tenant:
-                    request.tenant = request.user.tenant
+                    # Validar que el tenant del usuario esté activo
+                    user_tenant = request.user.tenant
+                    if user_tenant.deleted_at is not None or not user_tenant.is_active:
+                        return JsonResponse({
+                            'error': 'TENANT_INACTIVE',
+                            'code': 'TENANT_INACTIVE',
+                            'message': 'This account has been deactivated. Please contact support for assistance.',
+                            'support_email': 'support@barbershop.com'
+                        }, status=403)
+                    request.tenant = user_tenant
                 else:
                     if request.path.startswith('/api/subscriptions/me/'):
                         request.tenant = None

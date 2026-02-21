@@ -1,5 +1,5 @@
 from rest_framework.permissions import BasePermission
-from .models import UserRole
+from apps.roles_api.models import UserRole
 
 class RolePermission(BasePermission):
     """ Permite acceso si el usuario tiene alguno de los roles permitidos. """
@@ -16,3 +16,15 @@ class RolePermission(BasePermission):
         # user_roles = request.user.roles.values_list('name', flat=True)
         
         return any(role in self.allowed_roles for role in user_roles)
+
+class IsSuperAdmin(BasePermission):
+    """
+    Permission class para SuperAdmin.
+    Valida que el usuario tenga el rol 'Super-Admin' en la tabla de roles.
+    """
+    def has_permission(self, request, view):
+        return (
+            request.user and 
+            request.user.is_authenticated and 
+            request.user.roles.filter(name='Super-Admin').exists()
+        )

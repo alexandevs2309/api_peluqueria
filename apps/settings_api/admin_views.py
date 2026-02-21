@@ -3,6 +3,7 @@ from rest_framework.decorators import api_view, permission_classes
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
 from datetime import datetime, timedelta
+from apps.auth_api.permissions import IsSuperAdmin
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
 from apps.billing_api.models import Invoice
@@ -10,17 +11,9 @@ from apps.auth_api.models import User
 from .integration_service import IntegrationService
 from apps.audit_api.views import AuditLogViewSet
 
-class IsSuperAdmin(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return (
-            request.user and 
-            request.user.is_authenticated and 
-            request.user.is_superuser
-        )
-
 class SaasMetricsView(views.APIView):
     """Vista para métricas SaaS del SuperAdmin"""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsSuperAdmin]
     
     def get(self, request):
         try:

@@ -2,10 +2,20 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.db import transaction
 from .barbershop_models import BarbershopSettings
+from .audit_models import SettingsAuditLog
+from .permissions import IsClientAdmin
+
 
 class BarbershopSettingsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, IsClientAdmin]
+    
+    # Campos críticos que requieren confirmación
+    CRITICAL_FIELDS = ['currency']
+    
+    # Campos que se auditan
+    AUDITED_FIELDS = ['currency']
     
     def list(self, request):
         """Get barbershop settings"""
@@ -33,16 +43,9 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 'logo': settings.logo.url if settings.logo else None,
                 'currency': settings.currency,
                 'currency_symbol': settings.currency_symbol,
-                'default_commission_rate': float(settings.default_commission_rate),
-                'default_fixed_salary': float(settings.default_fixed_salary),
                 'business_hours': settings.business_hours,
                 'contact': settings.contact,
-                'pos_config': pos_config,
-                'tax_rate': float(settings.tax_rate),
-                'service_discount_limit': float(settings.service_discount_limit),
-                'cancellation_policy_hours': settings.cancellation_policy_hours,
-                'late_arrival_grace_minutes': settings.late_arrival_grace_minutes,
-                'booking_advance_days': settings.booking_advance_days
+                'pos_config': pos_config
             })
         except BarbershopSettings.DoesNotExist:
             # Return default settings
@@ -51,8 +54,6 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 'logo': None,
                 'currency': 'COP',
                 'currency_symbol': '$',
-                'default_commission_rate': 40.0,
-                'default_fixed_salary': 1200000.0,
                 'business_hours': {
                     'monday': {'open': '08:00', 'close': '18:00', 'closed': False},
                     'tuesday': {'open': '08:00', 'close': '18:00', 'closed': False},
@@ -67,19 +68,68 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'email': '',
                     'address': ''
                 },
-                'pos_config': None,
-                'tax_rate': 0.0,
-                'service_discount_limit': 20.0,
-                'cancellation_policy_hours': 24,
-                'late_arrival_grace_minutes': 15,
-                'booking_advance_days': 30
+                'pos_config': None
             })
     
     def create(self, request):
-        """Save barbershop settings"""
+        """Save barbershop settings con validaciones y auditoría"""
         data = request.data
+        tenant = request.user.tenant
         
-        # Guardar configuración POS si viene en los datos
+        # Obtener o crear settings
+        try:
+            settings = BarbershopSettings.objects.get(tenant=tenant)
+            is_update = True
+        except BarbershopSettings.DoesNotExist:
+            settings = None
+            is_update = False
+        
+        # FIX 2: Validar cambio de moneda
+        if is_update and 'currency' in data:
+            old_currency = settings.currency
+            new_currency = data.get('currency')
+            
+            if old_currency != new_currency:
+                # Verificar si existen transacciones
+                from apps.pos_api.models import Sale
+                from apps.employees_api.earnings_models import PayrollPeriod
+                
+                has_sales = Sale.objects.filter(employee__tenant=tenant).exists()
+                has_payroll = PayrollPeriod.objects.filter(employee__tenant=tenant).exists()
+                
+                if has_sales or has_payroll:
+                    return Response({
+                        'error': 'No se puede cambiar la moneda porque existen transacciones registradas',
+                        'code': 'CURRENCY_LOCKED',
+                        'details': 'El sistema tiene ventas o nóminas registradas. Cambiar la moneda causaría inconsistencias.'
+                    }, status=400)
+        
+        # FIX 4: Gobierno defensivo - Detectar cambios críticos
+        if is_update and not data.get('confirmed_critical', False):
+            critical_changes = []
+            
+            for field in self.CRITICAL_FIELDS:
+                if field in data:
+                    old_value = str(getattr(settings, field, ''))
+                    new_value = str(data.get(field, ''))
+                    
+                    if old_value != new_value:
+                        critical_changes.append({
+                            'setting': field,
+                            'old_value': old_value,
+                            'new_value': new_value,
+                            'type': 'critical',
+                            'impact': self._get_field_impact(field)
+                        })
+            
+            if critical_changes:
+                return Response({
+                    'requires_confirmation': True,
+                    'critical_changes': critical_changes,
+                    'message': 'Este cambio puede afectar el comportamiento futuro del sistema'
+                }, status=200)
+        
+        # Guardar configuración POS
         if 'pos_config' in data and data['pos_config']:
             try:
                 from apps.pos_api.models import PosConfiguration
@@ -90,44 +140,57 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 pos.email = data['pos_config'].get('email', '')
                 pos.website = data['pos_config'].get('website', '')
                 pos.save()
-            except Exception as e:
+            except Exception:
                 pass
         
-        settings, created = BarbershopSettings.objects.get_or_create(
-            tenant=request.user.tenant,
-            defaults={
-                'name': data.get('name', ''),
-                'currency': data.get('currency', 'COP'),
-                'currency_symbol': data.get('currency_symbol', '$'),
-                'default_commission_rate': data.get('default_commission_rate', 40.0),
-                'default_fixed_salary': data.get('default_fixed_salary', 1200000.0),
-                'business_hours': data.get('business_hours', {}),
-                'contact': data.get('contact', {}),
-                'tax_rate': data.get('tax_rate', 0.0),
-                'service_discount_limit': data.get('service_discount_limit', 20.0),
-                'cancellation_policy_hours': data.get('cancellation_policy_hours', 24),
-                'late_arrival_grace_minutes': data.get('late_arrival_grace_minutes', 15),
-                'booking_advance_days': data.get('booking_advance_days', 30)
-            }
-        )
-        
-        if not created:
-            # Update existing settings
-            settings.name = data.get('name', settings.name)
-            settings.currency = data.get('currency', settings.currency)
-            settings.currency_symbol = data.get('currency_symbol', settings.currency_symbol)
-            settings.default_commission_rate = data.get('default_commission_rate', settings.default_commission_rate)
-            settings.default_fixed_salary = data.get('default_fixed_salary', settings.default_fixed_salary)
-            settings.business_hours = data.get('business_hours', settings.business_hours)
-            settings.contact = data.get('contact', settings.contact)
-            settings.tax_rate = data.get('tax_rate', settings.tax_rate)
-            settings.service_discount_limit = data.get('service_discount_limit', settings.service_discount_limit)
-            settings.cancellation_policy_hours = data.get('cancellation_policy_hours', settings.cancellation_policy_hours)
-            settings.late_arrival_grace_minutes = data.get('late_arrival_grace_minutes', settings.late_arrival_grace_minutes)
-            settings.booking_advance_days = data.get('booking_advance_days', settings.booking_advance_days)
-            settings.save()
+        # Usar transacción atómica
+        with transaction.atomic():
+            if is_update:
+                # FIX 3: Auditar cambios
+                self._audit_changes(settings, data, request.user, tenant)
+                
+                # Actualizar settings
+                settings.name = data.get('name', settings.name)
+                settings.currency = data.get('currency', settings.currency)
+                settings.currency_symbol = data.get('currency_symbol', settings.currency_symbol)
+                settings.business_hours = data.get('business_hours', settings.business_hours)
+                settings.contact = data.get('contact', settings.contact)
+                settings.save()
+            else:
+                # Crear nuevo
+                settings = BarbershopSettings.objects.create(
+                    tenant=tenant,
+                    name=data.get('name', ''),
+                    currency=data.get('currency', 'COP'),
+                    currency_symbol=data.get('currency_symbol', '$'),
+                    business_hours=data.get('business_hours', {}),
+                    contact=data.get('contact', {})
+                )
         
         return Response({'message': 'Settings saved successfully'})
+    
+    def _audit_changes(self, settings, data, user, tenant):
+        """Registrar cambios en campos auditados"""
+        for field in self.AUDITED_FIELDS:
+            if field in data:
+                old_value = str(getattr(settings, field, ''))
+                new_value = str(data.get(field, ''))
+                
+                if old_value != new_value:
+                    SettingsAuditLog.objects.create(
+                        tenant=tenant,
+                        user=user,
+                        field_name=field,
+                        old_value=old_value,
+                        new_value=new_value
+                    )
+    
+    def _get_field_impact(self, field):
+        """Obtener descripción de impacto por campo"""
+        impacts = {
+            'currency': 'Afecta la visualización de todos los montos en el sistema'
+        }
+        return impacts.get(field, 'Cambio en configuración del sistema')
     
     @action(detail=False, methods=['post'])
     def upload_logo(self, request):

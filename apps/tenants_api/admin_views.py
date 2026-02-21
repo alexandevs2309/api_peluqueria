@@ -5,16 +5,9 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Count
 from apps.auth_api.models import User
 from apps.auth_api.serializers import UserListSerializer
+from apps.auth_api.permissions import IsSuperAdmin
 from apps.roles_api.models import Role, UserRole
 from .models import Tenant
-
-class IsSuperAdmin(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return (
-            request.user and 
-            request.user.is_authenticated and 
-            request.user.roles.filter(name='Super-Admin').exists()
-        )
 
 class AdminUserManagementViewSet(viewsets.ModelViewSet):
     """ViewSet para gestión de usuarios por SuperAdmin"""

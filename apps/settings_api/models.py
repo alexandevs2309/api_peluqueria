@@ -3,6 +3,9 @@ from django.conf import settings as django_settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.utils.translation import gettext_lazy as _
 
+# Importar modelos adicionales
+from .audit_models import SettingsAuditLog
+
 class Branch(models.Model):
     """Sucursales - Solo para planes Enterprise/Multi-Branch"""
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='branches')

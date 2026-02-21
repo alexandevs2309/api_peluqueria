@@ -114,3 +114,15 @@ def user_subscription(user):
 @pytest.fixture
 def api_client():
     return APIClient()
+
+
+@pytest.fixture(autouse=True)
+def ensure_test_owner(db):
+    """Garantiza que exista al menos un usuario en la BD para servir como owner de Tenants en tests."""
+    if not User.objects.exists():
+        try:
+            User.objects.create_user(email='test-tenant-owner@example.com', password='pass')
+        except Exception:
+            # Si la tabla de usuarios aún no está disponible durante migraciones, ignorar
+            pass
+    return None

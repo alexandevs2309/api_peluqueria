@@ -37,7 +37,8 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost'])
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost',"api_peluqueria-web-1",
+])
 if DEBUG:
     ALLOWED_HOSTS.append('testserver')
 
@@ -249,7 +250,16 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.notifications_api.tasks.cleanup_old_notifications',
         'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Domingos a las 3:00 AM
     },
+    # Reconciliación financiera diaria
+    'daily-financial-reconciliation': {
+        'task': 'apps.billing_api.tasks.daily_financial_reconciliation',
+        'schedule': crontab(hour=4, minute=0),  # Diario a las 4:00 AM
+    },
 }
+
+# Financial reconciliation alerts
+FINANCE_ALERT_EMAILS = env.list('FINANCE_ALERT_EMAILS', default=['finance@yourdomain.com'])
+STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
 
 
 

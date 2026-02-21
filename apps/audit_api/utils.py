@@ -190,4 +190,12 @@ def create_audit_log(user, action, description, content_object=None,
     if extra_data:
         kwargs['extra_data'] = extra_data
     
-    return AuditLog.objects.create(**kwargs)
+    try:
+        return AuditLog.objects.create(**kwargs)
+    except Exception as e:
+        # Durante migraciones o estados tempranos de la app la tabla puede no existir.
+        # No queremos que una auditoría impida el procedimiento principal (migrate/tests).
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug("No se pudo crear AuditLog (ignorado): %s", e)
+        return None

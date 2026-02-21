@@ -24,7 +24,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "subscription", "plan_name", "amount", "description", 
             "due_date", "is_paid", "paid_at", "issued_at", "status"
         ]
-        read_only_fields = ["id", "user", "is_paid", "issued_at", "status", "paid_at"]
+        read_only_fields = ["id", "user", "amount", "is_paid", "issued_at", "status", "paid_at"]
     
     def get_user_email(self, obj):
         return obj.user.email if obj.user else None

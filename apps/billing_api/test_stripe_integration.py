@@ -12,12 +12,14 @@ User = get_user_model()
 
 class StripeIntegrationTest(TestCase):
     def setUp(self):
+        # Crear owner y tenant correctamente
+        self.owner = User.objects.create_user(email='owner@peluqueria.com', password='pass', full_name='Owner')
         self.tenant = Tenant.objects.create(
             name='Test Peluquería',
             subdomain='test-peluqueria',
-            owner_id=1
+            owner=self.owner
         )
-        
+
         self.user = User.objects.create_user(
             email='test@peluqueria.com',
             password='test123',

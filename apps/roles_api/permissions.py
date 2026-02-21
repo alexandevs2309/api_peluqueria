@@ -16,13 +16,15 @@ class RolePermission(BasePermission):
             return True
 
         if not hasattr(request, '_cached_roles'):
-            # Filtrar roles por tenant actual
+            # Filtrar roles por tenant actual usando UserRole
             if hasattr(request, 'current_tenant') and request.current_tenant:
                 request._cached_roles = set(
-                    request.user.roles.filter(tenant=request.current_tenant).values_list('name', flat=True)
+                    UserRole.objects.filter(user=request.user, tenant=request.current_tenant).values_list('role__name', flat=True)
                 )
             else:
-                request._cached_roles = set()
+                request._cached_roles = set(
+                    UserRole.objects.filter(user=request.user, tenant__isnull=True).values_list('role__name', flat=True)
+                )
 
         return bool(set(self.allowed_roles) & request._cached_roles)
 
@@ -50,12 +52,14 @@ class IsActiveAndRolePermission(BasePermission):
             return False
 
         if not hasattr(request, '_cached_roles'):
-            # Filtrar roles por tenant actual
+            # Filtrar roles por tenant actual usando UserRole
             if hasattr(request, 'current_tenant') and request.current_tenant:
                 request._cached_roles = set(
-                    request.user.roles.filter(tenant=request.current_tenant).values_list('name', flat=True)
+                    UserRole.objects.filter(user=request.user, tenant=request.current_tenant).values_list('role__name', flat=True)
                 )
             else:
-                request._cached_roles = set()
+                request._cached_roles = set(
+                    UserRole.objects.filter(user=request.user, tenant__isnull=True).values_list('role__name', flat=True)
+                )
 
         return bool(set(self.allowed_roles) & request._cached_roles)

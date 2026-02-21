@@ -1,19 +1,12 @@
 from rest_framework import viewsets, permissions, decorators, response, status, serializers
 from django.contrib.auth import get_user_model
+from apps.auth_api.permissions import IsSuperAdmin
 from .models import Tenant
 from .serializers import TenantSerializer
 from django.contrib.contenttypes.models import ContentType
 from apps.audit_api.models import AuditLog
 from apps.settings_api.utils import validate_tenant_limit
 User = get_user_model()
-
-class IsSuperAdmin(permissions.BasePermission):
-    def has_permission(self, request, view):
-        return (
-            request.user and 
-            request.user.is_authenticated and 
-            request.user.roles.filter(name='Super-Admin').exists()
-        )
 
 class TenantViewSet(viewsets.ModelViewSet):
     """
@@ -35,9 +28,9 @@ class TenantViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
     def get_queryset(self):
-        # SuperAdmin ve todos los tenants
-        if self.request.user.roles.filter(name='Super-Admin').exists():
-            return Tenant.objects.all()
+        # ✅ ESTANDARIZADO: Usar is_superuser en lugar de roles
+        if self.request.user.is_superuser:
+            return Tenant.objects.filter(deleted_at__isnull=True)
         # Otros usuarios no tienen acceso
         return Tenant.objects.none()
 
@@ -69,12 +62,30 @@ class TenantViewSet(viewsets.ModelViewSet):
             object_id=tenant.id,
             ip_address=self.request.META.get('REMOTE_ADDR'),
             user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
-            source='SYSTEM',  # O 'USERS' si lo prefieres
+            source='SYSTEM',
             extra_data={
                 'tenant_name': tenant.name,
                 'owner_id': tenant.owner.id if tenant.owner else None
             }
     )
+    
+    def destroy(self, request, *args, **kwargs):
+        """Soft delete de tenant"""
+        tenant = self.get_object()
+        tenant.soft_delete()
+        
+        AuditLog.objects.create(
+            user=request.user,
+            action='DELETE',
+            description=f"Eliminó tenant: {tenant.name}",
+            content_type=ContentType.objects.get_for_model(tenant),
+            object_id=tenant.id,
+            ip_address=request.META.get('REMOTE_ADDR'),
+            user_agent=request.META.get('HTTP_USER_AGENT', ''),
+            source='SYSTEM'
+        )
+        
+        return response.Response(status=status.HTTP_204_NO_CONTENT)
 
     @decorators.action(detail=True, methods=["post"])
     def activate(self, request, pk=None):
@@ -150,9 +161,41 @@ class TenantViewSet(viewsets.ModelViewSet):
     
     @decorators.action(detail=False, methods=["post"])
     def bulk_delete(self, request):
-        """Bulk delete tenants"""
+        """Bulk soft delete tenants"""
         tenant_ids = request.data.get('tenant_ids', [])
+        
+        if not tenant_ids:
+            return response.Response(
+                {"error": "No tenant IDs provided"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if len(tenant_ids) > 20:
+            return response.Response(
+                {"error": "Maximum 20 tenants per operation"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         tenants = Tenant.objects.filter(id__in=tenant_ids)
-        count = tenants.count()
-        tenants.delete()
-        return response.Response({"deleted": count})
+        deleted_count = 0
+        
+        for tenant in tenants:
+            tenant.soft_delete()
+            
+            AuditLog.objects.create(
+                user=request.user,
+                action='BULK_DELETE',
+                description=f"Eliminó tenant en bulk: {tenant.name}",
+                content_type=ContentType.objects.get_for_model(tenant),
+                object_id=tenant.id,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                source='SYSTEM',
+                extra_data={
+                    'tenant_id': tenant.id,
+                    'tenant_name': tenant.name
+                }
+            )
+            deleted_count += 1
+        
+        return response.Response({"deleted": deleted_count})
