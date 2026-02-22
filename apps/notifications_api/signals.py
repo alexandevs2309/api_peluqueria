@@ -9,9 +9,18 @@ from .services import NotificationService
 def appointment_created(sender, instance, created, **kwargs):
     """Enviar notificación cuando se crea una cita"""
     if created:
-        service = NotificationService()
+        from .models import InAppNotification
         
-        # Notificación de confirmación al cliente
+        # Notificación in-app para el usuario que creó la cita
+        InAppNotification.objects.create(
+            recipient=instance.stylist,
+            type='appointment',
+            title='Nueva cita programada',
+            message=f"Cita con {instance.client.full_name} el {instance.date_time.strftime('%d/%m/%Y a las %H:%M')}"
+        )
+        
+        # Notificación por email (si existe template)
+        service = NotificationService()
         try:
             template = NotificationTemplate.objects.get(
                 notification_type='appointment_confirmation',
@@ -33,6 +42,41 @@ def appointment_created(sender, instance, created, **kwargs):
                 context_data=context
             )
         except NotificationTemplate.DoesNotExist:
+            pass
+
+@receiver(pre_save, sender='appointments_api.Appointment')
+def appointment_status_changed(sender, instance, **kwargs):
+    """Notificar cuando cambia el estado de una cita"""
+    if instance.pk:  # Solo si la cita ya existe
+        try:
+            from .models import InAppNotification
+            old_instance = sender.objects.get(pk=instance.pk)
+            
+            # Detectar cambio de estado
+            if old_instance.status != instance.status:
+                status_messages = {
+                    'completed': f"✅ Cita completada con {instance.client.full_name}",
+                    'cancelled': f"❌ Cita cancelada: {instance.client.full_name} - {instance.date_time.strftime('%d/%m/%Y %H:%M')}",
+                    'no_show': f"🚫 Cliente no asistió: {instance.client.full_name} - {instance.date_time.strftime('%d/%m/%Y %H:%M')}",
+                }
+                
+                if instance.status in status_messages:
+                    InAppNotification.objects.create(
+                        recipient=instance.stylist,
+                        type='appointment',
+                        title=f'Cambio de estado: {instance.get_status_display()}',
+                        message=status_messages[instance.status]
+                    )
+            
+            # Detectar reprogramación
+            if old_instance.date_time != instance.date_time:
+                InAppNotification.objects.create(
+                    recipient=instance.stylist,
+                    type='appointment',
+                    title='📅 Cita reprogramada',
+                    message=f"Cita con {instance.client.full_name} movida de {old_instance.date_time.strftime('%d/%m/%Y %H:%M')} a {instance.date_time.strftime('%d/%m/%Y %H:%M')}"
+                )
+        except sender.DoesNotExist:
             pass
 
 @receiver(post_save, sender='pos_api.Sale')

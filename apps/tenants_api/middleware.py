@@ -22,24 +22,36 @@ class TenantMiddleware(MiddlewareMixin):
         if not request.path.startswith('/api/'):
             return None
         
-        # Rutas exentas
+        # Rutas exentas (solo públicas)
         exempt_paths = [
-            '/api/auth/',
+            '/api/auth/login/',
+            '/api/auth/register/',
+            '/api/auth/password-reset/',
             '/api/schema/',
             '/api/docs/',
             '/api/healthz/',
-            '/api/system-settings/',
-            '/api/subscriptions/plans/',  # Allow subscription plans access
-            '/api/subscriptions/register/',  # Allow registration
-            '/api/subscriptions/register-with-plan/',  # Allow registration with plan
-            '/api/subscriptions/renew/',  # Allow subscription renewal
-            '/api/tenants/subscription-status/',  # Allow subscription status check
-            '/api/settings/contact/',  # Allow contact forms
-            '/api/settings/admin/',  # Allow super admin endpoints
+            '/api/subscriptions/plans/',  # Solo lectura
+            '/api/subscriptions/register/',
+            '/api/subscriptions/register-with-plan/',
+            '/api/settings/contact/',  # Formulario público
         ]
         for exempt_path in exempt_paths:
             if request.path.startswith(exempt_path):
                 return None
+        
+        # CRÍTICO: Rutas admin requieren superuser
+        admin_paths = [
+            '/api/settings/admin/',
+            '/api/system-settings/',
+            '/api/tenants/subscription-status/',
+        ]
+        for admin_path in admin_paths:
+            if request.path.startswith(admin_path):
+                if not (hasattr(request, 'user') and request.user.is_authenticated and request.user.is_superuser):
+                    return JsonResponse({
+                        'error': 'Forbidden',
+                        'code': 'SUPERUSER_REQUIRED'
+                    }, status=403)
         
         # Intentar obtener tenant desde JWT claims
         try:

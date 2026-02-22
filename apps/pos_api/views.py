@@ -150,14 +150,28 @@ class SaleViewSet(viewsets.ModelViewSet):
                                     f"Stock insuficiente para {product.name}. Disponible: {product.stock}, Solicitado: {quantity}"
                                 )
                             
+                            # CRÍTICO: Actualizar stock DENTRO del lock
+                            product.stock -= quantity
+                            product.save()
+                            
                             locked_products.append((product, quantity))
                         except (Product.DoesNotExist, ValueError, TypeError):
                             raise serializers.ValidationError("Producto no encontrado o ID inválido")
                 except (InvalidOperation, TypeError):
                     raise serializers.ValidationError("Valores inválidos para cantidad o precio")
             
-            # Aplicar descuento
+            # Aplicar descuento con validación
             discount = Decimal(str(self.request.data.get('discount', 0)))
+            
+            # CRÍTICO: Validar descuento
+            if discount < 0:
+                raise serializers.ValidationError("El descuento no puede ser negativo")
+            
+            if discount > total:
+                raise serializers.ValidationError(
+                    f"El descuento ({discount}) no puede ser mayor al total ({total})"
+                )
+            
             total_with_discount = total - discount
             
             # Determinar el empleado para la venta
@@ -189,13 +203,9 @@ class SaleViewSet(viewsets.ModelViewSet):
                 active_period.calculate_amounts()
                 active_period.save()
             
-            # Actualizar inventario de productos bloqueados
+            # CRÍTICO: Crear movimientos de stock (productos ya actualizados)
             for product, quantity in locked_products:
                 from apps.inventory_api.models import StockMovement
-                
-                # Reducir stock
-                product.stock -= quantity
-                product.save()
                 
                 # Crear movimiento de stock
                 StockMovement.objects.create(
@@ -246,21 +256,22 @@ class SaleViewSet(viewsets.ModelViewSet):
         
         # SuperAdmin puede ver todo
         if user.is_superuser:
-            pass  # No filtrar nada
-        elif user.tenant:
-            # Filtrar por tenant del usuario
-            qs = qs.filter(user__tenant=user.tenant)
-        else:
-            qs = qs.none()
+            return qs
+        
+        # CRÍTICO: Filtrar por tenant SIEMPRE
+        if not user.tenant:
+            return qs.none()
+        
+        # Filtro OBLIGATORIO por tenant directo
+        qs = qs.filter(user__tenant=user.tenant)
             
         # Si no es staff, solo sus propias ventas
-        if not user.is_staff and not user.is_superuser:
+        if not user.is_staff:
             qs = qs.filter(user=user)
         
         # Filtro por teléfono del cliente (protegido contra SQL injection)
         client_phone = self.request.query_params.get('client_phone')
         if client_phone:
-            # Validar formato de teléfono para prevenir SQL injection
             import re
             if re.match(r'^[\d\-\+\(\)\s]+$', client_phone):
                 qs = qs.filter(client__phone__icontains=client_phone)
@@ -330,8 +341,21 @@ class SaleViewSet(viewsets.ModelViewSet):
         import calendar
         
         with transaction.atomic():
-            # Bloquear venta para evitar doble refund
-            sale = Sale.objects.select_for_update().get(pk=pk)
+            # CRÍTICO: Bloquear venta Y validar tenant
+            try:
+                if request.user.is_superuser:
+                    sale = Sale.objects.select_for_update().get(pk=pk)
+                else:
+                    # Filtrar por tenant OBLIGATORIO
+                    sale = Sale.objects.select_for_update().get(
+                        pk=pk,
+                        user__tenant=request.user.tenant
+                    )
+            except Sale.DoesNotExist:
+                return Response(
+                    {'error': 'Venta no encontrada o sin permisos'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
             
             if sale.closed:
                 return Response(
@@ -579,10 +603,12 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         
         if user.is_superuser:
             return qs
-        elif user.tenant:
-            return qs.filter(user__tenant=user.tenant)
-        else:
+        
+        # CRÍTICO: Filtrar por tenant SIEMPRE
+        if not user.tenant:
             return qs.none()
+        
+        return qs.filter(user__tenant=user.tenant)
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)

@@ -237,7 +237,20 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.subscriptions_api.tasks.check_expired_subscriptions',
         'schedule': crontab(minute=0),  # Cada hora
     },
-    # Nuevas tareas de notificaciones
+    # Tareas de automatización de citas
+    'mark-expired-appointments': {
+        'task': 'apps.notifications_api.tasks.mark_expired_appointments',
+        'schedule': crontab(minute='*/15'),  # Cada 15 minutos
+    },
+    'send-daily-reminders': {
+        'task': 'apps.notifications_api.tasks.send_daily_appointment_reminders',
+        'schedule': crontab(hour=8, minute=0),  # Diario a las 8:00 AM
+    },
+    'notify-upcoming-appointments': {
+        'task': 'apps.notifications_api.tasks.notify_upcoming_appointments',
+        'schedule': crontab(minute=0),  # Cada hora
+    },
+    # Tareas existentes de notificaciones
     'send-appointment-reminders': {
         'task': 'apps.notifications_api.tasks.send_appointment_reminders',
         'schedule': crontab(hour=18, minute=0),  # Diario a las 6:00 PM
@@ -358,6 +371,12 @@ CSRF_COOKIE_SECURE = not DEBUG
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
+
+# CRÍTICO: SameSite cookies para prevenir CSRF
+SESSION_COOKIE_SAMESITE = 'Strict' if not DEBUG else 'Lax'
+CSRF_COOKIE_SAMESITE = 'Strict' if not DEBUG else 'Lax'
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # JS necesita leerlo
 
 # Basic security headers (safe for development)
 SECURE_BROWSER_XSS_FILTER = True

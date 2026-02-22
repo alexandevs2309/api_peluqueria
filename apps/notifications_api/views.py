@@ -1,26 +1,36 @@
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from django.utils import timezone
-from .models import Notification, NotificationTemplate
-from .serializers import NotificationSerializer, NotificationTemplateSerializer, NotificationPreferenceSerializer
+from .models import Notification, NotificationTemplate, InAppNotification
+from .serializers import NotificationSerializer, NotificationTemplateSerializer, NotificationPreferenceSerializer, InAppNotificationSerializer
 
 class NotificationListCreateView(generics.ListCreateAPIView):
-    queryset = Notification.objects.all()
-    serializer_class = NotificationSerializer
+    serializer_class = InAppNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        return self.queryset.filter(recipient=user).order_by('-created_at')
+        
+        # Administradores ven todas las notificaciones
+        if user.is_superuser or user.roles.filter(name__in=['Super-Admin', 'Client-Admin']).exists():
+            return InAppNotification.objects.filter(recipient__tenant=user.tenant).order_by('-created_at')
+        
+        # Usuarios normales solo ven sus notificaciones
+        return InAppNotification.objects.filter(recipient=user).order_by('-created_at')
 
 class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Notification.objects.all()
-    serializer_class = NotificationSerializer
+    serializer_class = InAppNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        return self.queryset.filter(recipient=user)
+        
+        # Administradores pueden actualizar todas las notificaciones de su tenant
+        if user.is_superuser or user.roles.filter(name__in=['Super-Admin', 'Client-Admin']).exists():
+            return InAppNotification.objects.filter(recipient__tenant=user.tenant)
+        
+        # Usuarios normales solo sus notificaciones
+        return InAppNotification.objects.filter(recipient=user)
 
 class NotificationTemplateListView(generics.ListAPIView):
     queryset = NotificationTemplate.objects.filter(is_active=True)
