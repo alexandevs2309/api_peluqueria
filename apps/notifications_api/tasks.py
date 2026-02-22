@@ -1,102 +1,99 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
-import logging
-
-logger = logging.getLogger(__name__)
+from django.db.models import Q
 
 @shared_task
-def send_appointment_reminders():
-    """Enviar recordatorios de citas para mañana"""
-    try:
-        from .signals import create_appointment_reminders
-        create_appointment_reminders()
-        logger.info("Recordatorios de citas enviados correctamente")
-        return "Recordatorios enviados"
-    except Exception as e:
-        logger.error(f"Error enviando recordatorios: {str(e)}")
-        return f"Error: {str(e)}"
-
-@shared_task
-def process_scheduled_notifications():
-    """Procesar notificaciones programadas"""
-    try:
-        from .models import Notification
-        from .services import NotificationService
+def mark_expired_appointments():
+    """Mark appointments as no_show if they passed and are still scheduled"""
+    from apps.appointments_api.models import Appointment
+    from apps.notifications_api.models import InAppNotification
+    
+    now = timezone.now()
+    expired_appointments = Appointment.objects.filter(
+        date_time__lt=now,
+        status='scheduled'
+    ).select_related('stylist', 'client')
+    
+    count = 0
+    for appointment in expired_appointments:
+        appointment.status = 'no_show'
+        appointment.save()
         
-        # Obtener notificaciones programadas para ahora
-        now = timezone.now()
-        scheduled_notifications = Notification.objects.filter(
-            status='pending',
-            scheduled_at__lte=now
+        # Create notification for stylist
+        InAppNotification.objects.create(
+            recipient=appointment.stylist,
+            type='appointment',
+            title='Cliente no asistió',
+            message=f"El cliente {appointment.client.full_name} no asistió a la cita del {appointment.date_time.strftime('%d/%m/%Y %H:%M')}"
         )
-        
-        service = NotificationService()
-        sent_count = 0
-        
-        for notification in scheduled_notifications:
-            if service.send_notification(notification):
-                sent_count += 1
-        
-        logger.info(f"Procesadas {sent_count} notificaciones programadas")
-        return f"Procesadas {sent_count} notificaciones"
-        
-    except Exception as e:
-        logger.error(f"Error procesando notificaciones: {str(e)}")
-        return f"Error: {str(e)}"
+        count += 1
+    
+    return f"Marked {count} appointments as no_show"
+
+@shared_task
+def send_daily_appointment_reminders():
+    """Send reminders for appointments scheduled for today"""
+    from apps.appointments_api.models import Appointment
+    from apps.notifications_api.models import InAppNotification
+    
+    today = timezone.now().date()
+    tomorrow = today + timedelta(days=1)
+    
+    appointments = Appointment.objects.filter(
+        date_time__date=today,
+        status='scheduled'
+    ).select_related('stylist', 'client', 'service')
+    
+    count = 0
+    for appointment in appointments:
+        # Notification for stylist
+        InAppNotification.objects.create(
+            recipient=appointment.stylist,
+            type='appointment',
+            title='Recordatorio: Cita hoy',
+            message=f"Cita con {appointment.client.full_name} a las {appointment.date_time.strftime('%H:%M')}"
+        )
+        count += 1
+    
+    return f"Sent {count} daily reminders"
+
+@shared_task
+def notify_upcoming_appointments():
+    """Notify about appointments starting in 1 hour"""
+    from apps.appointments_api.models import Appointment
+    from apps.notifications_api.models import InAppNotification
+    
+    now = timezone.now()
+    one_hour_later = now + timedelta(hours=1)
+    
+    upcoming = Appointment.objects.filter(
+        date_time__gte=now,
+        date_time__lte=one_hour_later,
+        status='scheduled'
+    ).select_related('stylist', 'client')
+    
+    count = 0
+    for appointment in upcoming:
+        InAppNotification.objects.create(
+            recipient=appointment.stylist,
+            type='appointment',
+            title='⏰ Cita próxima',
+            message=f"Cita con {appointment.client.full_name} en 1 hora ({appointment.date_time.strftime('%H:%M')})"
+        )
+        count += 1
+    
+    return f"Notified {count} upcoming appointments"
 
 @shared_task
 def cleanup_old_notifications():
-    """Limpiar notificaciones antiguas"""
-    try:
-        from .models import Notification, NotificationLog
-        
-        # Eliminar notificaciones de más de 90 días
-        cutoff_date = timezone.now() - timedelta(days=90)
-        
-        old_notifications = Notification.objects.filter(
-            created_at__lt=cutoff_date,
-            status__in=['sent', 'failed']
-        )
-        
-        count = old_notifications.count()
-        old_notifications.delete()
-        
-        # Limpiar logs antiguos también
-        old_logs = NotificationLog.objects.filter(
-            created_at__lt=cutoff_date
-        )
-        log_count = old_logs.count()
-        old_logs.delete()
-        
-        logger.info(f"Limpiadas {count} notificaciones y {log_count} logs antiguos")
-        return f"Limpiadas {count} notificaciones y {log_count} logs"
-        
-    except Exception as e:
-        logger.error(f"Error limpiando notificaciones: {str(e)}")
-        return f"Error: {str(e)}"
-
-@shared_task
-def send_bulk_notifications(notification_ids):
-    """Enviar múltiples notificaciones en lote"""
-    try:
-        from .models import Notification
-        from .services import NotificationService
-        
-        notifications = Notification.objects.filter(
-            id__in=notification_ids,
-            status='pending'
-        )
-        
-        service = NotificationService()
-        results = service.send_bulk_notifications(notifications)
-        
-        sent_count = sum(1 for result in results if result)
-        total_count = len(results)
-        
-        logger.info(f"Enviadas {sent_count}/{total_count} notificaciones en lote")
-        return f"Enviadas {sent_count}/{total_count} notificaciones"
-        
-    except Exception as e:
-        logger.error(f"Error enviando notificaciones en lote: {str(e)}")
-        return f"Error: {str(e)}"
+    """Delete read notifications older than 30 days"""
+    from apps.notifications_api.models import InAppNotification
+    
+    thirty_days_ago = timezone.now() - timedelta(days=30)
+    deleted_count, _ = InAppNotification.objects.filter(
+        is_read=True,
+        created_at__lt=thirty_days_ago
+    ).delete()
+    
+    return f"Deleted {deleted_count} old notifications"

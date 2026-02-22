@@ -1,5 +1,11 @@
 from rest_framework import serializers
-from .models import Notification, NotificationTemplate, NotificationPreference, NotificationLog
+from .models import Notification, NotificationTemplate, NotificationPreference, NotificationLog, InAppNotification
+
+class InAppNotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = InAppNotification
+        fields = ['id', 'type', 'title', 'message', 'is_read', 'created_at']
+        read_only_fields = ['created_at']
 
 class NotificationTemplateSerializer(serializers.ModelSerializer):
     class Meta:

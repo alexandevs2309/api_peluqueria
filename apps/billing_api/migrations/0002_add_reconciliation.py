@@ -76,11 +76,11 @@ class Migration(migrations.Migration):
         
         # Add indexes
         migrations.AddIndex(
-            model_name='processedevent',
+            model_name='processedstripeevent',
             index=models.Index(fields=['stripe_event_id'], name='billing_api_stripe_idx'),
         ),
         migrations.AddIndex(
-            model_name='processedevent',
+            model_name='processedstripeevent',
             index=models.Index(fields=['event_type', 'processed_at'], name='billing_api_event_type_idx'),
         ),
         migrations.AddIndex(
