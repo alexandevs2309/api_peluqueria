@@ -1,6 +1,6 @@
 from rest_framework import viewsets, permissions, decorators, response, status, serializers
 from django.contrib.auth import get_user_model
-from apps.auth_api.permissions import IsSuperAdmin
+from apps.core.permissions import IsSuperAdmin
 from .models import Tenant
 from .serializers import TenantSerializer, TenantLocaleSerializer
 from django.contrib.contenttypes.models import ContentType

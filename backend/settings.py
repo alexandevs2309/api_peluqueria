@@ -37,7 +37,7 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost',"api_peluqueria-web-1",
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost', 'web', "api_peluqueria-web-1",
 ])
 if DEBUG:
     ALLOWED_HOSTS.append('testserver')
@@ -45,6 +45,7 @@ if DEBUG:
 # Application definition
 
 INSTALLED_APPS = [
+    'django_prometheus',  # Métricas Prometheus
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -83,6 +84,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'django_prometheus.middleware.PrometheusBeforeMiddleware',  # Primera
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -92,9 +94,11 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',
     'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
+    'apps.utils.middleware.StructuredLoggingMiddleware',  # Logging con tenant_id/user_id
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.audit_api.middleware.AuditLogMiddleware',
+    'django_prometheus.middleware.PrometheusAfterMiddleware',  # Última
 ]
 
 
@@ -169,6 +173,11 @@ else:
     CORS_ALLOWED_ORIGIN_REGEXES = [
         r"^https://[\w-]+\.tuapp\.com$",
     ]
+    # CSRF protection para requests POST desde frontend
+    CSRF_TRUSTED_ORIGINS = env.list(
+        'CSRF_TRUSTED_ORIGINS',
+        default=['https://app.tudominio.com', 'https://www.tudominio.com']
+    )
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -207,8 +216,17 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 DATABASES = {
     'default': {
-        **env.db(default=f'sqlite:///{BASE_DIR / "db.sqlite3"}'),
-        'CONN_MAX_AGE': env.int('CONN_MAX_AGE', default=60),  # Pooling de conexiones para PostgreSQL
+        'ENGINE': 'django_prometheus.db.backends.postgresql',
+        'NAME': env('DB_NAME', default='barbershop_db'),
+        'USER': env('DB_USER', default='postgres'),
+        'PASSWORD': env('DB_PASSWORD', default='postgres'),
+        'HOST': env('DB_HOST', default='db'),
+        'PORT': env('DB_PORT', default='5432'),
+        'CONN_MAX_AGE': env.int('CONN_MAX_AGE', default=600),  # 10 min en producción
+        'OPTIONS': {
+            'connect_timeout': 10,
+            'options': '-c statement_timeout=30000'  # 30s max por query
+        }
     }
 }
 

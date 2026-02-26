@@ -68,6 +68,7 @@ class Sale(models.Model):
         verbose_name = 'Sale'
         verbose_name_plural = 'Sales'
         indexes = [
+            models.Index(fields=['tenant']),
             models.Index(fields=['date_time', 'user']),
             models.Index(fields=['date_time', 'employee']),
             models.Index(fields=['status']),

@@ -42,7 +42,7 @@ from base64 import b64encode
 from .authentication import DualJWTAuthentication
 
 
-from .role_hierarchy import validate_role_assignment, get_allowed_roles, can_modify_user
+from apps.roles_api.role_hierarchy import validate_role_assignment, get_allowed_roles, can_modify_user
 
 
 User = get_user_model()
