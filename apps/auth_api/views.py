@@ -33,7 +33,7 @@ from apps.roles_api.models import Role, UserRole
 import re
 from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
-from .anti_fraud import AntiFraudValidator
+
 from django.utils.timezone import now
 import pyotp
 import qrcode
@@ -87,23 +87,7 @@ class RegisterView(generics.CreateAPIView):
     def perform_create(self, serializer):
         from django.db import transaction
         
-        # Obtener datos para validación
         email = serializer.validated_data['email']
-        ip_address = get_client_ip(self.request)
-        
-        # Validación anti-fraude ANTES de crear tenant
-        is_fraud, reason, blocked_until = AntiFraudValidator.check_email_fraud(email, ip_address)
-        if is_fraud:
-            error_messages = {
-                'EMAIL_ALREADY_USED_FREE': 'Este email ya fue usado para una cuenta gratuita',
-                'IP_LIMIT_EXCEEDED': 'Límite de cuentas gratuitas alcanzado desde esta IP',
-                'EMAIL_LIMIT_EXCEEDED': 'Este email ya tiene una cuenta gratuita'
-            }
-            raise ValidationError({
-                'email': error_messages.get(reason, 'No se puede crear la cuenta'),
-                'code': reason,
-                'blocked_until': blocked_until.isoformat() if blocked_until else None
-            })
         
         # Transacción atómica para garantizar tenant antes de usuario
         with transaction.atomic():
@@ -160,10 +144,6 @@ class RegisterView(generics.CreateAPIView):
                 )
             except Role.DoesNotExist:
                 pass
-            
-            # Registrar en sistema anti-fraude si es plan FREE
-            if free_plan and free_plan.name == 'free':
-                AntiFraudValidator.record_free_signup(user.email, ip_address)
         
         # Enviar email de verificación (fuera de transacción)
         email_subject = "Verifica tu correo"

@@ -100,12 +100,11 @@ MIDDLEWARE = [
 
 # Rate limiting configuration by environment
 if DEBUG:
-    # Development: Reasonable limits that don't interfere with testing
     THROTTLE_RATES = {
         'user': '1000/hour',
         'anon': '200/hour', 
-        'login': '10/min',  # Más estricto pero usable en dev
-        'register': '5/hour',  # Previene spam en dev
+        'login': '10/min',
+        'register': '5/hour',
         'password_reset': '5/hour',
     }
 else:
@@ -114,7 +113,7 @@ else:
         'user': '500/hour',
         'anon': '50/hour',
         'login': '5/min',
-        'register': '3/hour',
+        'register': '1/day',  # 1 registro por IP/día en producción
         'password_reset': '3/hour',
     }
 
