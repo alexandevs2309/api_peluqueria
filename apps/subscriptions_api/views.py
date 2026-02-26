@@ -37,7 +37,7 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
             return [AllowAny()]
         # Solo SuperAdmin puede crear/eliminar/modificar planes
         if self.action in ['create', 'destroy', 'update', 'partial_update']:
-            from apps.auth_api.permissions import IsSuperAdmin
+            from apps.core.permissions import IsSuperAdmin
             return [IsSuperAdmin()]
         return super().get_permissions()
     

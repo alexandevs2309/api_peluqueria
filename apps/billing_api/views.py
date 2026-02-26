@@ -1,10 +1,9 @@
 from rest_framework import viewsets, permissions, status, views
 from rest_framework.decorators import action
 from apps.audit_api.mixins import AuditLoggingMixin
-from apps.auth_api.permissions import IsSuperAdmin
+from apps.core.permissions import IsSuperAdmin
 from .models import Invoice, PaymentAttempt
 from .serializers import InvoiceSerializer, PaymentAttemptSerializer
-from .permissions import IsOwnerOrAdmin
 from rest_framework.response import Response
 from django.db.models import Sum, Count, Q
 from django.utils import timezone
@@ -14,7 +13,7 @@ from apps.tenants_api.models import Tenant
 
 class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = InvoiceSerializer
-    permission_classes = [permissions.IsAuthenticated , IsOwnerOrAdmin]
+    permission_classes = [permissions.IsAuthenticated]
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
@@ -172,7 +171,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
 class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = PaymentAttemptSerializer
-    permission_classes = [permissions.IsAuthenticated, IsOwnerOrAdmin]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
         if self.request.user.is_superuser:

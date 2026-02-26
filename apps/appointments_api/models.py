@@ -13,6 +13,7 @@ class Appointment(models.Model):
         ('cancelled', 'Cancelled'),
     ]
 
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='appointments')
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='client_appointments')
     stylist = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stylist_appointments')
     service = models.ForeignKey(Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')
@@ -29,6 +30,9 @@ class Appointment(models.Model):
         verbose_name_plural = 'Citas'
         unique_together = ['stylist', 'date_time']
         ordering = ['-date_time']
+        indexes = [
+            models.Index(fields=['tenant', 'date_time']),
+        ]
 
     def __str__(self):
         return f'{self.client} with {self.stylist} at {self.date_time}'

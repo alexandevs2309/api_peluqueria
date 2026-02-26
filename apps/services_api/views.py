@@ -3,34 +3,17 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
+from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from .models import Service, ServiceCategory
 from .serializers import ServiceSerializer, ServiceCategorySerializer
 
-class ServiceCategoryViewSet(viewsets.ModelViewSet):
+class ServiceCategoryViewSet(TenantScopedViewSet):
+    queryset = ServiceCategory.objects.filter(is_active=True)
     serializer_class = ServiceCategorySerializer
     permission_classes = [permissions.IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        
-        if user.is_superuser:
-            return ServiceCategory.objects.filter(is_active=True)
-        
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return ServiceCategory.objects.none()
-        
-        return ServiceCategory.objects.filter(tenant=self.request.tenant, is_active=True)
-    
-    def perform_create(self, serializer):
-        if self.request.user.is_superuser:
-            serializer.save()
-        elif hasattr(self.request, 'tenant') and self.request.tenant:
-            serializer.save(tenant=self.request.tenant)
-        else:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Usuario sin tenant asignado")
 
-class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
+class ServiceViewSet(AuditLoggingMixin, TenantScopedViewSet):
+    queryset = Service.objects.all()
     serializer_class = ServiceSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -43,26 +26,6 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['name', 'price']
     ordering = ['name']
-
-    def get_queryset(self):
-        user = self.request.user
-        
-        if user.is_superuser:
-            return Service.objects.all()
-        
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return Service.objects.none()
-        
-        return Service.objects.filter(tenant=self.request.tenant)
-
-    def perform_create(self, serializer):
-        if self.request.user.is_superuser:
-            serializer.save()
-        elif hasattr(self.request, 'tenant') and self.request.tenant:
-            serializer.save(tenant=self.request.tenant)
-        else:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Usuario sin tenant asignado")
     
     @action(detail=False, methods=['get'])
     def categories(self, request):
