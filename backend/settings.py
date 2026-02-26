@@ -86,14 +86,15 @@ MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',  # Soporte multiidiomas
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'apps.tenants_api.middleware.TenantMiddleware',  # Middleware de multitenancy
-    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',  # Validación de suscripciones y expiración
+    'apps.tenants_api.middleware.TenantMiddleware',
+    'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'apps.audit_api.middleware.AuditLogMiddleware',  # Middleware para auditoría
+    'apps.audit_api.middleware.AuditLogMiddleware',
 ]
 
 
@@ -141,7 +142,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': THROTTLE_RATES,
 }
 
-STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='sk_test_1234567890abcdef')
+# Stripe configuration
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY')
 STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_1234567890abcdef')
 
 GEO_LOCK_ENABLED = True
@@ -159,7 +161,16 @@ SIMPLE_JWT = {
     'TOKEN_OBTAIN_SERIALIZER': 'apps.auth_api.serializers.CustomTokenObtainPairSerializer',
 }
 
-CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:4200'])
+if DEBUG:
+    CORS_ALLOWED_ORIGINS = env.list(
+        'CORS_ALLOWED_ORIGINS',
+        default=['http://localhost:4200']
+    )
+else:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https://[\w-]+\.tuapp\.com$",
+    ]
+
 CORS_ALLOW_CREDENTIALS = True
 
 
@@ -170,7 +181,8 @@ SPECTACULAR_SETTINGS = {
     'SERVE_INCLUDE_SCHEMA': False,
 }
 
-
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
 
 TEMPLATES = [
     {
@@ -307,7 +319,18 @@ AUTHENTICATION_BACKENDS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'es-do'
+from django.utils.translation import gettext_lazy as _
+
+LANGUAGE_CODE = 'es'
+
+LANGUAGES = [
+    ('es', _('Spanish')),
+    ('en', _('English')),
+]
+
+LOCALE_PATHS = [
+    BASE_DIR / 'locale',
+]
 
 TIME_ZONE = 'America/Santo_Domingo'
 

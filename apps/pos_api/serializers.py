@@ -1,4 +1,5 @@
 
+from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from apps.appointments_api.models import Appointment
@@ -45,6 +46,44 @@ class SaleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Se requiere al menos un detalle de venta")
         if not data.get('payments'):
             raise serializers.ValidationError("Se requiere al menos un método de pago")
+        
+        # Validación cross-tenant
+        request = self.context.get('request')
+        if not request:
+            return data
+        
+        tenant = getattr(request, 'tenant', None)
+        
+        # SuperAdmin puede relacionar cualquier objeto
+        if request.user.is_superuser:
+            return data
+        
+        # Usuario sin tenant no puede crear ventas
+        if not tenant:
+            raise serializers.ValidationError(_('User without assigned tenant'))
+        
+        # Validar appointment pertenece al tenant
+        appointment = data.get('appointment')
+        if appointment:
+            # Appointment no tiene tenant directo, validar via client o stylist
+            from django.db.models import Q
+            valid_appointment = Appointment.objects.filter(
+                Q(client__tenant_id=tenant.id) | Q(stylist__tenant_id=tenant.id),
+                id=appointment.id
+            ).exists()
+            
+            if not valid_appointment:
+                raise serializers.ValidationError({
+                    'appointment': _('Appointment does not belong to your tenant')
+                })
+        
+        # Validar client pertenece al tenant
+        client = data.get('client')
+        if client and hasattr(client, 'tenant_id'):
+            if client.tenant_id != tenant.id:
+                raise serializers.ValidationError({
+                    'client': _('Client does not belong to your tenant')
+                })
             
         return data
 

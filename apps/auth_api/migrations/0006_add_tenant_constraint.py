@@ -9,7 +9,7 @@ class Migration(migrations.Migration):
         ('auth', '0012_alter_user_first_name_max_length'),
         ('auth_api', '0005_alter_activesession_refresh_token_and_more'),
         ('roles_api', '0002_initial'),
-        ('tenants_api', '0003_tenant_tenants_api_subdoma_a0d20e_idx_and_more'),
+        ('tenants_api', '0003_tenant_indexes'),
     ]
 
     operations = [

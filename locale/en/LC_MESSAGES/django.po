@@ -1,0 +1,28 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Language: en\n"
+
+msgid "User without assigned tenant"
+msgstr "User without assigned tenant"
+
+msgid "Client does not belong to your tenant"
+msgstr "Client does not belong to your tenant"
+
+msgid "Stylist does not belong to your tenant"
+msgstr "Stylist does not belong to your tenant"
+
+msgid "Service does not belong to your tenant"
+msgstr "Service does not belong to your tenant"
+
+msgid "Appointment does not belong to your tenant"
+msgstr "Appointment does not belong to your tenant"
+
+msgid "Appointment date and time cannot be in the past"
+msgstr "Appointment date and time cannot be in the past"
+
+msgid "Spanish"
+msgstr "Spanish"
+
+msgid "English"
+msgstr "English"

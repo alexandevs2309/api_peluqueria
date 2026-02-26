@@ -363,7 +363,7 @@ getInvoices(): Observable<any> {
 
 **admin-dashboard.ts**:
 ```typescript
-<div class="absolute inset-0 bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500">
+<div class="absolute inset-0 bg-linear-to-r from-blue-500 via-purple-500 to-pink-500">
   // ✅ Gradiente distintivo para admin
 </div>
 <i class="pi pi-crown text-white text-3xl"></i>  // ✅ Icono de corona

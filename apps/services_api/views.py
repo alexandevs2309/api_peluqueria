@@ -11,10 +11,24 @@ class ServiceCategoryViewSet(viewsets.ModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return ServiceCategory.objects.filter(tenant=self.request.user.tenant, is_active=True)
+        user = self.request.user
+        
+        if user.is_superuser:
+            return ServiceCategory.objects.filter(is_active=True)
+        
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return ServiceCategory.objects.none()
+        
+        return ServiceCategory.objects.filter(tenant=self.request.tenant, is_active=True)
     
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        if self.request.user.is_superuser:
+            serializer.save()
+        elif hasattr(self.request, 'tenant') and self.request.tenant:
+            serializer.save(tenant=self.request.tenant)
+        else:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Usuario sin tenant asignado")
 
 class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = ServiceSerializer
@@ -31,16 +45,30 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     ordering = ['name']
 
     def get_queryset(self):
-        return Service.objects.filter(tenant=self.request.user.tenant)
+        user = self.request.user
+        
+        if user.is_superuser:
+            return Service.objects.all()
+        
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return Service.objects.none()
+        
+        return Service.objects.filter(tenant=self.request.tenant)
 
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
+        if self.request.user.is_superuser:
+            serializer.save()
+        elif hasattr(self.request, 'tenant') and self.request.tenant:
+            serializer.save(tenant=self.request.tenant)
+        else:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Usuario sin tenant asignado")
     
     @action(detail=False, methods=['get'])
     def categories(self, request):
         """Obtener todas las categorías de servicios del tenant"""
         categories = Service.objects.filter(
-            tenant=request.user.tenant,
+            tenant=self.request.tenant if hasattr(self.request, 'tenant') else None,
             category__isnull=False
         ).values_list('category', flat=True).distinct().order_by('category')
         
@@ -81,7 +109,7 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         # Crear nuevas asignaciones
         for employee_id in employee_ids:
             try:
-                employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
+                employee = Employee.objects.get(id=employee_id, tenant=self.request.tenant if hasattr(self.request, 'tenant') else None)
                 ServiceEmployee.objects.create(service=service, employee=employee)
             except Employee.DoesNotExist:
                 continue
@@ -99,7 +127,7 @@ class ServiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         from apps.employees_api.models import Employee
         
         try:
-            employee = Employee.objects.get(id=employee_id, tenant=request.user.tenant)
+            employee = Employee.objects.get(id=employee_id, tenant=self.request.tenant if hasattr(self.request, 'tenant') else None)
             service_employee, created = ServiceEmployee.objects.get_or_create(
                 service=service, 
                 employee=employee,

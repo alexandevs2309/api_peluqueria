@@ -9,7 +9,7 @@ from .models import Client
 from .serializers import ClientSerializer
 
 class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Client.objects.all()
+    queryset = Client.objects.none()  # Seguro por defecto
     serializer_class = ClientSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -24,43 +24,35 @@ class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     ordering = ['-created_at']  # default ordering
 
     def get_queryset(self):
-        queryset = super().get_queryset()
         user = self.request.user
         
-        # ✅ ESTANDARIZADO: Usar is_superuser
+        # SuperAdmin: acceso total
         if user.is_superuser:
-            return queryset
+            return Client.objects.all()
             
-        # Filtrar por tenant del usuario
-        if hasattr(user, 'tenant') and user.tenant:
-            return queryset.filter(tenant=user.tenant)
+        # Usuario sin tenant: sin acceso
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return Client.objects.none()
             
-        return queryset.none()
+        # Filtrar por tenant del request
+        return Client.objects.filter(tenant=self.request.tenant)
     
     def perform_create(self, serializer):
         user = self.request.user
-        if not user.is_authenticated:
-            raise ValueError("No hay usuario autenticado")
-            
-        # ✅ ESTANDARIZADO: Usar is_superuser
+        
+        # SuperAdmin: puede crear sin tenant
         if user.is_superuser:
-            # Para SuperAdmin, usar el primer tenant disponible o crear sin tenant
-            tenant = user.tenant or Tenant.objects.first()
-            serializer.save(
-                user=user, 
-                created_by=user,
-                tenant=tenant
-            )
+            serializer.save(user=user, created_by=user)
             return
             
-        # Usar tenant del usuario directamente
-        if not user.tenant:
+        # Usuario normal: forzar tenant del request
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
             raise ValidationError("Usuario sin tenant asignado")
         
         serializer.save(
             user=user, 
             created_by=user,
-            tenant=user.tenant
+            tenant=self.request.tenant
         )
 
     @action(detail=True, methods=['get'])

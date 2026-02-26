@@ -5,27 +5,34 @@ import requests
 
 class TenantValidationMiddleware(MiddlewareMixin):
     def process_request(self, request):
+        # Asignar request.tenant como fuente única de verdad
+        request.tenant = None
+        
         if self.is_public_endpoint(request.path):
             return None
             
         if not hasattr(request, 'user') or not request.user.is_authenticated:
             return None
             
+        # SuperAdmin: sin tenant asignado
         if request.user.is_superuser:
             return None
             
+        # Asignar tenant del usuario autenticado
+        if hasattr(request.user, 'tenant') and request.user.tenant:
+            request.tenant = request.user.tenant
+        
+        # Validación geográfica (opcional, no bloquea request.tenant)
         tenant_from_location = self.get_tenant_from_location(request)
         
-        if not tenant_from_location:
-            return None
-            
-        if request.user.tenant and request.user.tenant.id != tenant_from_location.id:
-            return JsonResponse({
-                'error': 'Acceso denegado: Usuario no pertenece a este tenant geográfico',
-                'user_tenant': request.user.tenant.name,
-                'location_tenant': tenant_from_location.name,
-                'user_ip': self.get_client_ip(request)
-            }, status=403)
+        if tenant_from_location and request.tenant:
+            if request.tenant.id != tenant_from_location.id:
+                return JsonResponse({
+                    'error': 'Acceso denegado: Usuario no pertenece a este tenant geográfico',
+                    'user_tenant': request.tenant.name,
+                    'location_tenant': tenant_from_location.name,
+                    'user_ip': self.get_client_ip(request)
+                }, status=403)
             
         return None
     

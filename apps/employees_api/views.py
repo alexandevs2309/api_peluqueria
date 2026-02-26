@@ -15,7 +15,7 @@ from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkSche
 from .permissions import IsAdminOrOwnStylist, role_permission_for
 
 class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
-    queryset = Employee.objects.all()
+    queryset = Employee.objects.none()  # Seguro por defecto
     serializer_class = EmployeeSerializer
   
     def get_permissions(self):
@@ -30,31 +30,44 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         
-        # ✅ ESTANDARIZADO: Usar is_superuser
+        # DEBUG
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f'DEBUG get_queryset: user={user.email}, is_superuser={user.is_superuser}')
+        logger.info(f'DEBUG get_queryset: hasattr tenant={hasattr(self.request, "tenant")}')
+        if hasattr(self.request, 'tenant'):
+            logger.info(f'DEBUG get_queryset: request.tenant={self.request.tenant}')
+        
+        # SuperAdmin: acceso total
         if user.is_superuser:
             return Employee.objects.select_related('user', 'tenant').all()
             
-        # Usuario debe tener tenant
-        if not user.tenant:
+        # Usuario sin tenant: sin acceso
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            logger.error(f'DEBUG: Usuario sin tenant - retornando none()')
             return Employee.objects.none()
             
-        # Filtrar por tenant del usuario
-        return Employee.objects.select_related('user', 'tenant').filter(tenant=user.tenant)
+        # Filtrar por tenant del request
+        logger.info(f'DEBUG: Filtrando por tenant={self.request.tenant.id}')
+        return Employee.objects.select_related('user', 'tenant').filter(tenant=self.request.tenant)
     
 
     def perform_create(self, serializer):
         user = self.request.user
         
-        # ✅ ESTANDARIZADO: Usar is_superuser
+        # SuperAdmin: puede crear sin tenant
         if user.is_superuser:
-            tenant = user.tenant or Tenant.objects.first()
-        else:
-            if not user.tenant:
-                raise ValidationError("Usuario sin tenant asignado")
-            tenant = user.tenant
+            serializer.save()
+            return
+        
+        # Usuario normal: forzar tenant del request
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            raise ValidationError("Usuario sin tenant asignado")
+        
+        tenant = self.request.tenant
             
         # Validar límite de empleados según el plan
-        plan_type = getattr(tenant, 'plan_type', 'basic')  # Asumir basic si no existe
+        plan_type = getattr(tenant, 'plan_type', 'basic')
         if not validate_employee_limit(tenant, plan_type):
             raise ValidationError({
                 'error': 'Límite de empleados alcanzado',

@@ -10,7 +10,7 @@ from django.db.models import Sum, Q
 from decimal import Decimal, InvalidOperation
 
 class SaleViewSet(viewsets.ModelViewSet):
-    queryset = Sale.objects.all()
+    queryset = Sale.objects.none()  # Seguro por defecto
     serializer_class = SaleSerializer
     permission_classes = [permissions.IsAuthenticated]
     
@@ -189,12 +189,14 @@ class SaleViewSet(viewsets.ModelViewSet):
             if sale_employee:
                 active_period = self._get_or_create_active_period(sale_employee)
             
-            # Guardar venta - asignar sesión de caja
+            # Guardar venta - asignar sesión de caja Y tenant
+            tenant_to_assign = self.request.tenant if hasattr(self.request, 'tenant') else None
             sale = serializer.save(
                 user=self.request.user,
                 employee=sale_employee,
                 period=active_period,
                 cash_register=open_register,
+                tenant=tenant_to_assign,
                 total=total_with_discount
             )
             
@@ -243,31 +245,28 @@ class SaleViewSet(viewsets.ModelViewSet):
             
 
     def get_queryset(self):
-        qs = super().get_queryset().select_related(
-            'client',
-            'employee',
-            'user',
-            'user__tenant'
-        ).prefetch_related(
-            'details',
-            'details__content_type'
-        )
         user = self.request.user
         
-        # SuperAdmin puede ver todo
+        # SuperAdmin: acceso total
         if user.is_superuser:
-            return qs
-        
-        # CRÍTICO: Filtrar por tenant SIEMPRE
-        if not user.tenant:
-            return qs.none()
-        
-        # Filtro OBLIGATORIO por tenant directo
-        qs = qs.filter(user__tenant=user.tenant)
+            qs = Sale.objects.select_related(
+                'client', 'employee', 'user', 'user__tenant', 'tenant'
+            ).prefetch_related('details', 'details__content_type').all()
+        else:
+            # Usuario sin tenant: sin acceso
+            if not hasattr(self.request, 'tenant') or not self.request.tenant:
+                return Sale.objects.none()
             
-        # Si no es staff, solo sus propias ventas
-        if not user.is_staff:
-            qs = qs.filter(user=user)
+            # Filtrar por tenant del request
+            qs = Sale.objects.select_related(
+                'client', 'employee', 'user', 'user__tenant', 'tenant'
+            ).prefetch_related('details', 'details__content_type').filter(
+                tenant=self.request.tenant
+            )
+            
+            # Si no es staff, solo sus propias ventas
+            if not user.is_staff:
+                qs = qs.filter(user=user)
         
         # Filtro por teléfono del cliente (protegido contra SQL injection)
         client_phone = self.request.query_params.get('client_phone')
@@ -346,10 +345,17 @@ class SaleViewSet(viewsets.ModelViewSet):
                 if request.user.is_superuser:
                     sale = Sale.objects.select_for_update().get(pk=pk)
                 else:
-                    # Filtrar por tenant OBLIGATORIO
+                    # Usuario sin tenant: sin acceso
+                    if not hasattr(request, 'tenant') or not request.tenant:
+                        return Response(
+                            {'error': 'Usuario sin tenant'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                    
+                    # Filtrar por tenant del request
                     sale = Sale.objects.select_for_update().get(
                         pk=pk,
-                        user__tenant=request.user.tenant
+                        tenant=request.tenant
                     )
             except Sale.DoesNotExist:
                 return Response(
@@ -390,11 +396,18 @@ class SaleViewSet(viewsets.ModelViewSet):
             # Crear CommissionAdjustment si hay comisión
             if sale.employee and sale.commission_amount_snapshot and sale.commission_amount_snapshot > 0:
                 # Validación de tenant (hardening)
-                if sale.employee.tenant_id != request.user.tenant_id:
-                    return Response(
-                        {'error': 'No autorizado para reembolsar esta venta'},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
+                if not request.user.is_superuser:
+                    if not hasattr(request, 'tenant') or not request.tenant:
+                        return Response(
+                            {'error': 'Usuario sin tenant'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
+                    
+                    if sale.employee.tenant_id != request.tenant.id:
+                        return Response(
+                            {'error': 'No autorizado para reembolsar esta venta'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
                 
                 # Determinar período destino
                 target_period = sale.period
@@ -593,22 +606,23 @@ class SaleViewSet(viewsets.ModelViewSet):
    
 
 class CashRegisterViewSet(viewsets.ModelViewSet):
-    queryset = CashRegister.objects.all()
+    queryset = CashRegister.objects.none()  # Seguro por defecto
     serializer_class = CashRegisterSerializer
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        qs = super().get_queryset()
         user = self.request.user
         
+        # SuperAdmin: acceso total
         if user.is_superuser:
-            return qs
+            return CashRegister.objects.all()
         
-        # CRÍTICO: Filtrar por tenant SIEMPRE
-        if not user.tenant:
-            return qs.none()
+        # Usuario sin tenant: sin acceso
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return CashRegister.objects.none()
         
-        return qs.filter(user__tenant=user.tenant)
+        # Filtrar por tenant del request
+        return CashRegister.objects.filter(user__tenant=self.request.tenant)
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -742,6 +756,21 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
 def daily_summary(request):
         today = timezone.localdate()
         
+        # Determinar filtro base según usuario
+        if request.user.is_superuser:
+            base_filter = Q(user=request.user) | Q(employee__user=request.user)
+        elif hasattr(request, 'tenant') and request.tenant:
+            base_filter = Q(tenant=request.tenant)
+        else:
+            return Response({
+                'date': today,
+                'sales_count': 0,
+                'total': 0,
+                'paid': 0,
+                'by_method': [],
+                'by_type': {'services': 0, 'products': 0}
+            })
+        
         # Obtener sesión de caja abierta
         open_register = CashRegister.objects.filter(
             user=request.user,
@@ -753,16 +782,8 @@ def daily_summary(request):
             # Filtrar ventas de esta sesión de caja
             sales = Sale.objects.filter(cash_register=open_register)
         else:
-            # No hay caja abierta, mostrar ventas del día
-            if request.user.is_superuser:
-                sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
-            elif request.user.tenant:
-                sales = Sale.objects.filter(
-                    Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
-                    date_time__date=today
-                )
-            else:
-                sales = Sale.objects.none()
+            # No hay caja abierta, mostrar ventas del día con filtro base
+            sales = Sale.objects.filter(base_filter, date_time__date=today)
 
         total = sales.aggregate(total=Sum('total'))['total'] or 0
         paid = sales.aggregate(paid=Sum('paid'))['paid'] or 0
@@ -823,20 +844,17 @@ def dashboard_stats(request):
         return Response(cached_data)
     
     today = timezone.localdate()
+    
+    # Determinar filtro base según usuario
     if request.user.is_superuser:
-        sales_today = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user), date_time__date=today)
-        all_sales = Sale.objects.filter(Q(user=request.user) | Q(employee__user=request.user))
-    elif request.user.tenant:
-        sales_today = Sale.objects.filter(
-            Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True),
-            date_time__date=today
-        )
-        all_sales = Sale.objects.filter(
-            Q(employee__tenant=request.user.tenant) | Q(user__tenant=request.user.tenant, employee__isnull=True)
-        )
+        base_filter = Q(user=request.user) | Q(employee__user=request.user)
+    elif hasattr(request, 'tenant') and request.tenant:
+        base_filter = Q(tenant=request.tenant)
     else:
-        sales_today = Sale.objects.none()
-        all_sales = Sale.objects.none()
+        base_filter = Q(pk__isnull=True)  # Sin acceso
+    
+    sales_today = Sale.objects.filter(base_filter, date_time__date=today)
+    all_sales = Sale.objects.filter(base_filter)
     
     total_sales = all_sales.aggregate(total=Sum('total'))['total'] or 0
     total_transactions = all_sales.count()
@@ -845,8 +863,8 @@ def dashboard_stats(request):
     # Top productos vendidos hoy usando agregación SQL - OPTIMIZADO
     if request.user.is_superuser:
         product_filter = Q(sale__user=request.user) | Q(sale__employee__user=request.user)
-    elif request.user.tenant:
-        product_filter = Q(sale__employee__tenant=request.user.tenant) | Q(sale__user__tenant=request.user.tenant, sale__employee__isnull=True)
+    elif hasattr(request, 'tenant') and request.tenant:
+        product_filter = Q(sale__tenant=request.tenant)
     else:
         product_filter = Q(pk__isnull=True)
     

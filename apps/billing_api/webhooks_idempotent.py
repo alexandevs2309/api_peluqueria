@@ -37,20 +37,22 @@ def stripe_webhook(request):
     event_id = event['id']
     event_type = event['type']
 
-    # IDEMPOTENCIA: Verificar si ya procesamos este evento
-    if ProcessedStripeEvent.objects.filter(stripe_event_id=event_id).exists():
-        logger.info(f"Event {event_id} already processed, skipping")
-        return HttpResponse(status=200)
-
     # Procesar evento dentro de transacción atómica
     try:
         with transaction.atomic():
-            # Registrar evento ANTES de procesarlo
-            ProcessedStripeEvent.objects.create(
+            # ✅ IDEMPOTENCIA: Crear o verificar dentro del lock
+            event_obj, created = ProcessedStripeEvent.objects.get_or_create(
                 stripe_event_id=event_id,
-                event_type=event_type,
-                payload=event['data']['object']
+                defaults={
+                    'event_type': event_type,
+                    'payload': event['data']['object']
+                }
             )
+            
+            # Si ya existía, skip
+            if not created:
+                logger.info(f"Event {event_id} already processed (race condition avoided)")
+                return HttpResponse(status=200)
 
             # Despachar a handler específico
             if event_type == 'invoice.payment_succeeded':

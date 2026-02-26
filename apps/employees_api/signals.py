@@ -13,6 +13,13 @@ def create_employee_for_staff(sender, instance, created, **kwargs):
         employee_roles = ['Cajera', 'Estilista', 'Manager', 'Client-Staff', 'Utility']
         
         if instance.role in employee_roles:
+            # Validación defensiva: tenant debe existir
+            if not instance.tenant_id:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Cannot create Employee for User {instance.id}: tenant_id is None")
+                return
+            
             # Verificar que no exista ya un Employee para este usuario
             if not Employee.objects.filter(user=instance).exists():
                 Employee.objects.create(

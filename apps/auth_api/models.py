@@ -27,7 +27,7 @@ class UserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
-    email = models.EmailField(unique=True, max_length=255)
+    email = models.EmailField(max_length=255)  # ✅ Removido unique=True
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, blank=True, null=True)
 
@@ -88,6 +88,8 @@ class User(AbstractBaseUser, PermissionsMixin):
                 violation_error_message='Los usuarios no superadmin deben tener un tenant asignado.'
             )
         ]
+        # ✅ UNIQUE CONSTRAINT POR TENANT
+        unique_together = [['email', 'tenant']]
 
     def clean(self):
         """Validación estructural multi-tenant"""

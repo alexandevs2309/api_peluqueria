@@ -20,11 +20,11 @@ class RolePermission(BasePermission):
 class IsSuperAdmin(BasePermission):
     """
     Permission class para SuperAdmin.
-    Valida que el usuario tenga el rol 'Super-Admin' en la tabla de roles.
+    Valida SOLO por is_superuser (fuente única de verdad).
     """
     def has_permission(self, request, view):
         return (
             request.user and 
             request.user.is_authenticated and 
-            request.user.roles.filter(name='Super-Admin').exists()
+            request.user.is_superuser
         )
