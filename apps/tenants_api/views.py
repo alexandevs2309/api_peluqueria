@@ -2,7 +2,7 @@ from rest_framework import viewsets, permissions, decorators, response, status, 
 from django.contrib.auth import get_user_model
 from apps.auth_api.permissions import IsSuperAdmin
 from .models import Tenant
-from .serializers import TenantSerializer
+from .serializers import TenantSerializer, TenantLocaleSerializer
 from django.contrib.contenttypes.models import ContentType
 from apps.audit_api.models import AuditLog
 from apps.settings_api.utils import validate_tenant_limit
@@ -22,8 +22,8 @@ class TenantViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
 
     def get_permissions(self):
-        # Permitir acceso autenticado para subscription_status
-        if self.action == 'subscription_status':
+        # Permitir acceso autenticado para subscription_status y locale
+        if self.action in ['subscription_status', 'locale']:
             return [permissions.IsAuthenticated()]
         return super().get_permissions()
 
@@ -135,6 +135,18 @@ class TenantViewSet(viewsets.ModelViewSet):
             serializer = self.get_serializer(request.user.tenant)
             return response.Response(serializer.data)
         return response.Response({"error": "No tenant assigned"}, status=404)
+    
+    @decorators.action(detail=False, methods=["get"])
+    def locale(self, request):
+        """Obtener configuración regional del tenant actual"""
+        if not request.tenant:
+            return response.Response(
+                {"error": "No tenant assigned"}, 
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        serializer = TenantLocaleSerializer(request.tenant)
+        return response.Response(serializer.data)
     
     @decorators.action(detail=False, methods=["get"])
     def subscription_status(self, request):

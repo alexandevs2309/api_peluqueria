@@ -163,6 +163,8 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel_subscription(self, request, pk=None):
+        from django.db import transaction
+        
         try:
             subscription = self.get_object()
 
@@ -172,25 +174,47 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            # Verificar que la suscripción pertenezca al usuario (para usuarios no superusuarios)
+            # Validar que la suscripción pertenezca al usuario (para usuarios no superusuarios)
             if not request.user.is_superuser and subscription.user != request.user:
                 return Response(
                     {'detail': 'No tienes permiso para cancelar esta suscripción.'},
                     status=status.HTTP_403_FORBIDDEN
                 )
+            
+            # ✅ 1. Cancelar en Stripe PRIMERO (fuera de transaction)
+            stripe_cancelled = False
+            if hasattr(subscription, 'stripe_subscription_id') and subscription.stripe_subscription_id:
+                try:
+                    stripe.Subscription.modify(
+                        subscription.stripe_subscription_id,
+                        cancel_at_period_end=True
+                    )
+                    stripe_cancelled = True
+                except stripe.error.StripeError as e:
+                    # ✅ Fallar antes de modificar DB
+                    return Response(
+                        {'detail': f'Error cancelando en Stripe: {str(e)}'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+            
+            # ✅ 2. Solo actualizar DB si Stripe tuvo éxito
+            with transaction.atomic():
+                subscription.is_active = False
+                subscription.save(update_fields=['is_active'])
 
-            subscription.is_active = False
-            subscription.save()
-
-            log_subscription_event(
-                user=request.user,
-                subscription=subscription,
-                action='cancelled',
-                description=f'Suscripción al plan "{subscription.plan.name}" cancelada anticipadamente.'
-            )
+                log_subscription_event(
+                    user=request.user,
+                    subscription=subscription,
+                    action='cancelled',
+                    description=f'Suscripción al plan "{subscription.plan.name}" cancelada. Stripe: {stripe_cancelled}'
+                )
 
             return Response(
-                {'detail': 'Suscripción cancelada correctamente.'}, 
+                {
+                    'detail': 'Suscripción cancelada correctamente.',
+                    'stripe_cancelled': stripe_cancelled,
+                    'note': 'Tendrás acceso hasta el final del período pagado' if stripe_cancelled else 'Acceso cancelado inmediatamente'
+                }, 
                 status=status.HTTP_200_OK
             )
             
@@ -349,6 +373,25 @@ class OnboardingView(APIView):
 
         data = serializer.validated_data
         try:
+            # ✅ Validar que customer existe en Stripe
+            try:
+                customer = stripe.Customer.retrieve(data['stripe_customer_id'])
+            except stripe.error.InvalidRequestError:
+                return Response({
+                    'error': 'Invalid Stripe customer ID'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # ✅ Validar que tiene método de pago
+            if not customer.invoice_settings.default_payment_method:
+                payment_methods = stripe.PaymentMethod.list(
+                    customer=customer.id,
+                    type='card'
+                )
+                if not payment_methods.data:
+                    return Response({
+                        'error': 'No payment method attached to customer'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
             # 1. Crear Tenant
             tenant = Tenant.objects.create(
                 name=data['salon_name'],
@@ -364,7 +407,8 @@ class OnboardingView(APIView):
                 full_name=data['owner_name'],
                 tenant=tenant,
                 role='ClientAdmin',
-                is_active=True
+                is_active=True,
+                stripe_customer_id=customer.id  # ✅ Guardar customer_id
             )
             user.set_password(data['password'])
             user.save()
@@ -373,15 +417,35 @@ class OnboardingView(APIView):
             tenant.owner = user
             tenant.save()
 
-            # 3. Crear suscripción Stripe
+            # 3. Obtener plan y validar stripe_price_id
             plan = SubscriptionPlan.objects.get(id=data['plan_id'])
+            
+            # ✅ Validar que plan tiene stripe_price_id configurado
+            if not hasattr(plan, 'stripe_price_id') or not plan.stripe_price_id:
+                # Fallback: usar plan.name si no hay stripe_price_id
+                # NOTA: Esto requiere que plan.name coincida con price_id en Stripe
+                stripe_price_id = plan.name
+            else:
+                stripe_price_id = plan.stripe_price_id
+            
+            # 4. Crear suscripción Stripe
             stripe_subscription = stripe.Subscription.create(
-                customer=data['stripe_customer_id'],
-                items=[{'price': plan.name}],  # Asumir plan.name es price id
+                customer=customer.id,
+                items=[{'price': stripe_price_id}],
+                payment_behavior='error_if_incomplete',  # ✅ Fallar si no puede cobrar
                 expand=['latest_invoice.payment_intent']
             )
+            
+            # ✅ Validar que suscripción quedó activa
+            if stripe_subscription.status not in ['active', 'trialing']:
+                # Rollback automático por @transaction.atomic
+                return Response({
+                    'error': 'Subscription creation failed',
+                    'status': stripe_subscription.status,
+                    'message': 'Payment was not successful'
+                }, status=status.HTTP_402_PAYMENT_REQUIRED)
 
-            # 4. Crear Subscription local
+            # 5. Crear Subscription local
             subscription = Subscription.objects.create(
                 tenant=tenant,
                 plan=plan,
@@ -389,11 +453,17 @@ class OnboardingView(APIView):
                 is_active=True
             )
 
-            # 5. Asignar rol ClientAdmin
+            # 6. Asignar rol ClientAdmin
             admin_role = Role.objects.get(name='Client-Admin')
             UserRole.objects.create(user=user, role=admin_role)
 
-            return Response({'detail': 'Onboarding completado exitosamente.'}, status=status.HTTP_201_CREATED)
+            return Response({
+                'detail': 'Onboarding completado exitosamente.',
+                'tenant_id': tenant.id,
+                'user_id': user.id,
+                'subscription_id': subscription.id,
+                'stripe_subscription_status': stripe_subscription.status
+            }, status=status.HTTP_201_CREATED)
 
         except StripeError as e:
             transaction.set_rollback(True)
@@ -456,7 +526,7 @@ class RenewSubscriptionView(APIView):
         })
     
     def post(self, request):
-        """Renovar suscripción"""
+        """Renovar suscripción con pago real"""
         # SuperAdmin no necesita renovar suscripción
         if request.user.is_superuser or request.user.role == 'SuperAdmin':
             return Response({'error': 'SuperAdmin does not need subscription renewal'}, status=400)
@@ -466,29 +536,96 @@ class RenewSubscriptionView(APIView):
             return Response({'error': 'No tenant found'}, status=400)
         
         plan_id = request.data.get('plan_id')
+        payment_method_id = request.data.get('payment_method_id')
+        
         if not plan_id:
             return Response({'error': 'Plan ID required'}, status=400)
+        
+        if not payment_method_id:
+            return Response({'error': 'Payment method required'}, status=400)
         
         try:
             plan = SubscriptionPlan.objects.get(id=plan_id, is_active=True)
         except SubscriptionPlan.DoesNotExist:
             return Response({'error': 'Invalid plan'}, status=400)
         
-        # Simular pago exitoso (aquí integrarías con Stripe/PayPal)
-        payment_successful = True
-        
-        if payment_successful:
-            # Activar nueva suscripción
-            tenant.subscription_plan = plan
-            tenant.subscription_status = 'active'
-            tenant.trial_end_date = None
-            tenant.save()
+        # ✅ PAGO REAL con Stripe
+        try:
+            # Obtener o crear customer en Stripe
+            if not hasattr(request.user, 'stripe_customer_id') or not request.user.stripe_customer_id:
+                customer = stripe.Customer.create(
+                    email=request.user.email,
+                    name=request.user.full_name,
+                    metadata={'user_id': request.user.id, 'tenant_id': tenant.id}
+                )
+                request.user.stripe_customer_id = customer.id
+                request.user.save(update_fields=['stripe_customer_id'])
+            else:
+                customer = stripe.Customer.retrieve(request.user.stripe_customer_id)
+            
+            # Crear PaymentIntent y cobrar inmediatamente
+            payment_intent = stripe.PaymentIntent.create(
+                amount=int(plan.price * 100),  # Centavos
+                currency='usd',
+                customer=customer.id,
+                payment_method=payment_method_id,
+                confirm=True,  # ✅ Cobrar inmediatamente
+                metadata={
+                    'user_id': request.user.id,
+                    'tenant_id': tenant.id,
+                    'plan_id': plan.id
+                }
+            )
+            
+            # ✅ Validar que el pago fue exitoso
+            if payment_intent.status != 'succeeded':
+                return Response({
+                    'error': 'Payment failed',
+                    'status': payment_intent.status,
+                    'message': 'Payment was not successful'
+                }, status=402)
+            
+            # Solo entonces activar nueva suscripción
+            with transaction.atomic():
+                tenant.subscription_plan = plan
+                tenant.subscription_status = 'active'
+                tenant.trial_end_date = None
+                tenant.save(update_fields=['subscription_plan', 'subscription_status', 'trial_end_date'])
+                
+                # Crear factura local
+                from apps.billing_api.models import Invoice
+                Invoice.objects.create(
+                    user=request.user,
+                    amount=plan.price,
+                    due_date=timezone.now(),
+                    is_paid=True,
+                    paid_at=timezone.now(),
+                    payment_method='stripe',
+                    status='paid',
+                    stripe_payment_intent_id=payment_intent.id,
+                    description=f"Subscription renewal - {plan.get_name_display()}"
+                )
             
             return Response({
                 'message': 'Subscription renewed successfully',
                 'plan': plan.name,
                 'status': tenant.subscription_status,
-                'access_level': tenant.get_access_level()
+                'access_level': tenant.get_access_level(),
+                'payment_intent_id': payment_intent.id
             })
-        else:
-            return Response({'error': 'Payment failed'}, status=400)
+            
+        except stripe.error.CardError as e:
+            return Response({
+                'error': 'Card declined',
+                'message': str(e.user_message)
+            }, status=402)
+        except stripe.error.StripeError as e:
+            return Response({
+                'error': 'Payment processing error',
+                'message': str(e)
+            }, status=500)
+        except Exception as e:
+            return Response({
+                'error': 'Internal error',
+                'message': str(e)
+            }, status=500)

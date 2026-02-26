@@ -28,6 +28,12 @@ class Tenant(models.Model):
     address = models.TextField(blank=True, null=True)
     country = models.CharField(max_length=2, blank=True, null=True)  # ISO country code
 
+    # Configuración regional
+    locale = models.CharField(max_length=10, default='es-DO', help_text='Locale code (e.g., es-DO, en-US)')
+    currency = models.CharField(max_length=3, default='DOP', help_text='Currency code (ISO 4217)')
+    date_format = models.CharField(max_length=20, default='dd/MM/yyyy', help_text='Date format for display')
+    time_zone = models.CharField(max_length=50, default='America/Santo_Domingo', help_text='IANA timezone')
+
     plan_type = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
     subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.SET_NULL, null=True, blank=True)
     subscription_status = models.CharField(max_length=20, choices=SUBSCRIPTION_STATUS, default="trial")

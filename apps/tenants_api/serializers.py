@@ -3,6 +3,13 @@ from .models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan
 from apps.subscriptions_api.serializers import SubscriptionPlanSerializer
 
+class TenantLocaleSerializer(serializers.ModelSerializer):
+    """Serializer para configuración regional del tenant"""
+    class Meta:
+        model = Tenant
+        fields = ['locale', 'currency', 'date_format', 'time_zone']
+        read_only_fields = ['locale', 'currency', 'date_format', 'time_zone']
+
 class TenantSerializer(serializers.ModelSerializer):
     owner_name = serializers.CharField(source="owner.username", read_only=True)
     subscription_plan_details = SubscriptionPlanSerializer(source="subscription_plan", read_only=True)
@@ -10,7 +17,7 @@ class TenantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
         fields = "__all__"
-        read_only_fields = ("id", "created_at", "updated_at", "owner")
+        read_only_fields = ("id", "created_at", "updated_at", "owner", "locale", "currency", "date_format", "time_zone")
     
     def update(self, instance, validated_data):
         print(f"Updating tenant {instance.id} with data: {validated_data}")

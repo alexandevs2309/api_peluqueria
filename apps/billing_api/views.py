@@ -125,26 +125,32 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], url_path='pay')
     def pay(self, request, pk=None):
-        invoice = self.get_object()
-
-        if invoice.is_paid:
-            return Response(
-                {'detail': 'Esta factura ya fue pagada.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        from django.db import transaction
         
         try:
-            # Simulación del intento de pago
-            PaymentAttempt.objects.create(
-                invoice=invoice, 
-                success=True, 
-                message="Pago simulado exitoso."
-            )
+            with transaction.atomic():
+                # 🔒 Lock de fila para prevenir race condition
+                invoice = Invoice.objects.select_for_update().get(pk=pk)
 
-            invoice.is_paid = True
-            invoice.paid_at = timezone.now()
-            invoice.status = 'paid'
-            invoice.save()
+                # Validar dentro del lock
+                if invoice.is_paid:
+                    return Response(
+                        {'detail': 'Esta factura ya fue pagada.'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Simulación del intento de pago
+                PaymentAttempt.objects.create(
+                    invoice=invoice, 
+                    success=True,
+                    status='success',
+                    message="Pago simulado exitoso."
+                )
+
+                invoice.is_paid = True
+                invoice.paid_at = timezone.now()
+                invoice.status = 'paid'
+                invoice.save(update_fields=['is_paid', 'paid_at', 'status'])
             
             return Response({
                 'detail': 'Pago exitoso.',
@@ -152,10 +158,16 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
                 'amount': str(invoice.amount)
             }, status=status.HTTP_200_OK)
             
+        except Invoice.DoesNotExist:
+            return Response(
+                {'detail': 'Factura no encontrada.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         except Exception as e:
-            return Response({
-                'detail': f'Error al procesar el pago: {str(e)}'
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            return Response(
+                {'detail': f'Error al procesar el pago: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):

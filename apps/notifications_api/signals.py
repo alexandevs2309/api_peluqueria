@@ -124,7 +124,7 @@ def product_low_stock(sender, instance, **kwargs):
             from apps.auth_api.models import User
             admins = User.objects.filter(
                 tenant=instance.tenant,
-                roles__name__in=['Client-Admin', 'Super-Admin']
+                roles__name='Client-Admin'  # Solo Client-Admin, no Super-Admin
             )
             
             context = {

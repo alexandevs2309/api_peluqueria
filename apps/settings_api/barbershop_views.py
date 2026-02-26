@@ -4,12 +4,23 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.db import transaction
 from .barbershop_models import BarbershopSettings
+from .barbershop_serializers import (
+    BarbershopPublicSerializer,
+    BarbershopAdminSerializer,
+    BarbershopWriteSerializer
+)
 from .audit_models import SettingsAuditLog
 from .permissions import IsClientAdmin
 
 
 class BarbershopSettingsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated, IsClientAdmin]
+    permission_classes = [IsAuthenticated]
+    
+    def get_permissions(self):
+        """Control de permisos por acción"""
+        if self.action in ['create', 'upload_logo', 'admin_settings']:
+            return [IsAuthenticated(), IsClientAdmin()]
+        return [IsAuthenticated()]
     
     # Campos críticos que requieren confirmación
     CRITICAL_FIELDS = ['currency']
@@ -18,9 +29,15 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     AUDITED_FIELDS = ['currency']
     
     def list(self, request):
-        """Get barbershop settings"""
+        """
+        GET /api/settings/barbershop/
+        Información pública para todos los empleados (ClientAdmin + ClientStaff).
+        Solo campos necesarios para operación diaria.
+        """
         try:
             settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
+            serializer = BarbershopPublicSerializer(settings)
+            data = serializer.data
             
             # Cargar configuración POS si existe
             pos_config = None
@@ -38,17 +55,10 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             except:
                 pass
             
-            return Response({
-                'name': settings.name,
-                'logo': settings.logo.url if settings.logo else None,
-                'currency': settings.currency,
-                'currency_symbol': settings.currency_symbol,
-                'business_hours': settings.business_hours,
-                'contact': settings.contact,
-                'pos_config': pos_config
-            })
+            data['pos_config'] = pos_config
+            return Response(data)
         except BarbershopSettings.DoesNotExist:
-            # Return default settings
+            # Return default public settings
             return Response({
                 'name': '',
                 'logo': None,
@@ -71,6 +81,42 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 'pos_config': None
             })
     
+    @action(detail=False, methods=['get'])
+    def admin_settings(self, request):
+        """
+        GET /api/settings/barbershop/admin_settings/
+        Configuración completa solo para ClientAdmin.
+        Incluye campos financieros y críticos.
+        """
+        try:
+            settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
+            serializer = BarbershopAdminSerializer(settings)
+            return Response(serializer.data)
+        except BarbershopSettings.DoesNotExist:
+            # Return default admin settings
+            return Response({
+                'name': '',
+                'logo': None,
+                'currency': 'COP',
+                'currency_symbol': '$',
+                'business_hours': {
+                    'monday': {'open': '08:00', 'close': '18:00', 'closed': False},
+                    'tuesday': {'open': '08:00', 'close': '18:00', 'closed': False},
+                    'wednesday': {'open': '08:00', 'close': '18:00', 'closed': False},
+                    'thursday': {'open': '08:00', 'close': '18:00', 'closed': False},
+                    'friday': {'open': '08:00', 'close': '18:00', 'closed': False},
+                    'saturday': {'open': '08:00', 'close': '16:00', 'closed': False},
+                    'sunday': {'open': '10:00', 'close': '14:00', 'closed': True}
+                },
+                'contact': {
+                    'phone': '',
+                    'email': '',
+                    'address': ''
+                },
+                'created_at': None,
+                'updated_at': None
+            })
+    
     def create(self, request):
         """Save barbershop settings con validaciones y auditoría"""
         data = request.data
@@ -83,6 +129,10 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         except BarbershopSettings.DoesNotExist:
             settings = None
             is_update = False
+        
+        # Usar serializer para validación
+        serializer = BarbershopWriteSerializer(settings, data=data, partial=is_update)
+        serializer.is_valid(raise_exception=True)
         
         # FIX 2: Validar cambio de moneda
         if is_update and 'currency' in data:
@@ -129,42 +179,21 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'message': 'Este cambio puede afectar el comportamiento futuro del sistema'
                 }, status=200)
         
-        # Guardar configuración POS
-        if 'pos_config' in data and data['pos_config']:
-            try:
-                from apps.pos_api.models import PosConfiguration
-                pos, created = PosConfiguration.objects.get_or_create(user=request.user)
-                pos.business_name = data['pos_config'].get('business_name', '')
-                pos.address = data['pos_config'].get('address', '')
-                pos.phone = data['pos_config'].get('phone', '')
-                pos.email = data['pos_config'].get('email', '')
-                pos.website = data['pos_config'].get('website', '')
-                pos.save()
-            except Exception:
-                pass
-        
         # Usar transacción atómica
         with transaction.atomic():
             if is_update:
                 # FIX 3: Auditar cambios
                 self._audit_changes(settings, data, request.user, tenant)
                 
-                # Actualizar settings
-                settings.name = data.get('name', settings.name)
-                settings.currency = data.get('currency', settings.currency)
-                settings.currency_symbol = data.get('currency_symbol', settings.currency_symbol)
-                settings.business_hours = data.get('business_hours', settings.business_hours)
-                settings.contact = data.get('contact', settings.contact)
+                # Actualizar con datos validados
+                for field, value in serializer.validated_data.items():
+                    setattr(settings, field, value)
                 settings.save()
             else:
-                # Crear nuevo
+                # Crear nuevo con datos validados
                 settings = BarbershopSettings.objects.create(
                     tenant=tenant,
-                    name=data.get('name', ''),
-                    currency=data.get('currency', 'COP'),
-                    currency_symbol=data.get('currency_symbol', '$'),
-                    business_hours=data.get('business_hours', {}),
-                    contact=data.get('contact', {})
+                    **serializer.validated_data
                 )
         
         return Response({'message': 'Settings saved successfully'})

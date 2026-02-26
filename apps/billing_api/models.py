@@ -14,7 +14,13 @@ class Invoice(models.Model):
     is_paid = models.BooleanField(default=False)
     paid_at = models.DateTimeField(null=True, blank=True)
     payment_method = models.CharField(max_length=100, blank=True)  # Ej: "manual", "stripe", "paypal"
-    stripe_payment_intent_id = models.CharField(max_length=255, blank=True, db_index=True)  # Para reconciliación
+    stripe_payment_intent_id = models.CharField(
+        max_length=255, 
+        blank=True, 
+        null=True,  # ✅ Permitir NULL para facturas manuales
+        unique=True,  # ✅ Prevenir duplicados
+        db_index=True
+    )  # Para reconciliación
     status = models.CharField(max_length=50, choices=[
         ("pending", "Pending"),
         ("paid", "Paid"),

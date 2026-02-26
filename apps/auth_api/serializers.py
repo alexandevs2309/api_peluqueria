@@ -39,30 +39,70 @@ class RegisterSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField()
-    tenant_subdomain = serializers.CharField(required=False)
+    tenant_subdomain = serializers.CharField(required=False)  # Opcional, se detecta del request
 
     def validate(self, data):
         email = data.get('email')
         password = data.get('password')
         tenant_subdomain = data.get('tenant_subdomain')
-
-        if tenant_subdomain:
+        
+        # ✅ CASO ESPECIAL: Verificar si es super-admin sin tenant
+        try:
+            superadmin = User.objects.get(email=email, is_superuser=True, tenant__isnull=True)
+            if superadmin.check_password(password):
+                if not superadmin.is_active:
+                    raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
+                data['user'] = superadmin
+                data['tenant'] = None
+                return data
+        except User.DoesNotExist:
+            pass
+        
+        # ✅ DETECCIÓN AUTOMÁTICA: Obtener tenant del request context
+        request = self.context.get('request')
+        if not tenant_subdomain and request:
+            # Extraer de header Host: tenant.domain.com
+            host = request.META.get('HTTP_HOST', '')
+            if '.' in host and not host.startswith('localhost'):
+                tenant_subdomain = host.split('.')[0]
+            # Fallback: extraer de header X-Tenant-Subdomain
+            if not tenant_subdomain:
+                tenant_subdomain = request.META.get('HTTP_X_TENANT_SUBDOMAIN')
+        
+        # ✅ NUEVO: Si no hay tenant_subdomain, buscar por email
+        if not tenant_subdomain:
             try:
-                tenant = Tenant.objects.get(subdomain=tenant_subdomain)
-                user = User.objects.get(email=email, tenant=tenant)
-            except (Tenant.DoesNotExist, User.DoesNotExist):
-                raise serializers.ValidationError("Credenciales inválidas.")
-        else:
-            user = User.objects.filter(email=email).first()
-            if not user:
-                raise serializers.ValidationError("Credenciales inválidas.")
-            tenant = user.tenant
-            # SuperAdmin puede no tener tenant
-            if not tenant and user.role != 'SuperAdmin' and not user.is_superuser:
-                raise serializers.ValidationError("Usuario sin tenant asignado.")
+                user = User.objects.filter(email=email).first()
+                if user and user.tenant:
+                    tenant_subdomain = user.tenant.subdomain
+            except Exception:
+                pass
+        
+        # ✅ VALIDACIÓN: tenant es obligatorio para usuarios normales
+        if not tenant_subdomain:
+            raise serializers.ValidationError({
+                'tenant_subdomain': 'No se pudo detectar el tenant. Usuario no encontrado o sin tenant asignado.'
+            })
 
+        # ✅ BUSCAR TENANT
+        try:
+            tenant = Tenant.objects.get(subdomain=tenant_subdomain, is_active=True, deleted_at__isnull=True)
+        except Tenant.DoesNotExist:
+            raise serializers.ValidationError("Credenciales inválidas.")
+
+        # ✅ BUSCAR USUARIO SOLO EN ESE TENANT
+        try:
+            user = User.objects.get(email=email, tenant=tenant)
+        except User.DoesNotExist:
+            raise serializers.ValidationError("Credenciales inválidas.")
+
+        # ✅ VALIDAR PASSWORD
         if not user.check_password(password):
             raise serializers.ValidationError("Credenciales inválidas.")
+
+        # ✅ VALIDAR USUARIO ACTIVO
+        if not user.is_active:
+            raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
 
         data['user'] = user
         data['tenant'] = tenant

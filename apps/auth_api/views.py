@@ -42,6 +42,9 @@ from base64 import b64encode
 from .authentication import DualJWTAuthentication
 
 
+from .role_hierarchy import validate_role_assignment, get_allowed_roles, can_modify_user
+
+
 User = get_user_model()
 
 # Helper function to safely create audit logs
@@ -706,7 +709,7 @@ class MFALoginVerifyView(APIView):
 
 
 class UserViewSet(viewsets.ModelViewSet):
-    queryset = User.objects.all()
+    queryset = User.objects.none()  # Seguro por defecto
     permission_classes = [IsAuthenticated]
     serializer_class = UserListSerializer
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
@@ -762,6 +765,21 @@ class UserViewSet(viewsets.ModelViewSet):
                     'limit': request.user.tenant.max_users
                 }, status=status.HTTP_403_FORBIDDEN)
         
+        # ✅ VALIDACIÓN DE JERARQUÍA DE ROLES
+        requested_role = request.data.get('role')
+        if requested_role:
+            is_valid, error_msg = validate_role_assignment(
+                creator_role=request.user.role or 'Client-Staff',
+                target_role=requested_role,
+                creator_is_superuser=request.user.is_superuser
+            )
+            if not is_valid:
+                return Response({
+                    'error': error_msg,
+                    'your_role': request.user.role,
+                    'allowed_roles': get_allowed_roles(request.user.role, request.user.is_superuser)
+                }, status=status.HTTP_403_FORBIDDEN)
+        
         serializer = self.get_serializer(data=request.data)
         try:
             serializer.is_valid(raise_exception=True)
@@ -772,24 +790,25 @@ class UserViewSet(viewsets.ModelViewSet):
             user = serializer.save()
             
             # FORZAR asignación de tenant si no se asignó
-            if not user.tenant and request.user.tenant:
-                user.tenant = request.user.tenant
-                user.save()
-                print(f'🔧 [VIEWSET] Tenant forzado: {user.tenant.id} para usuario {user.id}')
+            if not user.tenant and not self.request.user.is_superuser:
+                if hasattr(self.request, 'tenant') and self.request.tenant:
+                    user.tenant = self.request.tenant
+                    user.save()
             
             # Asignar rol si se especifica
-            if hasattr(serializer.validated_data, 'role') or 'role' in request.data:
-                role_name = serializer.validated_data.get('role') or request.data.get('role')
-                if role_name and role_name != 'SuperAdmin':
+            if requested_role:
+                user.role = requested_role
+                user.save()
+                
+                # Crear UserRole si no es SuperAdmin
+                if requested_role != 'SuperAdmin':
                     try:
-                        role = Role.objects.get(name=role_name)
+                        role = Role.objects.get(name=requested_role)
                         UserRole.objects.get_or_create(
                             user=user,
                             role=role,
                             tenant=user.tenant
                         )
-                        user.role = role_name
-                        user.save()
                     except Role.DoesNotExist:
                         pass
             
@@ -802,6 +821,31 @@ class UserViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        
+        # ✅ VALIDAR QUE PUEDE MODIFICAR ESTE USUARIO
+        can_modify, error_msg = can_modify_user(
+            modifier_role=request.user.role or 'Client-Staff',
+            target_user_role=instance.role or 'Client-Staff',
+            modifier_is_superuser=request.user.is_superuser
+        )
+        if not can_modify:
+            return Response({'error': error_msg}, status=status.HTTP_403_FORBIDDEN)
+        
+        # ✅ VALIDAR CAMBIO DE ROL SI SE ESPECIFICA
+        if 'role' in request.data:
+            new_role = request.data.get('role')
+            is_valid, error_msg = validate_role_assignment(
+                creator_role=request.user.role or 'Client-Staff',
+                target_role=new_role,
+                creator_is_superuser=request.user.is_superuser
+            )
+            if not is_valid:
+                return Response({
+                    'error': error_msg,
+                    'your_role': request.user.role,
+                    'allowed_roles': get_allowed_roles(request.user.role, request.user.is_superuser)
+                }, status=status.HTTP_403_FORBIDDEN)
+        
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         
         try:
@@ -832,19 +876,23 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response(response_serializer.data)
             
         except ValidationError as e:
-            print(f"Validation error: {e.detail}")
             return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
-            print(f"Update error: {str(e)}")
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
     def get_queryset(self):
         user = self.request.user
+        
+        # SuperAdmin: acceso total
         if user.is_superuser:
             return User.objects.select_related('tenant').all()
-        elif user.tenant:
-            return User.objects.select_related('tenant').filter(tenant=user.tenant)
-        return User.objects.none()
+        
+        # Usuario sin tenant: sin acceso
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return User.objects.none()
+        
+        # Filtrar por tenant del request
+        return User.objects.select_related('tenant').filter(tenant=self.request.tenant)
 
     @action(detail=False, methods=['get'])
     def available_for_employee(self, request):

@@ -20,6 +20,8 @@ class Sale(models.Model):
         ('refunded', 'Refunded'),
     ]
     
+    # ✅ CAMPO TENANT DIRECTO para filtrado eficiente
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='sales', null=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales', null=True, blank=True)
     employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
@@ -74,8 +76,13 @@ class Sale(models.Model):
     def save(self, *args, **kwargs):
         from django.core.exceptions import ValidationError
         
-        # Permitir creación inicial
+        # ✅ AUTO-ASIGNAR TENANT en creación
         if self.pk is None:
+            if not self.tenant_id and self.user:
+                self.tenant = self.user.tenant
+            elif not self.tenant_id and self.employee:
+                self.tenant = self.employee.tenant
+            
             # Nueva venta: establecer status=confirmed por defecto
             if not self.status:
                 self.status = 'confirmed'

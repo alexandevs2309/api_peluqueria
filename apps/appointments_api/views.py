@@ -14,15 +14,26 @@ from apps.employees_api.models import WorkSchedule
 User = get_user_model() 
 
 class AppointmentViewSet(AuditLoggingMixin, ModelViewSet):
+    queryset = Appointment.objects.none()  # Seguro por defecto
     serializer_class = AppointmentSerializer
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_authenticated and hasattr(user, 'tenant'):
-            # Filtrar por tenant del usuario
-            return Appointment.objects.filter(client__tenant=user.tenant)
-        return Appointment.objects.none()
+        
+        # SuperAdmin: acceso total
+        if user.is_superuser:
+            return Appointment.objects.all()
+        
+        # Usuario sin tenant: sin acceso
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return Appointment.objects.none()
+        
+        # Filtrar por tenant del request (client O stylist)
+        from django.db.models import Q
+        return Appointment.objects.filter(
+            Q(client__tenant=self.request.tenant) | Q(stylist__tenant=self.request.tenant)
+        ).distinct()
 
     def perform_create(self, serializer):
         appointment_datetime = serializer.validated_data['date_time']
@@ -181,10 +192,9 @@ def calendar_events(request):
         return Response({'error': 'Formato de fecha inválido'}, status=400)
     
     appointments = Appointment.objects.filter(
-        client__tenant=request.user.tenant,
         date_time__gte=start_date,
         date_time__lte=end_date
-    ).select_related('client', 'stylist', 'service')
+    )
     
     events = []
     for apt in appointments:
@@ -221,10 +231,17 @@ def calendar_events(request):
 def reschedule_appointment(request, pk):
     """Reprogramar cita"""
     try:
-        appointment = Appointment.objects.get(
-            id=pk,
-            client__tenant=request.user.tenant
-        )
+        # Validar tenant antes de buscar
+        if not request.user.is_superuser:
+            if not hasattr(request, 'tenant') or not request.tenant:
+                return Response({'error': 'Usuario sin tenant'}, status=404)
+            
+            appointment = Appointment.objects.get(
+                id=pk,
+                client__tenant=request.tenant
+            )
+        else:
+            appointment = Appointment.objects.get(id=pk)
         
         new_datetime = request.data.get('new_datetime')
         if not new_datetime:
@@ -265,7 +282,17 @@ def reschedule_appointment(request, pk):
 def stylist_schedule(request, stylist_id):
     """Horario completo de un estilista"""
     try:
-        stylist = User.objects.get(id=stylist_id)
+        # ✅ VALIDAR TENANT del stylist
+        if not user.is_superuser:
+            if not hasattr(request, 'tenant') or not request.tenant:
+                return Response({'error': 'Usuario sin tenant'}, status=404)
+            
+            stylist = User.objects.get(
+                id=stylist_id,
+                tenant=request.tenant
+            )
+        else:
+            stylist = User.objects.get(id=stylist_id)
         
         # Obtener horarios de trabajo
         from apps.employees_api.models import WorkSchedule
