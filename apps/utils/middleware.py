@@ -1,3 +1,9 @@
+"""Middleware de utilidades cross-cutting para logging y performance.
+
+Contiene:
+- StructuredLoggingMiddleware: Logging JSON estructurado con request_id
+- SlowQueryMiddleware: Detección de queries lentas >200ms
+"""
 import logging
 import json
 import time

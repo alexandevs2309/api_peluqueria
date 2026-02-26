@@ -5,7 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Count
 from apps.auth_api.models import User
 from apps.auth_api.serializers import UserListSerializer
-from apps.auth_api.permissions import IsSuperAdmin
+from apps.core.permissions import IsSuperAdmin
 from apps.roles_api.models import Role, UserRole
 from .models import Tenant
 

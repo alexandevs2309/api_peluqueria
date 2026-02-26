@@ -1,3 +1,14 @@
+"""Modelos de empleados y relaciones.
+
+Estructura de archivos:
+- models.py: Employee, EmployeeService, WorkSchedule (entidades principales)
+- earnings_models.py: PayrollPeriod, PayrollDeduction, PayrollConfiguration (nómina)
+- adjustment_models.py: CommissionAdjustment (ajustes de comisión)
+- compensation_models.py: EmployeeCompensationHistory (historial de compensación)
+
+Razón de separación: Bounded contexts internos para facilitar mantenimiento
+y evitar archivo monolítico de >1000 líneas.
+"""
 from django.db import models
 from django.conf import settings
 from apps.services_api.models import Service

@@ -34,21 +34,21 @@ services:
   web:
     build: .
     user: "1000:1000"
-    command: sh -c "python manage.py collectstatic --noinput && python manage.py migrate --no-input && gunicorn backend.wsgi:application --bind 0.0.0.0:8000 --workers=2 --worker-class=sync --max-requests=1000 --timeout=120"
+    command: sh -c "python manage.py collectstatic --noinput && python manage.py migrate --no-input && gunicorn backend.wsgi:application --bind 0.0.0.0:8000 --workers=8 --threads=4 --worker-class=gthread --max-requests=1000 --timeout=120 --keep-alive=5"
     volumes:
       - .:/code
       - static_volume:/code/staticfiles
       - media_volume:/code/media
     env_file:
       - .env
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     deploy:
       resources:
         limits:
-          memory: 1G
+          memory: 2G
         reservations:
-          memory: 512M
+          memory: 1G
     depends_on:
       db:
         condition: service_healthy
@@ -113,11 +113,40 @@ services:
     networks:
       - backend
 
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./ops/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+    ports:
+      - "9090:9090"
+    networks:
+      - backend
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
   static_volume:
   media_volume:
+  prometheus_data:
+  grafana_data:
 
 networks:
   backend:

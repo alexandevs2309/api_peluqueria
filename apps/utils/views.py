@@ -1,3 +1,9 @@
+"""Vistas de utilidades para métricas y health checks.
+
+Endpoints:
+- /metrics-dashboard/: Métricas en tiempo real (DB, financiero, Celery)
+- /health-check/: Health check completo del sistema
+"""
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response

@@ -8,110 +8,126 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@shared_task
-def check_trial_expirations():
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def check_trial_expirations(self):
     """
     Task diario para verificar trials expirados
     Ejecutar diariamente a las 9:00 AM
     """
-    today = timezone.now().date()
-    
-    # Buscar tenants con trial expirado
-    expired_trials = Tenant.objects.filter(
-        subscription_status='trial',
-        trial_end_date__lt=today,
-        is_active=True
-    )
-    
-    suspended_count = 0
-    for tenant in expired_trials:
-        # Suspender tenant
-        tenant.subscription_status = 'suspended'
-        tenant.is_active = False
-        tenant.save()
+    try:
+        today = timezone.now().date()
         
-        # Desactivar suscripción del usuario
-        UserSubscription.objects.filter(
-            user=tenant.owner,
+        # Buscar tenants con trial expirado
+        expired_trials = Tenant.objects.filter(
+            subscription_status='trial',
+            trial_end_date__lt=today,
             is_active=True
-        ).update(is_active=False)
+        )
         
-        # Enviar email de notificación
-        send_trial_expired_email(tenant)
-        suspended_count += 1
+        suspended_count = 0
+        for tenant in expired_trials:
+            # Suspender tenant
+            tenant.subscription_status = 'suspended'
+            tenant.is_active = False
+            tenant.save()
+            
+            # Desactivar suscripción del usuario
+            UserSubscription.objects.filter(
+                user=tenant.owner,
+                is_active=True
+            ).update(is_active=False)
+            
+            # Enviar email de notificación
+            send_trial_expired_email(tenant)
+            suspended_count += 1
+            
+            logger.info(f"Trial expired for tenant {tenant.name} (ID: {tenant.id})")
         
-        logger.info(f"Trial expired for tenant {tenant.name} (ID: {tenant.id})")
-    
-    logger.info(f"Processed {suspended_count} expired trials")
-    return f"Suspended {suspended_count} tenants with expired trials"
+        logger.info(f"Processed {suspended_count} expired trials")
+        return f"Suspended {suspended_count} tenants with expired trials"
+    except Exception as e:
+        logger.error(f"Error checking trial expirations: {str(e)}")
+        raise self.retry(exc=e)
 
-@shared_task
-def cleanup_expired_trials():
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def cleanup_expired_trials(self):
     """
     Task para limpiar trials expirados y datos obsoletos
     Ejecutar semanalmente
     """
-    today = timezone.now().date()
-    
-    # Limpiar tenants suspendidos por más de 30 días
-    old_suspended = Tenant.objects.filter(
-        subscription_status='suspended',
-        updated_at__lt=today - timezone.timedelta(days=30)
-    )
-    
-    cleaned_count = 0
-    for tenant in old_suspended:
-        # Marcar como inactivo permanentemente
-        tenant.is_active = False
-        tenant.save()
-        cleaned_count += 1
+    try:
+        today = timezone.now().date()
         
-        logger.info(f"Cleaned up old suspended tenant {tenant.name} (ID: {tenant.id})")
-    
-    return f"Cleaned up {cleaned_count} old suspended tenants"
+        # Limpiar tenants suspendidos por más de 30 días
+        old_suspended = Tenant.objects.filter(
+            subscription_status='suspended',
+            updated_at__lt=today - timezone.timedelta(days=30)
+        )
+        
+        cleaned_count = 0
+        for tenant in old_suspended:
+            # Marcar como inactivo permanentemente
+            tenant.is_active = False
+            tenant.save()
+            cleaned_count += 1
+            
+            logger.info(f"Cleaned up old suspended tenant {tenant.name} (ID: {tenant.id})")
+        
+        return f"Cleaned up {cleaned_count} old suspended tenants"
+    except Exception as e:
+        logger.error(f"Error cleaning up expired trials: {str(e)}")
+        raise self.retry(exc=e)
 
-@shared_task
-def send_trial_expiration_warnings():
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def send_trial_expiration_warnings(self):
     """
     Task para enviar avisos de expiración próxima
     Ejecutar diariamente a las 10:00 AM
     """
-    today = timezone.now().date()
-    warning_dates = [
-        today + timezone.timedelta(days=1),  # 1 día antes
-        today + timezone.timedelta(days=3),  # 3 días antes
-    ]
-    
-    warned_count = 0
-    for warning_date in warning_dates:
-        tenants_to_warn = Tenant.objects.filter(
-            subscription_status='trial',
-            trial_end_date=warning_date,
-            is_active=True
+    try:
+        today = timezone.now().date()
+        warning_dates = [
+            today + timezone.timedelta(days=1),  # 1 día antes
+            today + timezone.timedelta(days=3),  # 3 días antes
+        ]
+        
+        warned_count = 0
+        for warning_date in warning_dates:
+            tenants_to_warn = Tenant.objects.filter(
+                subscription_status='trial',
+                trial_end_date=warning_date,
+                is_active=True
+            )
+            
+            for tenant in tenants_to_warn:
+                days_remaining = (tenant.trial_end_date - today).days
+                send_trial_warning_email(tenant, days_remaining)
+                warned_count += 1
+                
+                logger.info(f"Sent trial warning to {tenant.name} ({days_remaining} days remaining)")
+        
+        return f"Sent {warned_count} trial expiration warnings"
+    except Exception as e:
+        logger.error(f"Error sending trial warnings: {str(e)}")
+        raise self.retry(exc=e)
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def check_expired_subscriptions(self):
+    """Verificar y desactivar suscripciones expiradas"""
+    try:
+        expired_subs = UserSubscription.objects.filter(
+            is_active=True,
+            end_date__lt=timezone.now()
         )
         
-        for tenant in tenants_to_warn:
-            days_remaining = (tenant.trial_end_date - today).days
-            send_trial_warning_email(tenant, days_remaining)
-            warned_count += 1
-            
-            logger.info(f"Sent trial warning to {tenant.name} ({days_remaining} days remaining)")
-    
-    return f"Sent {warned_count} trial expiration warnings"
-
-@shared_task
-def check_expired_subscriptions():
-    """Verificar y desactivar suscripciones expiradas"""
-    expired_subs = UserSubscription.objects.filter(
-        is_active=True,
-        end_date__lt=timezone.now()
-    )
-    
-    count = expired_subs.count()
-    expired_subs.update(is_active=False)
-    
-    logger.info(f"Deactivated {count} expired subscriptions")
-    return f'Deactivated {count} expired subscriptions'
+        count = expired_subs.count()
+        expired_subs.update(is_active=False)
+        
+        logger.info(f"Deactivated {count} expired subscriptions")
+        return f'Deactivated {count} expired subscriptions'
+    except Exception as e:
+        logger.error(f"Error checking expired subscriptions: {str(e)}")
+        raise self.retry(exc=e)
 
 def send_trial_expired_email(tenant):
     """Enviar email cuando el trial expira"""

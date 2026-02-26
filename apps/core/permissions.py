@@ -3,6 +3,7 @@ Permisos centralizados para el sistema multi-tenant.
 Evita duplicación de permisos comunes en múltiples apps.
 """
 from rest_framework.permissions import BasePermission
+from apps.roles_api.models import UserRole
 
 
 class IsSuperAdmin(BasePermission):
@@ -42,3 +43,18 @@ class IsTenantMember(BasePermission):
             return True
         
         return hasattr(request.user, 'tenant') and request.user.tenant is not None
+
+
+class RolePermission(BasePermission):
+    """
+    Permite acceso si el usuario tiene alguno de los roles permitidos.
+    Configurar allowed_roles en la clase que hereda.
+    """
+    allowed_roles = ['Admin']
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        user_roles = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
+        return any(role in self.allowed_roles for role in user_roles)

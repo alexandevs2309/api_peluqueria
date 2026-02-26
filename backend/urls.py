@@ -3,6 +3,7 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.http import JsonResponse
 from django.views.decorators.cache import cache_page
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
 from django.urls import path, include
@@ -26,6 +27,7 @@ def sentry_test(request):
     return JsonResponse({"status": "This should not be reached"})
 
 urlpatterns = [
+    path('', include('django_prometheus.urls')),  # Métricas en /metrics
     path('admin/', admin.site.urls),
     path('api/', include([
         path('auth/', include('apps.auth_api.urls')),
