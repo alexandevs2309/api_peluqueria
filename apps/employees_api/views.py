@@ -4,7 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from apps.audit_api.mixins import AuditLoggingMixin
-from apps.tenants_api.mixins import TenantFilterMixin, TenantPermissionMixin
+from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.roles_api.permissions import IsActiveAndRolePermission, role_permission_for
 from apps.subscriptions_api.utils import get_user_active_subscription
@@ -14,8 +14,8 @@ from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
 from .permissions import IsAdminOrOwnStylist, role_permission_for
 
-class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
-    queryset = Employee.objects.none()  # Seguro por defecto
+class EmployeeViewSet(TenantScopedViewSet):
+    queryset = Employee.objects.select_related('user', 'tenant').all()
     serializer_class = EmployeeSerializer
   
     def get_permissions(self):
@@ -25,42 +25,21 @@ class EmployeeViewSet(TenantFilterMixin, viewsets.ModelViewSet):
             permission_classes = [IsAuthenticated]
         return [permission() for permission in permission_classes]
 
-   
-   
-    def get_queryset(self):
-        user = self.request.user
-        
-        # DEBUG
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f'DEBUG get_queryset: user={user.email}, is_superuser={user.is_superuser}')
-        logger.info(f'DEBUG get_queryset: hasattr tenant={hasattr(self.request, "tenant")}')
-        if hasattr(self.request, 'tenant'):
-            logger.info(f'DEBUG get_queryset: request.tenant={self.request.tenant}')
-        
-        # SuperAdmin: acceso total
-        if user.is_superuser:
-            return Employee.objects.select_related('user', 'tenant').all()
-            
-        # Usuario sin tenant: sin acceso
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            logger.error(f'DEBUG: Usuario sin tenant - retornando none()')
-            return Employee.objects.none()
-            
-        # Filtrar por tenant del request
-        logger.info(f'DEBUG: Filtrando por tenant={self.request.tenant.id}')
-        return Employee.objects.select_related('user', 'tenant').filter(tenant=self.request.tenant)
-    
-
     def perform_create(self, serializer):
+        """Override para validar límite de empleados según plan"""
         user = self.request.user
         
-        # SuperAdmin: puede crear sin tenant
+        # SuperAdmin: puede crear sin validación de límite
         if user.is_superuser:
-            serializer.save()
+            # Asignar tenant si no viene en data
+            if 'tenant' not in serializer.validated_data:
+                tenant = user.tenant or Tenant.objects.first()
+                serializer.save(tenant=tenant)
+            else:
+                serializer.save()
             return
         
-        # Usuario normal: forzar tenant del request
+        # Usuario normal: validar límite y asignar tenant
         if not hasattr(self.request, 'tenant') or not self.request.tenant:
             raise ValidationError("Usuario sin tenant asignado")
         

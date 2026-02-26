@@ -6,6 +6,7 @@ from rest_framework import status, serializers
 from django.utils import timezone
 from datetime import datetime, timedelta
 from apps.audit_api.mixins import AuditLoggingMixin
+from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
@@ -13,31 +14,24 @@ from apps.employees_api.models import WorkSchedule
 
 User = get_user_model() 
 
-class AppointmentViewSet(AuditLoggingMixin, ModelViewSet):
-    queryset = Appointment.objects.none()  # Seguro por defecto
+class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
+    queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
     permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        user = self.request.user
-        
-        # SuperAdmin: acceso total
-        if user.is_superuser:
-            return Appointment.objects.all()
-        
-        # Usuario sin tenant: sin acceso
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return Appointment.objects.none()
-        
-        # Filtrar por tenant del request (client O stylist)
-        from django.db.models import Q
-        return Appointment.objects.filter(
-            Q(client__tenant=self.request.tenant) | Q(stylist__tenant=self.request.tenant)
-        ).distinct()
 
     def perform_create(self, serializer):
         appointment_datetime = serializer.validated_data['date_time']
         stylist = serializer.validated_data['stylist']
+        
+        # Asignar tenant automáticamente
+        tenant = None
+        if self.request.user.is_superuser:
+            # SuperAdmin: usar tenant del client
+            client = serializer.validated_data.get('client')
+            if client and hasattr(client, 'tenant'):
+                tenant = client.tenant
+        else:
+            tenant = self.request.tenant
         
         # Validar que no hay conflictos de horario
         conflicting_appointments = Appointment.objects.filter(
@@ -65,7 +59,7 @@ class AppointmentViewSet(AuditLoggingMixin, ModelViewSet):
                     f"El estilista no trabaja en ese horario el {day_of_week}"
                 )
         
-        serializer.save()
+        serializer.save(tenant=tenant)
 
     @action(detail=False, methods=['get'])
     def availability(self, request):
@@ -282,6 +276,9 @@ def reschedule_appointment(request, pk):
 def stylist_schedule(request, stylist_id):
     """Horario completo de un estilista"""
     try:
+        # ✅ FIX: Definir user correctamente
+        user = request.user
+        
         # ✅ VALIDAR TENANT del stylist
         if not user.is_superuser:
             if not hasattr(request, 'tenant') or not request.tenant:

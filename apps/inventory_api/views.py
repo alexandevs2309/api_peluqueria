@@ -1,5 +1,6 @@
 from rest_framework import viewsets, permissions
 from apps.audit_api.mixins import AuditLoggingMixin
+from apps.tenants_api.base_viewsets import TenantScopedViewSet, TenantScopedReadOnlyViewSet
 from apps.roles_api.permissions import role_permission_for
 from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
@@ -11,32 +12,15 @@ from django.db.models import F
 from rest_framework import status
 
 
-class ProductViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Product.objects.none()  # Seguro por defecto
+class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
+    queryset = Product.objects.all()
     serializer_class = ProductSerializer
     permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        
-        # SuperAdmin: acceso total
-        if user.is_superuser:
-            return Product.objects.all()
-        
-        # Usuario sin tenant: sin acceso
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return Product.objects.none()
-        
-        # Filtrar por tenant del request
-        return Product.objects.filter(tenant=self.request.tenant)
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
         context['request'] = self.request
         return context
-    
-    def perform_create(self, serializer):
-        serializer.save(tenant=self.request.user.tenant)
     
     @action(detail=False, methods=['get'])
     def low_stock(self, request):
@@ -137,37 +121,19 @@ def low_stock_alerts(request):
     })
 
 
-class SupplierViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Supplier.objects.none()  # Seguro por defecto
+class SupplierViewSet(AuditLoggingMixin, TenantScopedViewSet):
+    queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
     permission_classes = [IsAuthenticated]
-    
-    def get_queryset(self):
-        user = self.request.user
-        
-        if user.is_superuser:
-            return Supplier.objects.all()
-        
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return Supplier.objects.none()
-        
-        return Supplier.objects.filter(tenant=self.request.tenant)
-    
-    def perform_create(self, serializer):
-        if self.request.user.is_superuser:
-            serializer.save()
-        elif hasattr(self.request, 'tenant') and self.request.tenant:
-            serializer.save(tenant=self.request.tenant)
-        else:
-            from rest_framework.exceptions import PermissionDenied
-            raise PermissionDenied("Usuario sin tenant asignado")
 
-class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = StockMovement.objects.none()  # Seguro por defecto
+class StockMovementViewSet(TenantScopedReadOnlyViewSet):
+    queryset = StockMovement.objects.all()
     serializer_class = StockMovementSerializer
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
+        """Override para filtrar por product__tenant"""
+        queryset = super().get_queryset()
         user = self.request.user
         
         if user.is_superuser:

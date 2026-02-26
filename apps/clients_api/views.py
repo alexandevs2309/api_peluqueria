@@ -4,12 +4,13 @@ from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
+from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from .models import Client
 from .serializers import ClientSerializer
 
-class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
-    queryset = Client.objects.none()  # Seguro por defecto
+class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
+    queryset = Client.objects.all()
     serializer_class = ClientSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -21,39 +22,7 @@ class ClientViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     filterset_fields = ['gender', 'is_active', 'preferred_stylist']
     search_fields = ['full_name', 'email', 'phone']
     ordering_fields = ['created_at', 'updated_at', 'last_visit']
-    ordering = ['-created_at']  # default ordering
-
-    def get_queryset(self):
-        user = self.request.user
-        
-        # SuperAdmin: acceso total
-        if user.is_superuser:
-            return Client.objects.all()
-            
-        # Usuario sin tenant: sin acceso
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return Client.objects.none()
-            
-        # Filtrar por tenant del request
-        return Client.objects.filter(tenant=self.request.tenant)
-    
-    def perform_create(self, serializer):
-        user = self.request.user
-        
-        # SuperAdmin: puede crear sin tenant
-        if user.is_superuser:
-            serializer.save(user=user, created_by=user)
-            return
-            
-        # Usuario normal: forzar tenant del request
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            raise ValidationError("Usuario sin tenant asignado")
-        
-        serializer.save(
-            user=user, 
-            created_by=user,
-            tenant=self.request.tenant
-        )
+    ordering = ['-created_at']
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):

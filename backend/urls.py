@@ -8,7 +8,6 @@ from django.views.decorators.http import require_http_methods
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from apps.settings_api.views import SystemSettingsRetrieveUpdateView, SystemSettingsResetView
-from apps.compatibility_views import available_for_employee, products_low_stock
 
 
 @require_http_methods(["GET"])
@@ -47,11 +46,6 @@ urlpatterns = [
         path('settings/', include('apps.settings_api.urls')),
         path('system-settings/', SystemSettingsRetrieveUpdateView.as_view(), name='system-settings'),
         path('system-settings/reset/', SystemSettingsResetView.as_view(), name='system-settings-reset'),
-        
-        # Endpoints de compatibilidad
-        path('users/available-for-employee/', available_for_employee, name='users-available-for-employee'),
-        path('inventory/products/low-stock/', products_low_stock, name='inventory-products-low-stock'),
-
         path('audit/', include('apps.audit_api.urls')),
         path('notifications/', include('apps.notifications_api.urls')),
 
