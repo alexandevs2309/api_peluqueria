@@ -1,9 +1,9 @@
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from apps.core.tenant_permissions import tenant_permission
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('inventory_api.view_product')])
 def categories_list(request):
     """Lista de categorías de productos"""
     return Response([
@@ -14,7 +14,7 @@ def categories_list(request):
     ])
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('inventory_api.view_product')])
 def low_stock_products(request):
     """Productos con stock bajo"""
     from .models import Product

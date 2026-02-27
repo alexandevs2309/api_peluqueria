@@ -140,10 +140,12 @@ class TenantViewSet(viewsets.ModelViewSet):
     def locale(self, request):
         """Obtener configuración regional del tenant actual"""
         if not request.tenant:
-            return response.Response(
-                {"error": "No tenant assigned"}, 
-                status=status.HTTP_403_FORBIDDEN
-            )
+            # Superadmin sin tenant: retornar defaults
+            return response.Response({
+                "language": "es",
+                "timezone": "America/Santo_Domingo",
+                "currency": "DOP"
+            })
         
         serializer = TenantLocaleSerializer(request.tenant)
         return response.Response(serializer.data)

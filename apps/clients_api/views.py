@@ -6,13 +6,29 @@ from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
+from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Client
 from .serializers import ClientSerializer
 
 class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Client.objects.all()
     serializer_class = ClientSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'clients_api.view_client',
+        'retrieve': 'clients_api.view_client',
+        'create': 'clients_api.add_client',
+        'update': 'clients_api.change_client',
+        'partial_update': 'clients_api.change_client',
+        'destroy': 'clients_api.delete_client',
+        'history': 'clients_api.view_client',
+        'add_loyalty_points': 'clients_api.change_client',
+        'redeem_points': 'clients_api.change_client',
+        'stats': 'clients_api.view_client',
+        'birthdays_this_month': 'clients_api.view_client',
+        'birthdays_today': 'clients_api.view_client',
+        'upcoming_birthdays': 'clients_api.view_client',
+    }
 
     filter_backends = [
         DjangoFilterBackend,
@@ -23,6 +39,19 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
     search_fields = ['full_name', 'email', 'phone']
     ordering_fields = ['created_at', 'updated_at', 'last_visit']
     ordering = ['-created_at']
+
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        if not tenant and not self.request.user.is_superuser:
+            raise ValidationError('Usuario sin tenant asignado')
+
+        instance = serializer.save(
+            tenant=tenant,
+            user=self.request.user,
+            created_by=self.request.user
+        )
+        self.log_action('create', instance, self.request.user, self.request)
+        return instance
 
     @action(detail=True, methods=['get'])
     def history(self, request, pk=None):

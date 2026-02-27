@@ -7,10 +7,12 @@ class HasFeaturePermission(BasePermission):
     """
     Permission class to check if user's tenant has specific feature
     """
-    def __init__(self, feature_name):
+    def __init__(self, feature_name=None):
         self.feature_name = feature_name
 
     def has_permission(self, request, view):
+        feature_name = self.feature_name or getattr(view, 'required_feature', None)
+
         if not request.user.is_authenticated:
             return False
         
@@ -25,7 +27,9 @@ class HasFeaturePermission(BasePermission):
             return False
             
         features = tenant.subscription_plan.features or {}
-        return features.get(self.feature_name, False)
+        if not feature_name:
+            return False
+        return features.get(feature_name, False)
 
 def requires_feature(feature_name):
     """

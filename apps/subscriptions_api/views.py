@@ -18,6 +18,8 @@ from apps.tenants_api.models import Tenant
 from apps.auth_api.models import User
 from apps.roles_api.models import Role, UserRole
 from rest_framework.throttling import UserRateThrottle
+from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
+from apps.core.permissions import IsSuperAdmin
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 
@@ -25,7 +27,16 @@ stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     queryset = SubscriptionPlan.objects.all()
     serializer_class = SubscriptionPlanSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'subscriptions_api.view_subscriptionplan',
+        'retrieve': 'subscriptions_api.view_subscriptionplan',
+        'create': 'subscriptions_api.add_subscriptionplan',
+        'update': 'subscriptions_api.change_subscriptionplan',
+        'partial_update': 'subscriptions_api.change_subscriptionplan',
+        'destroy': 'subscriptions_api.delete_subscriptionplan',
+        'deactivate_plan': 'subscriptions_api.change_subscriptionplan',
+    }
     filterset_fields = ['is_active']
     search_fields = ['name', ]
     ordering_fields = ['price', 'duration_month']
@@ -130,7 +141,17 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
 
 class UserSubscriptionViewSet(viewsets.ModelViewSet):
     serializer_class = UserSubscriptionSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'subscriptions_api.view_usersubscription',
+        'retrieve': 'subscriptions_api.view_usersubscription',
+        'create': 'subscriptions_api.add_usersubscription',
+        'update': 'subscriptions_api.change_usersubscription',
+        'partial_update': 'subscriptions_api.change_usersubscription',
+        'destroy': 'subscriptions_api.delete_usersubscription',
+        'cancel_subscription': 'subscriptions_api.change_usersubscription',
+        'current': 'subscriptions_api.view_usersubscription',
+    }
 
     def get_queryset(self):
         if self.request.user.is_superuser:
@@ -240,7 +261,15 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
 
 class SubscriptionAuditLogViewSet(viewsets.ModelViewSet):
     serializer_class = SubscriptionAuditLogSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'subscriptions_api.view_subscriptionauditlog',
+        'retrieve': 'subscriptions_api.view_subscriptionauditlog',
+        'create': 'subscriptions_api.add_subscriptionauditlog',
+        'update': 'subscriptions_api.change_subscriptionauditlog',
+        'partial_update': 'subscriptions_api.change_subscriptionauditlog',
+        'destroy': 'subscriptions_api.delete_subscriptionauditlog',
+    }
 
     def get_queryset(self):
         return SubscriptionAuditLog.objects.filter(user=self.request.user)
@@ -249,7 +278,7 @@ class SubscriptionAuditLogViewSet(viewsets.ModelViewSet):
     
 
 class MyActiveSubscriptionView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [tenant_permission('subscriptions_api.view_usersubscription')]
 
     def get(self, request):
         subscription = get_user_active_subscription(request.user)
@@ -260,11 +289,11 @@ class MyActiveSubscriptionView(APIView):
         return Response(serializer.data)
 
 class MyEntitlementsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [tenant_permission('subscriptions_api.view_usersubscription')]
 
     def get(self, request):
         # Para Super-Admin, devolver entitlements limitados (no exponer capacidades)
-        if request.user.roles.filter(name='Super-Admin').exists():
+        if request.user.is_superuser or request.user.role == 'SuperAdmin':
             return Response({
                 "plan": "admin",
                 "plan_display": "Plan Administrativo",
@@ -355,18 +384,11 @@ class MyEntitlementsView(APIView):
         return Response(data)
 
 class OnboardingView(APIView):
-    permission_classes = [IsAuthenticated]  # Requiere autenticación
+    permission_classes = [IsSuperAdmin]
     throttle_classes = [UserRateThrottle]   # Rate limiting
 
     @transaction.atomic
     def post(self, request):
-        # Solo SuperAdmin puede hacer onboarding
-        if not request.user.roles.filter(name='Super-Admin').exists():
-            return Response({
-                'error': 'Permission denied',
-                'message': 'Only Super-Admin can perform onboarding'
-            }, status=status.HTTP_403_FORBIDDEN)
-            
         serializer = OnboardingSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

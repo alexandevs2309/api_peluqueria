@@ -1,16 +1,25 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
+from apps.core.tenant_permissions import TenantPermissionByAction
 
 class PayrollViewSet(viewsets.ViewSet):
     """ViewSet para gestión de nómina"""
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list_periods': 'employees_api.view_employee_payroll',
+        'register_payment': 'employees_api.view_employee_payroll',
+        'recalculate_period': 'employees_api.view_employee_payroll',
+        'submit_for_approval': 'employees_api.view_employee_payroll',
+        'approve_period': 'employees_api.view_employee_payroll',
+        'reject_period': 'employees_api.view_employee_payroll',
+        'get_receipt': 'employees_api.view_employee_payroll',
+    }
     
     def _require_admin_role(self, request):
         """Validar que el usuario tenga rol de administrador"""

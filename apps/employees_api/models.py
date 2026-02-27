@@ -55,6 +55,10 @@ class Employee(models.Model):
             models.Index(fields=['is_active']),
             models.Index(fields=['tenant', 'is_active']),
         ]
+        permissions = [
+            ('view_employee_payroll', 'Can view employee payroll'),
+            ('manage_employee_loans', 'Can manage employee loans'),
+        ]
 
     def __str__(self):
         return self.user.email

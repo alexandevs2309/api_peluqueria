@@ -3,6 +3,7 @@ from django.utils.deprecation import MiddlewareMixin
 from django.utils import timezone
 from datetime import datetime
 from apps.subscriptions_api.models import UserSubscription
+from django.core.cache import cache
 
 class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
@@ -108,3 +109,121 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             }, status=402)
             
         return None
+
+
+class APIRateLimitMiddleware(MiddlewareMixin):
+    """
+    Middleware para rate limiting diferenciado por plan de suscripción.
+    Diseño:
+    - Límites separados para lectura y escritura.
+    - Exclusión de endpoints de polling/estado frecuentes.
+    - Contadores por hora, por usuario y por scope.
+    """
+    
+    # Límites por plan (requests por hora)
+    RATE_LIMITS = {
+        'basic': {'read': 1200, 'write': 250},
+        'standard': {'read': 5000, 'write': 1000},
+        'premium': {'read': 15000, 'write': 3000},
+        'enterprise': None,  # Ilimitado
+    }
+
+    # Endpoints públicos (sin throttling de este middleware)
+    EXEMPT_PREFIXES = [
+        '/api/auth/',
+        '/api/healthz/',
+        '/api/schema/',
+        '/api/docs/',
+    ]
+
+    # Endpoints de alta frecuencia de lectura que no deben penalizar UX.
+    EXEMPT_READ_PREFIXES = [
+        '/api/notifications/',
+        '/api/subscriptions/me/entitlements/',
+        '/api/subscriptions/renew/',
+        '/api/settings/barbershop/',
+    ]
+    
+    def process_request(self, request):
+        # Solo aplicar a rutas /api/
+        if not request.path.startswith('/api/'):
+            return None
+        
+        # Excluir rutas públicas
+        for exempt_path in self.EXEMPT_PREFIXES:
+            if request.path.startswith(exempt_path):
+                return None
+        
+        # Solo aplicar a usuarios autenticados
+        if not hasattr(request, 'user') or not request.user.is_authenticated:
+            return None
+        
+        # SuperAdmin sin límite
+        if request.user.is_superuser:
+            return None
+        
+        # Obtener plan del usuario
+        tenant = getattr(request.user, 'tenant', None)
+        if not tenant:
+            return None
+        
+        subscription_plan = getattr(tenant, 'subscription_plan', None)
+        if not subscription_plan:
+            return None
+        
+        plan_name = subscription_plan.name
+        plan_limits = self.RATE_LIMITS.get(plan_name)
+        
+        # Plan enterprise sin límite
+        if plan_limits is None:
+            return None
+
+        is_read = request.method in ('GET', 'HEAD', 'OPTIONS')
+        if is_read:
+            for prefix in self.EXEMPT_READ_PREFIXES:
+                if request.path.startswith(prefix):
+                    return None
+
+        scope = 'read' if is_read else 'write'
+        rate_limit = plan_limits.get(scope)
+        if rate_limit is None:
+            return None
+
+        # Clave de cache por usuario/scope y por hora para evitar crecimiento infinito
+        current_hour_bucket = timezone.now().strftime('%Y%m%d%H')
+        cache_key = f'api_rate_limit:{request.user.id}:{scope}:{current_hour_bucket}'
+
+        # Obtener contador actual
+        current_count = cache.get(cache_key, 0)
+
+        # Verificar límite
+        if current_count >= rate_limit:
+            return JsonResponse({
+                'error': 'Rate limit exceeded',
+                'code': 'RATE_LIMIT_EXCEEDED',
+                'limit': rate_limit,
+                'period': '1 hour',
+                'plan': plan_name,
+                'scope': scope,
+                'action_required': 'upgrade_plan' if plan_name != 'enterprise' else 'wait'
+            }, status=429)
+        
+        # Incrementar contador (expira en 1 hora)
+        cache.set(cache_key, current_count + 1, 3600)
+        
+        # Agregar headers de rate limit
+        request.rate_limit_remaining = rate_limit - current_count - 1
+        request.rate_limit_limit = rate_limit
+        request.rate_limit_scope = scope
+        
+        return None
+    
+    def process_response(self, request, response):
+        # Agregar headers de rate limit a la respuesta
+        if hasattr(request, 'rate_limit_remaining'):
+            response['X-RateLimit-Limit'] = str(request.rate_limit_limit)
+            response['X-RateLimit-Remaining'] = str(request.rate_limit_remaining)
+            response['X-RateLimit-Reset'] = str(3600)  # 1 hora en segundos
+            response['X-RateLimit-Scope'] = str(getattr(request, 'rate_limit_scope', 'read'))
+        
+        return response

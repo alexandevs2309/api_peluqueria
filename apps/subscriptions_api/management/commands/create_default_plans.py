@@ -27,77 +27,68 @@ class Command(BaseCommand):
             },
             {
                 'name': 'basic',
-                'description': 'Plan básico para pequeñas barberías',
+                'description': 'Plan Profesional para pequeñas peluquerías',
                 'price': 29.99,
                 'duration_month': 1,
-                'max_employees': 5,
-                'max_users': 10,
+                'max_employees': 8,
+                'max_users': 16,
+                'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
                     'basic_reports': True,
+                    'cash_register': True,
+                    'client_history': True,
                     'inventory': False,
                     'advanced_reports': False,
                     'multi_location': False,
+                    'role_permissions': False,
                     'api_access': False,
-                    'custom_branding': False,
                     'priority_support': False
                 },
                 'is_active': True
             },
             {
                 'name': 'standard',
-                'description': 'Plan estándar para barberías en crecimiento',
-                'price': 49.99,
+                'description': 'Plan Negocio para peluquerías en crecimiento',
+                'price': 69.99,
                 'duration_month': 1,
-                'max_employees': 10,
-                'max_users': 20,
+                'max_employees': 25,
+                'max_users': 50,
+                'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
                     'basic_reports': True,
+                    'cash_register': True,
+                    'client_history': True,
                     'inventory': True,
-                    'advanced_reports': False,
-                    'multi_location': False,
+                    'advanced_reports': True,
+                    'multi_location': True,
+                    'role_permissions': True,
                     'api_access': False,
-                    'custom_branding': False,
                     'priority_support': False
                 },
                 'is_active': True
             },
             {
                 'name': 'premium',
-                'description': 'Plan premium con características avanzadas',
-                'price': 79.99,
-                'duration_month': 1,
-                'max_employees': 25,
-                'max_users': 50,
-                'features': {
-                    'appointments': True,
-                    'basic_reports': True,
-                    'inventory': True,
-                    'advanced_reports': True,
-                    'multi_location': True,
-                    'api_access': False,
-                    'custom_branding': True,
-                    'priority_support': True
-                },
-                'is_active': True
-            },
-            {
-                'name': 'enterprise',
-                'description': 'Plan empresarial para cadenas grandes',
-                'price': 149.99,
+                'description': 'Plan Empresarial para cadenas grandes',
+                'price': 129.99,
                 'duration_month': 1,
                 'max_employees': 0,  # Unlimited
                 'max_users': 0,      # Unlimited
+                'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
                     'basic_reports': True,
+                    'cash_register': True,
+                    'client_history': True,
                     'inventory': True,
                     'advanced_reports': True,
                     'multi_location': True,
+                    'role_permissions': True,
                     'api_access': True,
-                    'custom_branding': True,
-                    'priority_support': True
+                    'priority_support': True,
+                    'sla_guaranteed': True
                 },
                 'is_active': True
             }

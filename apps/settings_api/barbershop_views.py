@@ -11,6 +11,9 @@ from .barbershop_serializers import (
 )
 from .audit_models import SettingsAuditLog
 from .permissions import IsClientAdmin
+from apps.pos_api.models import PosConfiguration
+from apps.pos_api.models import Sale
+from apps.employees_api.earnings_models import PayrollPeriod
 
 
 class BarbershopSettingsViewSet(viewsets.ViewSet):
@@ -27,6 +30,48 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     
     # Campos que se auditan
     AUDITED_FIELDS = ['currency']
+
+    def _is_currency_locked(self, tenant):
+        """
+        Moneda bloqueada si existen transacciones históricas (ventas o nómina).
+        """
+        has_sales = Sale.objects.filter(tenant=tenant).exists()
+        has_payroll = PayrollPeriod.objects.filter(employee__tenant=tenant).exists()
+        return has_sales or has_payroll
+
+    def _get_pos_config_data(self, request):
+        """
+        Obtener configuración POS priorizando usuario actual y con fallback al tenant.
+        """
+        pos = PosConfiguration.objects.filter(user=request.user).first()
+        if not pos and hasattr(request.user, 'tenant') and request.user.tenant:
+            pos = PosConfiguration.objects.filter(user__tenant=request.user.tenant).first()
+
+        if not pos:
+            return None
+
+        return {
+            'business_name': pos.business_name,
+            'address': pos.address,
+            'phone': pos.phone,
+            'email': pos.email,
+            'website': pos.website
+        }
+
+    def _save_pos_config(self, request, pos_config_data):
+        """
+        Persistir configuración POS para el usuario actual si viene en payload.
+        """
+        if not isinstance(pos_config_data, dict):
+            return
+
+        pos, _ = PosConfiguration.objects.get_or_create(user=request.user)
+        pos.business_name = pos_config_data.get('business_name', pos.business_name)
+        pos.address = pos_config_data.get('address', pos.address)
+        pos.phone = pos_config_data.get('phone', pos.phone)
+        pos.email = pos_config_data.get('email', pos.email)
+        pos.website = pos_config_data.get('website', pos.website)
+        pos.save()
     
     def list(self, request):
         """
@@ -39,23 +84,12 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             serializer = BarbershopPublicSerializer(settings)
             data = serializer.data
             
-            # Cargar configuración POS si existe
-            pos_config = None
-            try:
-                from apps.pos_api.models import PosConfiguration
-                pos = PosConfiguration.objects.filter(user=request.user).first()
-                if pos:
-                    pos_config = {
-                        'business_name': pos.business_name,
-                        'address': pos.address,
-                        'phone': pos.phone,
-                        'email': pos.email,
-                        'website': pos.website
-                    }
-            except:
-                pass
-            
-            data['pos_config'] = pos_config
+            data['pos_config'] = self._get_pos_config_data(request)
+            data['currency_locked'] = self._is_currency_locked(request.user.tenant)
+            data['currency_lock_reason'] = (
+                'No se puede cambiar la moneda porque existen transacciones registradas.'
+                if data['currency_locked'] else ''
+            )
             return Response(data)
         except BarbershopSettings.DoesNotExist:
             # Return default public settings
@@ -78,7 +112,12 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'email': '',
                     'address': ''
                 },
-                'pos_config': None
+                'pos_config': self._get_pos_config_data(request),
+                'currency_locked': self._is_currency_locked(request.user.tenant),
+                'currency_lock_reason': (
+                    'No se puede cambiar la moneda porque existen transacciones registradas.'
+                    if self._is_currency_locked(request.user.tenant) else ''
+                )
             })
     
     @action(detail=False, methods=['get'])
@@ -91,7 +130,13 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         try:
             settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
             serializer = BarbershopAdminSerializer(settings)
-            return Response(serializer.data)
+            data = serializer.data
+            data['currency_locked'] = self._is_currency_locked(request.user.tenant)
+            data['currency_lock_reason'] = (
+                'No se puede cambiar la moneda porque existen transacciones registradas.'
+                if data['currency_locked'] else ''
+            )
+            return Response(data)
         except BarbershopSettings.DoesNotExist:
             # Return default admin settings
             return Response({
@@ -119,8 +164,14 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     
     def create(self, request):
         """Save barbershop settings con validaciones y auditoría"""
-        data = request.data
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
         tenant = request.user.tenant
+
+        # Campos auxiliares que no pertenecen al serializer principal.
+        pos_config_data = data.pop('pos_config', None)
+        confirmed_critical = bool(data.pop('confirmed_critical', False))
+        data.pop('currency_locked', None)
+        data.pop('currency_lock_reason', None)
         
         # Obtener o crear settings
         try:
@@ -144,7 +195,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 from apps.pos_api.models import Sale
                 from apps.employees_api.earnings_models import PayrollPeriod
                 
-                has_sales = Sale.objects.filter(employee__tenant=tenant).exists()
+                has_sales = Sale.objects.filter(tenant=tenant).exists()
                 has_payroll = PayrollPeriod.objects.filter(employee__tenant=tenant).exists()
                 
                 if has_sales or has_payroll:
@@ -155,7 +206,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     }, status=400)
         
         # FIX 4: Gobierno defensivo - Detectar cambios críticos
-        if is_update and not data.get('confirmed_critical', False):
+        if is_update and not confirmed_critical:
             critical_changes = []
             
             for field in self.CRITICAL_FIELDS:
@@ -195,6 +246,9 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     tenant=tenant,
                     **serializer.validated_data
                 )
+
+            # Guardar configuración POS anidada si se envía.
+            self._save_pos_config(request, pos_config_data)
         
         return Response({'message': 'Settings saved successfully'})
     

@@ -1,5 +1,4 @@
 from rest_framework.viewsets import ModelViewSet
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status, serializers
@@ -7,6 +6,7 @@ from django.utils import timezone
 from datetime import datetime, timedelta
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
+from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
@@ -17,7 +17,19 @@ User = get_user_model()
 class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'appointments_api.view_appointment',
+        'retrieve': 'appointments_api.view_appointment',
+        'create': 'appointments_api.add_appointment',
+        'update': 'appointments_api.change_appointment',
+        'partial_update': 'appointments_api.change_appointment',
+        'destroy': 'appointments_api.delete_appointment',
+        'availability': 'appointments_api.view_appointment',
+        'cancel': 'appointments_api.cancel_appointment',
+        'complete': 'appointments_api.complete_appointment',
+        'today': 'appointments_api.view_appointment',
+    }
 
     def perform_create(self, serializer):
         appointment_datetime = serializer.validated_data['date_time']
@@ -170,7 +182,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('appointments_api.view_appointment')])
 def calendar_events(request):
     """Eventos para calendario - formato FullCalendar"""
     start = request.GET.get('start')
@@ -221,7 +233,7 @@ def calendar_events(request):
     return Response(events)
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('appointments_api.change_appointment')])
 def reschedule_appointment(request, pk):
     """Reprogramar cita"""
     try:
@@ -272,7 +284,7 @@ def reschedule_appointment(request, pk):
         return Response({'error': 'Cita no encontrada'}, status=404)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('appointments_api.view_appointment')])
 def stylist_schedule(request, stylist_id):
     """Horario completo de un estilista"""
     try:

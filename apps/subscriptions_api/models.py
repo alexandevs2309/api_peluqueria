@@ -4,14 +4,15 @@ from datetime import timedelta
 from django.db.models import JSONField
 from django.utils import timezone
 from dateutil.relativedelta import relativedelta
+from django.core.exceptions import ValidationError
 
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
-        ('basic', 'Plan Básico'),
-        ('standard', 'Plan Estándar'),
-        ('premium', 'Plan Premium'),
-        ('enterprise', 'Plan Empresarial'),
+        ('basic', 'Professional'),
+        ('standard', 'Business'),
+        ('premium', 'Enterprise'),
+        ('enterprise', 'Enterprise'),
     ]
 
     name = models.CharField(max_length=100, unique=True , choices=PLAN_CHOICES, help_text="Name of the subscription plan")
@@ -39,6 +40,63 @@ class UserSubscription(models.Model):
     auto_renew = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
+
+    def change_plan(self, new_plan):
+        """Cambiar plan con validaciones de downgrade"""
+        old_plan = self.plan
+        
+        # Validar límites si es downgrade
+        if new_plan.max_employees < old_plan.max_employees:
+            self._validate_employee_limit(new_plan)
+        
+        if not new_plan.allows_multiple_branches and old_plan.allows_multiple_branches:
+            self._validate_branch_limit(new_plan)
+        
+        # Cambiar plan
+        self.plan = new_plan
+        self.save()
+        
+        # Crear audit log
+        SubscriptionAuditLog.objects.create(
+            user=self.user,
+            subscription=self,
+            action='plan_changed',
+            description=f'Plan cambiado de {old_plan.name} a {new_plan.name}'
+        )
+    
+    def _validate_employee_limit(self, new_plan):
+        """Validar que no exceda límite de empleados del nuevo plan"""
+        from apps.employees_api.models import Employee
+        
+        tenant = self.user.tenant
+        if not tenant:
+            return
+        
+        current_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
+        
+        if current_employees > new_plan.max_employees:
+            raise ValidationError(
+                f'No puede cambiar a este plan. Tiene {current_employees} empleados activos, '
+                f'pero el plan {new_plan.get_name_display()} permite máximo {new_plan.max_employees}. '
+                f'Desactive empleados antes de cambiar de plan.'
+            )
+    
+    def _validate_branch_limit(self, new_plan):
+        """Validar que no exceda límite de sucursales del nuevo plan"""
+        from apps.settings_api.models import Branch
+        
+        tenant = self.user.tenant
+        if not tenant:
+            return
+        
+        branch_count = Branch.objects.filter(tenant=tenant, is_active=True).count()
+        
+        if branch_count > 1:
+            raise ValidationError(
+                f'No puede cambiar a este plan. Tiene {branch_count} sucursales activas, '
+                f'pero el plan {new_plan.get_name_display()} solo permite 1 sucursal. '
+                f'Desactive sucursales antes de cambiar de plan.'
+            )
 
     def save(self, *args, **kwargs):
         # Handle reactivation prevention
@@ -71,6 +129,47 @@ class Subscription(models.Model):
 
     class Meta:
         unique_together = ('tenant', 'plan')
+
+    def change_plan(self, new_plan):
+        """Cambiar plan con validaciones de downgrade"""
+        old_plan = self.plan
+        
+        # Validar límites si es downgrade
+        if new_plan.max_employees < old_plan.max_employees:
+            self._validate_employee_limit(new_plan)
+        
+        if not new_plan.allows_multiple_branches and old_plan.allows_multiple_branches:
+            self._validate_branch_limit(new_plan)
+        
+        # Cambiar plan
+        self.plan = new_plan
+        self.save()
+    
+    def _validate_employee_limit(self, new_plan):
+        """Validar que no exceda límite de empleados del nuevo plan"""
+        from apps.employees_api.models import Employee
+        
+        current_employees = Employee.objects.filter(tenant=self.tenant, is_active=True).count()
+        
+        if current_employees > new_plan.max_employees:
+            raise ValidationError(
+                f'No puede cambiar a este plan. Tiene {current_employees} empleados activos, '
+                f'pero el plan {new_plan.get_name_display()} permite máximo {new_plan.max_employees}. '
+                f'Desactive empleados antes de cambiar de plan.'
+            )
+    
+    def _validate_branch_limit(self, new_plan):
+        """Validar que no exceda límite de sucursales del nuevo plan"""
+        from apps.settings_api.models import Branch
+        
+        branch_count = Branch.objects.filter(tenant=self.tenant, is_active=True).count()
+        
+        if branch_count > 1:
+            raise ValidationError(
+                f'No puede cambiar a este plan. Tiene {branch_count} sucursales activas, '
+                f'pero el plan {new_plan.get_name_display()} solo permite 1 sucursal. '
+                f'Desactive sucursales antes de cambiar de plan.'
+            )
 
     def __str__(self):
         return f"{self.tenant.name} - {self.plan.name} - {self.stripe_subscription_id}"

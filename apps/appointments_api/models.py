@@ -26,6 +26,10 @@ class Appointment(models.Model):
     date_time = models.DateTimeField()
 
     class Meta:
+        permissions = [
+            ('cancel_appointment', 'Can cancel appointments'),
+            ('complete_appointment', 'Can mark appointments as complete'),
+        ]
         verbose_name = 'Cita'
         verbose_name_plural = 'Citas'
         unique_together = ['stylist', 'date_time']

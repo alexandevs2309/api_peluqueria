@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status, views
 from rest_framework.decorators import action
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.core.permissions import IsSuperAdmin
+from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Invoice, PaymentAttempt
 from .serializers import InvoiceSerializer, PaymentAttemptSerializer
 from rest_framework.response import Response
@@ -13,7 +14,17 @@ from apps.tenants_api.models import Tenant
 
 class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = InvoiceSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'billing_api.view_invoice',
+        'retrieve': 'billing_api.view_invoice',
+        'create': 'billing_api.add_invoice',
+        'update': 'billing_api.change_invoice',
+        'partial_update': 'billing_api.change_invoice',
+        'destroy': 'billing_api.delete_invoice',
+        'mark_as_paid': 'billing_api.change_invoice',
+        'pay': 'billing_api.change_invoice',
+    }
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
@@ -171,7 +182,15 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
 class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = PaymentAttemptSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'billing_api.view_paymentattempt',
+        'retrieve': 'billing_api.view_paymentattempt',
+        'create': 'billing_api.add_paymentattempt',
+        'update': 'billing_api.change_paymentattempt',
+        'partial_update': 'billing_api.change_paymentattempt',
+        'destroy': 'billing_api.delete_paymentattempt',
+    }
 
     def get_queryset(self):
         if self.request.user.is_superuser:

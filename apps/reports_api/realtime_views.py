@@ -1,6 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from apps.core.tenant_permissions import TenantPermissionByAction
 from django.db.models import Count, Sum, F
 from django.utils import timezone
 from datetime import timedelta
@@ -9,8 +10,9 @@ from apps.appointments_api.models import Appointment
 from apps.clients_api.models import Client
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
 def realtime_metrics(request):
+    realtime_metrics.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """Métricas en tiempo real para dashboard"""
     tenant = request.user.tenant
     now = timezone.now()
@@ -84,8 +86,9 @@ def realtime_metrics(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
 def live_dashboard_data(request):
+    live_dashboard_data.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """Datos para dashboard en vivo"""
     tenant = request.user.tenant
     
@@ -146,8 +149,9 @@ def live_dashboard_data(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
 def performance_alerts(request):
+    performance_alerts.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """Alertas de rendimiento y oportunidades"""
     tenant = request.user.tenant
     alerts = []

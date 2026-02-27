@@ -13,7 +13,7 @@ class Product(models.Model):
     name = models.CharField(max_length=255)
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='products')
     sku = models.CharField(max_length=100)
-    barcode = models.CharField(max_length=100, blank=True, null=True)  # Código de barras
+    barcode = models.CharField(max_length=100, blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     stock = models.PositiveIntegerField(default=0)
     min_stock = models.PositiveIntegerField(default=1)
@@ -25,6 +25,9 @@ class Product(models.Model):
     image = models.ImageField(upload_to='', blank=True, null=True)
 
     class Meta:
+        permissions = [
+            ('adjust_stock', 'Can adjust product stock'),
+        ]
         constraints = [
             models.UniqueConstraint(fields=['sku', 'tenant'], name='unique_sku_per_tenant'),
             models.UniqueConstraint(fields=['barcode', 'tenant'], name='unique_barcode_per_tenant', condition=models.Q(barcode__isnull=False))
