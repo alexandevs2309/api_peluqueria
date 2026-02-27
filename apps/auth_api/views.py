@@ -43,6 +43,7 @@ from .authentication import DualJWTAuthentication
 
 
 from apps.roles_api.role_hierarchy import validate_role_assignment, get_allowed_roles, can_modify_user
+from apps.core.tenant_permissions import TenantPermissionByAction
 
 
 User = get_user_model()
@@ -690,7 +691,17 @@ class MFALoginVerifyView(APIView):
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.none()  # Seguro por defecto
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'auth_api.view_user',
+        'retrieve': 'auth_api.view_user',
+        'create': 'auth_api.add_user',
+        'update': 'auth_api.change_user',
+        'partial_update': 'auth_api.change_user',
+        'destroy': 'auth_api.delete_user',
+        'available_for_employee': 'auth_api.view_user',
+        'bulk_delete': 'auth_api.delete_user',
+    }
     serializer_class = UserListSerializer
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
     

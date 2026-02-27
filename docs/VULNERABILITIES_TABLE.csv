@@ -1,0 +1,49 @@
+Tipo,Componente,Archivo,Línea,Criticidad,Descripción,Impacto,Solución
+ViewSet,AppointmentViewSet,appointments_api/views.py,15,ALTA,Solo IsAuthenticated - 8 acciones sin protección,Cajera puede cancelar/completar citas,Agregar TenantPermissionByAction + permission_map
+ViewSet,ClientViewSet,clients_api/views.py,10,MEDIA,Solo IsAuthenticated - CRUD sin validación,Todos pueden modificar clientes,Agregar TenantPermissionByAction + permission_map
+ViewSet,ServiceViewSet,services_api/views.py,12,CRÍTICA,Solo IsAuthenticated - set_employee_price expuesto,Cajera puede cambiar precios,Agregar TenantPermissionByAction + permission_map
+ViewSet,ServiceCategoryViewSet,services_api/views.py,80,BAJA,Solo IsAuthenticated - CRUD sin validación,Todos pueden modificar categorías,Agregar TenantPermissionByAction + permission_map
+ViewSet,ProductViewSet,inventory_api/views.py,15,CRÍTICA,Solo IsAuthenticated - adjust_stock sin control,Cajera puede ajustar inventario,Agregar TenantPermissionByAction + permission_map
+ViewSet,AuditLogViewSet,audit_api/views.py,10,MEDIA,Solo IsAuthenticated - logs accesibles a todos,Exposición de auditoría,Agregar TenantPermissionByAction + permission_map
+ViewSet,InvoiceViewSet,billing_api/views.py,15,ALTA,Solo IsAuthenticated - mark_as_paid sin validación,Cajera puede marcar facturas pagadas,Agregar TenantPermissionByAction + permission_map
+ViewSet,PaymentAttemptViewSet,billing_api/views.py,120,MEDIA,Solo IsAuthenticated - intentos de pago visibles,Exposición de datos de pago,Agregar TenantPermissionByAction + permission_map
+ViewSet,NotificationListCreateView,notifications_api/views.py,8,BAJA,Solo IsAuthenticated - notificaciones sin filtro,Todos pueden crear notificaciones,Agregar TenantPermissionByAction + permission_map
+ViewSet,NotificationDetailView,notifications_api/views.py,20,BAJA,Solo IsAuthenticated - modificación sin validación,Todos pueden modificar notificaciones,Agregar TenantPermissionByAction + permission_map
+ViewSet,PaymentViewSet,payments_api/views.py,15,ALTA,Solo IsAuthenticated - pagos sin validación,Cajera puede procesar pagos,Agregar TenantPermissionByAction + permission_map
+ViewSet,PayrollViewSet,employees_api/earnings_views.py,10,CRÍTICA,Validación ad-hoc _require_admin_role,Inconsistente con RBAC,Reemplazar con TenantPermissionByAction
+ViewSet,SystemSettingsRetrieveUpdateView,settings_api/views.py,10,MEDIA,Solo IsAuthenticated - configuración global expuesta,Todos pueden ver configuración,Agregar TenantPermissionByAction + permission_map
+ViewSet,BarbershopSettingsViewSet,settings_api/barbershop_views.py,15,MEDIA,Solo IsAuthenticated - configuración barbería expuesta,Todos pueden modificar configuración,Agregar TenantPermissionByAction + permission_map
+APIView,AdminReportsView,reports_api/views.py,50,CRÍTICA,Solo IsAuthenticated - reportes admin sin protección,Cajera ve métricas administrativas,Agregar TenantPermissionByAction
+APIView,EmployeeReportView,reports_api/views.py,120,CRÍTICA,Solo IsAuthenticated - nómina expuesta,Cajera ve salarios de empleados,Agregar TenantPermissionByAction
+APIView,SalesReportView,reports_api/views.py,200,CRÍTICA,Solo IsAuthenticated - ventas detalladas expuestas,Cajera ve todas las ventas,Agregar TenantPermissionByAction
+APIView,KPIDashboardView,reports_api/views.py,280,CRÍTICA,Solo IsAuthenticated - KPIs financieros expuestos,Cajera ve KPIs del negocio,Agregar TenantPermissionByAction
+APIView,BillingStatsView,billing_api/views.py,180,ALTA,IsSuperAdmin pero sin tenant filtering,Cross-tenant data leak potencial,Agregar TenantPermissionByAction
+APIView,SaasMetricsView,settings_api/admin_views.py,15,CRÍTICA,IsSuperAdmin - métricas SaaS expuestas,Solo SuperAdmin debe acceder,Mantener IsSuperAdmin (correcto)
+APIView,SystemMonitorView,settings_api/admin_views.py,80,ALTA,IsSuperAdmin - monitoreo sistema expuesto,Solo SuperAdmin debe acceder,Mantener IsSuperAdmin (correcto)
+APIView,advanced_analytics,reports_api/analytics_views.py,15,CRÍTICA,IsAuthenticated + requires_feature - sin RBAC,Cajera con feature ve analytics,Agregar TenantPermissionByAction
+APIView,business_intelligence,reports_api/analytics_views.py,50,CRÍTICA,IsAuthenticated + requires_feature - sin RBAC,Cajera con feature ve BI,Agregar TenantPermissionByAction
+APIView,predictive_analytics,reports_api/analytics_views.py,80,CRÍTICA,IsAuthenticated + requires_feature - sin RBAC,Cajera con feature ve predicciones,Agregar TenantPermissionByAction
+APIView,realtime_metrics,reports_api/realtime_views.py,10,ALTA,Solo IsAuthenticated - métricas tiempo real expuestas,Cajera ve métricas en vivo,Agregar TenantPermissionByAction
+APIView,live_dashboard_data,reports_api/realtime_views.py,60,ALTA,Solo IsAuthenticated - dashboard expuesto,Cajera ve dashboard completo,Agregar TenantPermissionByAction
+APIView,performance_alerts,reports_api/realtime_views.py,120,MEDIA,Solo IsAuthenticated - alertas expuestas,Cajera ve alertas de rendimiento,Agregar TenantPermissionByAction
+Action,availability,appointments_api/views.py,N/A,MEDIA,Sin permission_map - fallback GET permite acceso,Cajera ve disponibilidad empleados,Agregar a permission_map
+Action,cancel,appointments_api/views.py,N/A,ALTA,Sin permission_map - fallback GET permite acceso,Cajera puede cancelar citas,Agregar a permission_map
+Action,complete,appointments_api/views.py,N/A,ALTA,Sin permission_map - fallback GET permite acceso,Cajera puede completar citas,Agregar a permission_map
+Action,today,appointments_api/views.py,N/A,BAJA,Sin permission_map - fallback GET permite acceso,Cajera ve citas del día,Agregar a permission_map
+Action,adjust_stock,inventory_api/views.py,N/A,CRÍTICA,Sin permission_map - fallback GET permite acceso,Cajera puede ajustar stock,Agregar a permission_map
+Action,set_employee_price,services_api/views.py,N/A,CRÍTICA,Sin permission_map - fallback GET permite acceso,Cajera puede cambiar precios,Agregar a permission_map
+Action,assign_employees,services_api/views.py,N/A,ALTA,Sin permission_map - fallback GET permite acceso,Cajera puede asignar empleados,Agregar a permission_map
+Action,mark_as_paid,billing_api/views.py,N/A,CRÍTICA,Sin permission_map - fallback GET permite acceso,Cajera puede marcar facturas pagadas,Agregar a permission_map
+Action,pay,billing_api/views.py,N/A,CRÍTICA,Sin permission_map - fallback GET permite acceso,Cajera puede procesar pagos,Agregar a permission_map
+Action,register_payment,employees_api/earnings_views.py,N/A,CRÍTICA,Sin permission_map - validación ad-hoc,Inconsistente con RBAC,Agregar a permission_map
+Action,approve_period,employees_api/earnings_views.py,N/A,CRÍTICA,Sin permission_map - validación ad-hoc,Inconsistente con RBAC,Agregar a permission_map
+Action,recalculate_period,employees_api/earnings_views.py,N/A,ALTA,Sin permission_map - validación ad-hoc,Inconsistente con RBAC,Agregar a permission_map
+Action,activate,tenants_api/views.py,N/A,ALTA,Sin permission_map - IsSuperAdmin correcto,Solo SuperAdmin debe acceder,Mantener IsSuperAdmin (correcto)
+Action,deactivate,tenants_api/views.py,N/A,ALTA,Sin permission_map - IsSuperAdmin correcto,Solo SuperAdmin debe acceder,Mantener IsSuperAdmin (correcto)
+Action,bulk_delete,tenants_api/views.py,N/A,CRÍTICA,Sin permission_map - IsSuperAdmin correcto,Solo SuperAdmin debe acceder,Mantener IsSuperAdmin (correcto)
+Fallback,TenantPermissionByAction,core/tenant_permissions.py,100,CRÍTICA,Fallback inseguro - permite GET para acciones no mapeadas,Acciones sin mapeo accesibles por GET,Cambiar a return False (deny by default)
+AdHoc,InvoiceViewSet.get_queryset,billing_api/views.py,25,MEDIA,Validación is_superuser en método,Lógica duplicada,Eliminar - usar TenantPermissionByAction
+AdHoc,PayrollViewSet._require_admin_role,employees_api/earnings_views.py,15,ALTA,Validación roles.filter en método,Lógica duplicada,Eliminar - usar TenantPermissionByAction
+AdHoc,NotificationListCreateView.get_queryset,notifications_api/views.py,12,MEDIA,Validación roles.filter en método,Lógica duplicada,Eliminar - usar TenantPermissionByAction
+AdHoc,TenantViewSet.get_queryset,tenants_api/views.py,30,MEDIA,Validación is_superuser en método,Lógica duplicada,Eliminar - usar TenantPermissionByAction
+AdHoc,AdminUserManagementViewSet.get_queryset,tenants_api/admin_views.py,20,MEDIA,Validación roles.filter en método,Lógica duplicada,Eliminar - usar TenantPermissionByAction

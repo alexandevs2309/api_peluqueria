@@ -72,21 +72,23 @@ class AuditLoggingMixin:
         return source_map.get(app_label, 'SYSTEM')
     
     def perform_create(self, serializer):
-        """Override to add audit logging"""
-        instance = serializer.save()
+        """Preserve parent create hooks (tenant/user assignment) and then audit."""
+        super().perform_create(serializer)
+        instance = serializer.instance
         self.log_action('create', instance, self.request.user, self.request)
         return instance
     
     def perform_update(self, serializer):
-        """Override to add audit logging"""
-        instance = serializer.save()
+        """Preserve parent update hooks and then audit."""
+        super().perform_update(serializer)
+        instance = serializer.instance
         self.log_action('update', instance, self.request.user, self.request)
         return instance
     
     def perform_destroy(self, instance):
-        """Override to add audit logging"""
+        """Preserve parent destroy hooks and then audit."""
         self.log_action('destroy', instance, self.request.user, self.request)
-        instance.delete()
+        super().perform_destroy(instance)
     
     def retrieve(self, request, *args, **kwargs):
         """Override to add view logging"""

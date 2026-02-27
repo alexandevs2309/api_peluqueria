@@ -1,6 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from apps.core.tenant_permissions import TenantPermissionByAction
 from django.db.models import Count, Sum, Avg, Q, F
 from django.utils import timezone
 from datetime import datetime, timedelta, date
@@ -9,10 +10,13 @@ from apps.employees_api.models import Employee
 from apps.pos_api.models import Sale
 from apps.appointments_api.models import Appointment
 from apps.services_api.models import Service
+from apps.subscriptions_api.permissions import requires_feature
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
+@requires_feature('advanced_reports')
 def advanced_analytics(request):
+    advanced_analytics.permission_map = {'get': 'reports_api.view_advanced_analytics'}
     """Analytics avanzados con métricas de negocio"""
     tenant = request.user.tenant
     period = request.GET.get('period', '30')  # días
@@ -42,8 +46,10 @@ def advanced_analytics(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
+@requires_feature('advanced_reports')
 def business_intelligence(request):
+    business_intelligence.permission_map = {'get': 'reports_api.view_advanced_analytics'}
     """Business Intelligence con KPIs avanzados"""
     tenant = request.user.tenant
     
@@ -70,8 +76,10 @@ def business_intelligence(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
+@requires_feature('advanced_reports')
 def predictive_analytics(request):
+    predictive_analytics.permission_map = {'get': 'reports_api.view_advanced_analytics'}
     """Análisis predictivo básico"""
     tenant = request.user.tenant
     

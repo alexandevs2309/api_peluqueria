@@ -94,6 +94,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',
     'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
+    'apps.subscriptions_api.middleware.APIRateLimitMiddleware',  # Rate limiting por plan
     'apps.utils.middleware.StructuredLoggingMiddleware',  # Logging con tenant_id/user_id
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',

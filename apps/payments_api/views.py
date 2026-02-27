@@ -5,7 +5,9 @@ from rest_framework.permissions import IsAuthenticated
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.http import HttpResponse
-import json
+from django.conf import settings
+
+import stripe
 
 from .models import Payment, PaymentProvider
 from .services import StripeService, OnboardingService, NotificationService
@@ -81,12 +83,13 @@ class StripeWebhookView(View):
         try:
             payload = request.body
             sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
+            endpoint_secret = getattr(settings, 'STRIPE_WEBHOOK_SECRET', None)
+
+            if not sig_header or not endpoint_secret:
+                return HttpResponse(status=400)
             
-            # Verificar webhook (requiere configuración)
-            # event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
-            
-            # Por ahora, procesar directamente
-            event_data = json.loads(payload)
+            event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+            event_data = event
             
             if event_data['type'] == 'payment_intent.succeeded':
                 payment_intent = event_data['data']['object']
@@ -106,6 +109,8 @@ class StripeWebhookView(View):
                     pass
             
             return HttpResponse(status=200)
-            
+
+        except (ValueError, stripe.error.SignatureVerificationError):
+            return HttpResponse(status=400)
         except Exception as e:
             return HttpResponse(status=400)

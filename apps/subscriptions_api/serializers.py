@@ -6,15 +6,16 @@ from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, Su
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     features_list = serializers.SerializerMethodField()
+    display_name = serializers.CharField(source='get_name_display', read_only=True)
     
     class Meta:
         model = SubscriptionPlan
         fields = [
-            'id', 'name', 'description', 'price', 'duration_month', 'is_active',
+            'id', 'name', 'display_name', 'description', 'price', 'duration_month', 'is_active',
             'max_employees', 'max_users', 'allows_multiple_branches', 'features',
             'features_list', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'name', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'name', 'display_name', 'created_at', 'updated_at']
     
     def get_features_list(self, obj):
         """Convert features dict to list for frontend"""

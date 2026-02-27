@@ -1,13 +1,14 @@
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import views, status
+from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
 from datetime import datetime, timedelta
 from apps.tenants_api.models import Tenant
 from apps.billing_api.models import Invoice
 from apps.auth_api.models import User
+from apps.subscriptions_api.permissions import requires_feature
 from .pagination import ReportsPagination
 
 class IsSuperAdmin:
@@ -19,8 +20,10 @@ class IsSuperAdmin:
         )
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
+@requires_feature('basic_reports')
 def employee_report(request):
+    employee_report.permission_map = {'get': 'reports_api.view_employee_reports'}
     """Reporte básico de empleados"""
     from apps.employees_api.models import Employee
     from apps.pos_api.models import Sale
@@ -63,8 +66,10 @@ def employee_report(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
+@requires_feature('basic_reports')
 def sales_report(request):
+    sales_report.permission_map = {'get': 'reports_api.view_sales_reports'}
     """Reporte básico de ventas"""
     from apps.pos_api.models import Sale, SaleDetail
     from django.utils import timezone
@@ -120,7 +125,7 @@ def sales_report(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('reports_api.view_kpi_dashboard')])
 def dashboard_stats(request):
     """Estadísticas para dashboard"""
     from django.core.cache import cache
@@ -153,7 +158,7 @@ def dashboard_stats(request):
     return Response(data)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
 def reports_by_type(request):
     """Reportes por tipo (appointments, sales, etc.)"""
     report_type = request.GET.get('type', 'general')
@@ -208,7 +213,8 @@ def reports_by_type(request):
 
 class AdminReportsView(views.APIView):
     """Reportes financieros para SuperAdmin"""
-    permission_classes = [IsSuperAdmin]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {'get': 'reports_api.view_financial_reports'}
     
     def get(self, request):
         try:
@@ -298,7 +304,7 @@ class AdminReportsView(views.APIView):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('reports_api.view_employee_reports')])
 def appointments_calendar_data(request):
     """Datos para calendario de citas con paginación"""
     from apps.appointments_api.models import Appointment
@@ -355,8 +361,9 @@ def appointments_calendar_data(request):
     return Response(events)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([TenantPermissionByAction])
 def kpi_dashboard(request):
+    kpi_dashboard.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """KPIs principales para dashboard"""
     from django.core.cache import cache
     from apps.clients_api.models import Client
@@ -431,7 +438,7 @@ def kpi_dashboard(request):
     return Response(data)
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('reports_api.view_kpi_dashboard')])
 def services_performance(request):
     """Rendimiento de servicios con paginación"""
     from apps.pos_api.models import SaleDetail
@@ -468,7 +475,7 @@ def services_performance(request):
     })
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated])
+@permission_classes([tenant_permission('reports_api.view_kpi_dashboard')])
 def client_analytics(request):
     """Análisis de clientes"""
     from apps.clients_api.models import Client

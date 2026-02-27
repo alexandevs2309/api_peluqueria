@@ -4,18 +4,39 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
+from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Service, ServiceCategory
 from .serializers import ServiceSerializer, ServiceCategorySerializer
 
 class ServiceCategoryViewSet(TenantScopedViewSet):
     queryset = ServiceCategory.objects.filter(is_active=True)
     serializer_class = ServiceCategorySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'services_api.view_servicecategory',
+        'retrieve': 'services_api.view_servicecategory',
+        'create': 'services_api.add_servicecategory',
+        'update': 'services_api.change_servicecategory',
+        'partial_update': 'services_api.change_servicecategory',
+        'destroy': 'services_api.delete_servicecategory',
+    }
 
 class ServiceViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Service.objects.all()
     serializer_class = ServiceSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'services_api.view_service',
+        'retrieve': 'services_api.view_service',
+        'create': 'services_api.add_service',
+        'update': 'services_api.change_service',
+        'partial_update': 'services_api.change_service',
+        'destroy': 'services_api.delete_service',
+        'categories': 'services_api.view_service',
+        'employees': 'services_api.view_service',
+        'assign_employees': 'services_api.assign_employees',
+        'set_employee_price': 'services_api.set_employee_price',
+    }
 
     filter_backends = [
         DjangoFilterBackend,

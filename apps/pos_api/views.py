@@ -1,18 +1,73 @@
 from rest_framework import viewsets, permissions, status, serializers
 import logging
 logger = logging.getLogger(__name__)
-from rest_framework.decorators import action, api_view
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from django.utils import timezone
+from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
 from django.db.models import Sum, Q
 from decimal import Decimal, InvalidOperation
+from apps.core.permissions import IsSuperAdmin
+from apps.settings_api.barbershop_models import BarbershopSettings
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.none()  # Seguro por defecto
     serializer_class = SaleSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    
+    # Mapeo de permisos por acción
+    permission_map = {
+        'list': 'pos_api.view_sale',
+        'retrieve': 'pos_api.view_sale',
+        'create': 'pos_api.add_sale',
+        'update': 'pos_api.change_sale',
+        'partial_update': 'pos_api.change_sale',
+        'destroy': 'pos_api.delete_sale',
+        'refund': 'pos_api.refund_sale',
+        'open_register': 'pos_api.add_sale',
+        'current_register': 'pos_api.view_sale',
+        'print_receipt': 'pos_api.view_sale',
+        'search_sales': 'pos_api.view_sale',
+        'validate_stock': 'pos_api.add_sale',
+    }
+
+    def _get_business_info(self, request):
+        """
+        Unificar datos de negocio para recibos usando BarbershopSettings + PosConfiguration.
+        """
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        settings = BarbershopSettings.objects.filter(tenant=tenant).first() if tenant else None
+
+        pos = PosConfiguration.objects.filter(user=request.user).first()
+        if not pos and tenant:
+            pos = PosConfiguration.objects.filter(user__tenant=tenant).first()
+
+        name = ''
+        address = ''
+        phone = ''
+        email = ''
+
+        if settings:
+            name = settings.name or ''
+            contact = settings.contact or {}
+            address = contact.get('address', '') or ''
+            phone = contact.get('phone', '') or ''
+            email = contact.get('email', '') or ''
+
+        if pos:
+            name = pos.business_name or name
+            address = pos.address or address
+            phone = pos.phone or phone
+            email = pos.email or email
+
+        return {
+            'name': name or 'Barberia',
+            'address': address or 'Direccion no configurada',
+            'phone': phone or 'Telefono no configurado',
+            'email': email or ''
+        }
     
     def _create_employee_earning(self, sale, employee_user):
         """Crea ganancia automática para el empleado - DEPRECATED"""
@@ -495,12 +550,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         receipt_data = {
             'receipt': ReceiptSerializer(receipt).data,
             'sale': SaleSerializer(sale).data,
-            'business_info': {
-                'name': 'Barbería App',
-                'address': 'Dirección de la barbería',
-                'phone': 'Teléfono',
-                'email': 'email@barberia.com'
-            }
+            'business_info': self._get_business_info(request)
         }
         
         return Response(receipt_data)
@@ -608,7 +658,18 @@ class SaleViewSet(viewsets.ModelViewSet):
 class CashRegisterViewSet(viewsets.ModelViewSet):
     queryset = CashRegister.objects.none()  # Seguro por defecto
     serializer_class = CashRegisterSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'pos_api.view_cashregister',
+        'retrieve': 'pos_api.view_cashregister',
+        'create': 'pos_api.add_cashregister',
+        'update': 'pos_api.change_cashregister',
+        'partial_update': 'pos_api.change_cashregister',
+        'destroy': 'pos_api.delete_cashregister',
+        'current': 'pos_api.view_cashregister',
+        'close': 'pos_api.change_cashregister',
+        'cash_count': 'pos_api.change_cashregister',
+    }
     
     def get_queryset(self):
         user = self.request.user
@@ -708,7 +769,16 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
 class PromotionViewSet(viewsets.ModelViewSet):
     queryset = Promotion.objects.all()
     serializer_class = PromotionSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'pos_api.view_promotion',
+        'retrieve': 'pos_api.view_promotion',
+        'create': 'pos_api.add_promotion',
+        'update': 'pos_api.change_promotion',
+        'partial_update': 'pos_api.change_promotion',
+        'destroy': 'pos_api.delete_promotion',
+        'apply_promotion': 'pos_api.view_promotion',
+    }
     
     def get_queryset(self):
         return Promotion.objects.filter(is_active=True)
@@ -744,7 +814,15 @@ class PromotionViewSet(viewsets.ModelViewSet):
 class PosConfigurationViewSet(viewsets.ModelViewSet):
     queryset = PosConfiguration.objects.all()
     serializer_class = PosConfigurationSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'pos_api.view_posconfiguration',
+        'retrieve': 'pos_api.view_posconfiguration',
+        'create': 'pos_api.add_posconfiguration',
+        'update': 'pos_api.change_posconfiguration',
+        'partial_update': 'pos_api.change_posconfiguration',
+        'destroy': 'pos_api.delete_posconfiguration',
+    }
     
     def get_queryset(self):
         return PosConfiguration.objects.filter(user=self.request.user)
@@ -1001,6 +1079,7 @@ def pos_categories(request):
         ))
 
 @api_view(['POST'])
+@permission_classes([IsSuperAdmin])
 def debug_sale_data(request):
     """Endpoint temporal para debug de datos de venta"""
     print(f"DEBUG ENDPOINT: Datos recibidos: {request.data}")

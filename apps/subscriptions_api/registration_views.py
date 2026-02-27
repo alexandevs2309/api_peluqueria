@@ -84,106 +84,98 @@ def register_with_plan(request):
                     'error': f'Plan no válido: {data["planType"]}'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # 2. Crear usuario SIN rol ni tenant inicialmente
+            # 2. Generar contraseña
             password = generate_random_password()
             print(f"Generando contraseña aleatoria: {password}")
             
-            print(f"Creando usuario: {data['email']}")
-            
-            # Crear usuario básico sin rol ni tenant
-            user = User.objects.create_user(
+            # 3. Crear usuario temporal como superuser (para evitar validación de tenant)
+            print(f"Creando usuario temporal: {data['email']}")
+            user = User(
                 email=data['email'],
-                password=password,
                 full_name=data['fullName'],
                 phone=data.get('phone', ''),
-                is_active=True
-                # NO asignar role ni tenant aquí
+                is_active=True,
+                is_superuser=True,
+                is_staff=True,
+                tenant=None,
+                role=None
             )
-            print(f"Usuario creado: {user.id}")
+            user.set_password(password)
+            user.save(skip_validation=True)
+            print(f"Usuario temporal creado: {user.id}")
             
-            # 3. Programar creación de tenant, rol y suscripción después del commit
-            def create_tenant_and_subscription():
-                try:
-                    # Crear tenant
-                    subdomain = generate_unique_subdomain(data['businessName'], user.id)
-                    print(f"Creando tenant con subdomain: {subdomain}")
-                    tenant = Tenant.objects.create(
-                        name=data['businessName'],
-                        subdomain=subdomain,
-                        owner=user,
-                        contact_email=data['email'],
-                        contact_phone=data.get('phone', ''),
-                        address=data.get('address', ''),
-                        subscription_plan=subscription_plan,
-                        is_active=True
-                    )
-                    print(f"Tenant creado: {tenant.id}")
-                    
-                    # Asignar tenant y rol al usuario
-                    User.objects.filter(id=user.id).update(
-                        tenant=tenant,
-                        role='Client-Admin'
-                    )
-                    print(f"Usuario actualizado con tenant y rol Client-Admin")
-                    
-                    # Crear suscripción del usuario con trial
-                    trial_end = timezone.now() + timezone.timedelta(days=7)
-                    user_subscription = UserSubscription.objects.create(
-                        user=user,
-                        plan=subscription_plan,
-                        start_date=timezone.now(),
-                        end_date=trial_end,
-                        is_active=True,
-                        auto_renew=False
-                    )
-                    print(f"Suscripción trial creada: {user_subscription.id} hasta {trial_end}")
+            # 4. Crear tenant con owner
+            subdomain = generate_unique_subdomain(data['businessName'], user.id)
+            print(f"Creando tenant con subdomain: {subdomain}")
+            tenant = Tenant.objects.create(
+                name=data['businessName'],
+                subdomain=subdomain,
+                owner=user,
+                contact_email=data['email'],
+                contact_phone=data.get('phone', ''),
+                address=data.get('address', ''),
+                subscription_plan=subscription_plan,
+                is_active=True
+            )
+            print(f"Tenant creado: {tenant.id}")
+            
+            # 5. Actualizar usuario a Client-Admin con tenant
+            user.is_superuser = False
+            user.tenant = tenant
+            user.role = 'Client-Admin'
+            user.save(skip_validation=True)
+            print(f"Usuario actualizado a Client-Admin con tenant")
+            
+            # 6. Crear suscripción del usuario con trial
+            trial_end = timezone.now() + timezone.timedelta(days=7)
+            user_subscription = UserSubscription.objects.create(
+                user=user,
+                plan=subscription_plan,
+                start_date=timezone.now(),
+                end_date=trial_end,
+                is_active=True,
+                auto_renew=False
+            )
+            print(f"Suscripción trial creada: {user_subscription.id} hasta {trial_end}")
 
-                    # Crear factura inicial (pendiente para después del trial)
-                    from apps.billing_api.models import Invoice
-                    invoice = Invoice.objects.create(
-                        user=user,
-                        subscription=user_subscription,
-                        amount=subscription_plan.price,
-                        description=f"{subscription_plan.get_name_display()} - Primer mes",
-                        due_date=trial_end,
-                        status='pending'
-                    )
-                    print(f"Factura creada: #{invoice.id} por ${invoice.amount} vence {trial_end}")
+            # 7. Crear factura inicial (pendiente para después del trial)
+            from apps.billing_api.models import Invoice
+            invoice = Invoice.objects.create(
+                user=user,
+                subscription=user_subscription,
+                amount=subscription_plan.price,
+                description=f"{subscription_plan.get_name_display()} - Primer mes",
+                due_date=trial_end,
+                status='pending'
+            )
+            print(f"Factura creada: #{invoice.id} por ${invoice.amount} vence {trial_end}")
 
-                    # Crear sucursal principal por defecto
-                    default_branch = Branch.objects.create(
-                        tenant=tenant,
-                        name='Sucursal Principal',
-                        address=data.get('address', 'Dirección por defecto'),
-                        is_main=True,
-                        is_active=True
-                    )
-                    print(f"Sucursal creada correctamente: {default_branch.id}")
-                    
-                    # Crear configuración inicial para esa sucursal
-                    Setting.objects.create(
-                        branch=default_branch,
-                        business_name=tenant.name,
-                        business_email=tenant.contact_email,
-                        phone_number=tenant.contact_phone,
-                        address=tenant.address,
-                        currency='USD',
-                        timezone='America/Santo_Domingo'
-                    )
-                    print(f'Configuración por defecto creada para sucursal: {default_branch.id}')
-                    
-                    # Enviar email de bienvenida
-                    send_welcome_email(user, password, tenant)
-                    
-                except Exception as e:
-                    print(f"Error en post-commit setup: {str(e)}")
-                    import traceback
-                    traceback.print_exc()
+            # 8. Crear sucursal principal por defecto
+            default_branch = Branch.objects.create(
+                tenant=tenant,
+                name='Sucursal Principal',
+                address=data.get('address', 'Dirección por defecto'),
+                is_main=True,
+                is_active=True
+            )
+            print(f"Sucursal creada correctamente: {default_branch.id}")
             
-            # Programar ejecución después del commit
-            transaction.on_commit(create_tenant_and_subscription)
+            # 9. Crear configuración inicial para esa sucursal
+            Setting.objects.create(
+                branch=default_branch,
+                business_name=tenant.name,
+                business_email=tenant.contact_email,
+                phone_number=tenant.contact_phone,
+                address=tenant.address,
+                currency='USD',
+                timezone='America/Santo_Domingo'
+            )
+            print(f'Configuración por defecto creada para sucursal: {default_branch.id}')
             
-            # Obtener datos para respuesta (tenant se creará después del commit)
+            # 10. Enviar email de bienvenida
+            send_welcome_email(user, password, tenant)
+            
+            # Obtener datos para respuesta
             response_data = {
                 'success': True,
                 'message': 'Cuenta creada exitosamente',

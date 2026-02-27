@@ -73,6 +73,10 @@ class Sale(models.Model):
             models.Index(fields=['date_time', 'employee']),
             models.Index(fields=['status']),
         ]
+        permissions = [
+            ('refund_sale', 'Can refund sales'),
+            ('view_financial_reports', 'Can view financial reports'),
+        ]
     
     def save(self, *args, **kwargs):
         from django.core.exceptions import ValidationError

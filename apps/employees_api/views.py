@@ -1,29 +1,42 @@
 from rest_framework import viewsets, status
-from rest_framework.permissions import IsAuthenticated, IsAdminUser
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
-from apps.roles_api.permissions import IsActiveAndRolePermission, role_permission_for
+from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.subscriptions_api.utils import get_user_active_subscription
 from apps.settings_api.utils import validate_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule
 from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
-from .permissions import IsAdminOrOwnStylist, role_permission_for
 
 class EmployeeViewSet(TenantScopedViewSet):
     queryset = Employee.objects.select_related('user', 'tenant').all()
     serializer_class = EmployeeSerializer
-  
-    def get_permissions(self):
-        if self.action in ['create', 'update', 'partial_update', 'destroy']:
-            permission_classes = [IsAuthenticated]
-        else:
-            permission_classes = [IsAuthenticated]
-        return [permission() for permission in permission_classes]
+    permission_classes = [TenantPermissionByAction]
+    
+    # Mapeo de permisos por acción
+    permission_map = {
+        'list': 'employees_api.view_employee',
+        'retrieve': 'employees_api.view_employee',
+        'create': 'employees_api.add_employee',
+        'update': 'employees_api.change_employee',
+        'partial_update': 'employees_api.change_employee',
+        'destroy': 'employees_api.delete_employee',
+        'assign_service': 'employees_api.change_employee',
+        'assign_services': 'employees_api.change_employee',
+        'services': 'employees_api.view_employee',
+        'schedule': 'employees_api.view_employee',
+        'set_schedule': 'employees_api.change_employee',
+        'stats': 'employees_api.view_employee',
+        'payroll_config': 'employees_api.view_employee_payroll',
+        'payment_history': 'employees_api.view_employee_payroll',
+        'payment_stats': 'employees_api.view_employee_payroll',
+        'loans': 'employees_api.manage_employee_loans',
+        'loans_summary': 'employees_api.view_employee_payroll',
+    }
 
     def perform_create(self, serializer):
         """Override para validar límite de empleados según plan"""
@@ -55,7 +68,7 @@ class EmployeeViewSet(TenantScopedViewSet):
             
         serializer.save(tenant=tenant)
 
-    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated, role_permission_for(['Admin'])])
+    @action(detail=True, methods=['post'])
     def assign_service(self, request, pk=None):
         employee = self.get_object()
         serializer = EmployeeServiceSerializer(data=request.data)
@@ -436,12 +449,38 @@ class EmployeeViewSet(TenantScopedViewSet):
 class WorkScheduleViewSet(viewsets.ModelViewSet):
     queryset = WorkSchedule.objects.all()
     serializer_class = WorkScheduleSerializer
-    permission_classes = [IsAdminOrOwnStylist]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'employees_api.view_employee',
+        'retrieve': 'employees_api.view_employee',
+        'create': 'employees_api.change_employee',
+        'update': 'employees_api.change_employee',
+        'partial_update': 'employees_api.change_employee',
+        'destroy': 'employees_api.change_employee',
+    }
 
     def get_queryset(self):
-        if UserRole.objects.filter(user=self.request.user, role__name='Admin').exists():
+        user = self.request.user
+
+        if user.is_superuser:
             return WorkSchedule.objects.all()
-        return WorkSchedule.objects.filter(employee__user=self.request.user)
+
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return WorkSchedule.objects.none()
+
+        is_tenant_admin = UserRole.objects.filter(
+            user=user,
+            tenant=self.request.tenant,
+            role__name__in=['Admin', 'Client-Admin']
+        ).exists()
+
+        if is_tenant_admin:
+            return WorkSchedule.objects.filter(employee__tenant=self.request.tenant)
+
+        return WorkSchedule.objects.filter(
+            employee__tenant=self.request.tenant,
+            employee__user=user
+        )
 
     def perform_create(self, serializer):
         employee = Employee.objects.get(user=self.request.user)

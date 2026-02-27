@@ -251,3 +251,14 @@ Alexander del Rosario
 
 
 ⭐ Star this repository if you find it useful!
+
+
+## 💰 Subscription Plans
+
+| Plan | Price | Max Employees | Max Users | Features |
+|------|-------|---------------|-----------|----------|
+| **Free** | $0 (7 days trial) | 2 | 3 | Appointments only |
+| **Basic** | $29.99/month | 5 | 10 | + Basic reports |
+| **Standard** | $49.99/month | 10 | 20 | + Inventory |
+| **Premium** | $79.99/month | 25 | 50 | + Advanced reports + Multi-location + Custom branding |
+| **Enterprise** | $149.99/month | Unlimited | Unlimited | + API access + Priority support |

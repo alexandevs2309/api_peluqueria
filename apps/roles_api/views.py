@@ -1,5 +1,6 @@
 from rest_framework import viewsets,filters
 from rest_framework.permissions import IsAuthenticated
+from apps.core.permissions import IsSuperAdmin
 from .permissions import role_permission_for
 from .models import Role
 from .serializers import PermissionSerializer, RoleSerializer
@@ -22,7 +23,7 @@ from .utils import log_admin_action
 class RoleViewSet(viewsets.ModelViewSet):
     queryset = Role.objects.all().order_by('id')
     serializer_class = RoleSerializer
-    permission_classes = [IsAuthenticated]  # Temporal: sin restricción de rol
+    permission_classes = [IsSuperAdmin]  # Solo SuperAdmin puede gestionar roles
 
     filter_backends = [DjangoFilterBackend , DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['name', 'permissions__codename','scope', 'module']

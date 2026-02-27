@@ -6,6 +6,8 @@ from django.db.models import Q
 from django.utils import timezone
 from .models import AuditLog
 from .serializers import AuditLogSerializer, AuditLogCreateSerializer
+from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.core.permissions import IsSuperAdmin
 
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
@@ -13,6 +15,14 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     queryset = AuditLog.objects.all().select_related('user', 'content_type')
     serializer_class = AuditLogSerializer
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'audit_api.view_auditlog',
+        'retrieve': 'audit_api.view_auditlog',
+        'summary': 'audit_api.view_auditlog',
+        'actions': 'audit_api.view_auditlog',
+        'sources': 'audit_api.view_auditlog',
+    }
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['action', 'source', 'user', 'content_type']
     search_fields = ['description', 'user__email', 'user__first_name', 'user__last_name']
@@ -22,6 +32,11 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     def get_queryset(self):
         """Permite filtrar por rango de fechas y otros parámetros"""
         queryset = super().get_queryset()
+
+        if not self.request.user.is_superuser:
+            if not hasattr(self.request, 'tenant') or not self.request.tenant:
+                return AuditLog.objects.none()
+            queryset = queryset.filter(user__tenant=self.request.tenant)
         
         # Filtrar por fecha desde
         date_from = self.request.query_params.get('date_from')
@@ -97,6 +112,8 @@ class AuditLogCreateView(viewsets.ViewSet):
     (Principalmente para uso interno durante la migración)
     """
     
+    permission_classes = [IsSuperAdmin]
+
     def create(self, request):
         serializer = AuditLogCreateSerializer(data=request.data)
         if serializer.is_valid():

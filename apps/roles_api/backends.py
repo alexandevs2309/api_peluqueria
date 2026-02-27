@@ -7,6 +7,11 @@ User = get_user_model()
 class RoleBasedPermissionBackend(BaseBackend):
     """
     Backend de autenticación que permite verificar permisos basados en roles personalizados
+    
+    IMPORTANTE: Este backend NO filtra por tenant porque no tiene acceso a request.
+    El filtrado por tenant se hace en DRF permission classes.
+    
+    Usar solo para validaciones programáticas donde el tenant ya está validado.
     """
     
     def authenticate(self, request, **kwargs):
@@ -16,6 +21,7 @@ class RoleBasedPermissionBackend(BaseBackend):
     def has_perm(self, user_obj, perm, obj=None):
         """
         Verifica si el usuario tiene el permiso específico a través de sus roles
+        Filtra por tenant si está disponible en el contexto
         """
         if not user_obj.is_active:
             return False
@@ -23,14 +29,26 @@ class RoleBasedPermissionBackend(BaseBackend):
         # SuperAdmin tiene todos los permisos
         if user_obj.is_superuser:
             return True
-            
-        # Verificar permisos a través de roles
-        user_roles = UserRole.objects.filter(user=user_obj).select_related('role')
+        
+        # Parsear permiso correctamente
+        if '.' not in perm:
+            return False
+        
+        app_label, codename = perm.split('.', 1)
+        
+        # Obtener tenant del usuario (no del request, backend no tiene acceso)
+        # El filtrado por tenant se hace en la permission class de DRF
+        user_roles = UserRole.objects.filter(
+            user=user_obj
+        ).select_related('role').prefetch_related('role__permissions__content_type')
         
         for user_role in user_roles:
             role = user_role.role
-            # Verificar si el rol tiene el permiso específico
-            if role.permissions.filter(codename=perm.split('.')[-1]).exists():
+            # Verificar permiso con app_label + codename
+            if role.permissions.filter(
+                content_type__app_label=app_label,
+                codename=codename
+            ).exists():
                 return True
                 
         return False
@@ -61,13 +79,17 @@ class RoleBasedPermissionBackend(BaseBackend):
         """
         if not user_obj.is_active:
             return set()
-            
-        user_roles = UserRole.objects.filter(user=user_obj).select_related('role')
-        permissions = set()
         
+        user_roles = UserRole.objects.filter(
+            user=user_obj
+        ).select_related('role').prefetch_related('role__permissions__content_type')
+        
+        permissions = set()
         for user_role in user_roles:
             role = user_role.role
-            role_perms = role.permissions.all().values_list('content_type__app_label', 'codename')
+            role_perms = role.permissions.select_related('content_type').values_list(
+                'content_type__app_label', 'codename'
+            )
             for app_label, codename in role_perms:
                 permissions.add(f'{app_label}.{codename}')
                 

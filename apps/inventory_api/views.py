@@ -1,11 +1,12 @@
 from rest_framework import viewsets, permissions
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet, TenantScopedReadOnlyViewSet
-from apps.roles_api.permissions import role_permission_for
+from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
+from apps.subscriptions_api.permissions import HasFeaturePermission
 from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action, api_view
+from rest_framework.decorators import action, api_view, permission_classes
 from django.db.models import Q
 from rest_framework.response import Response
 from django.db.models import F
@@ -15,7 +16,20 @@ from rest_framework import status
 class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'inventory'
+    permission_map = {
+        'list': 'inventory_api.view_product',
+        'retrieve': 'inventory_api.view_product',
+        'create': 'inventory_api.add_product',
+        'update': 'inventory_api.change_product',
+        'partial_update': 'inventory_api.change_product',
+        'destroy': 'inventory_api.delete_product',
+        'adjust_stock': 'inventory_api.adjust_stock',
+        'low_stock': 'inventory_api.view_product',
+        'stock_report': 'inventory_api.view_product',
+        'search_by_barcode': 'inventory_api.view_product',
+    }
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -108,6 +122,7 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
             )
 
 @api_view(['GET'])
+@permission_classes([tenant_permission('inventory_api.view_product')])
 def low_stock_alerts(request):
     """API endpoint para alertas de stock bajo"""
     products = Product.objects.filter(
@@ -124,12 +139,14 @@ def low_stock_alerts(request):
 class SupplierViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HasFeaturePermission]
+    required_feature = 'inventory'
 
 class StockMovementViewSet(TenantScopedReadOnlyViewSet):
     queryset = StockMovement.objects.all()
     serializer_class = StockMovementSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, HasFeaturePermission]
+    required_feature = 'inventory'
     
     def get_queryset(self):
         """Override para filtrar por product__tenant"""

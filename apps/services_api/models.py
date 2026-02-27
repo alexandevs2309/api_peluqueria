@@ -47,9 +47,13 @@ class Service(models.Model):
 
 
     class Meta:
+        permissions = [
+            ('set_employee_price', 'Can set employee-specific prices'),
+            ('assign_employees', 'Can assign employees to services'),
+        ]
         verbose_name = 'Servicio'
         verbose_name_plural = 'Servicios'
-        unique_together = ('name', 'tenant')  # Nombre único por tenant
+        unique_together = ('name', 'tenant')
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['is_active']),
