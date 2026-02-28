@@ -4,12 +4,14 @@ except ImportError:
     stripe = None
 
 from django.conf import settings
+import logging
 from .models import Payment, PaymentProvider
 from apps.subscriptions_api.models import UserSubscription, SubscriptionPlan
 from apps.tenants_api.models import Tenant
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 class StripeService:
     def __init__(self):
@@ -134,16 +136,16 @@ class NotificationService:
     def send_welcome_email(user, tenant):
         """Enviar email de bienvenida"""
         # TODO: Implementar con servicio de email
-        print(f"Welcome email sent to {user.email} for tenant {tenant.name}")
+        logger.info("Welcome email queued user_id=%s tenant_id=%s", user.id, tenant.id)
     
     @staticmethod
     def send_payment_confirmation(user, payment):
         """Enviar confirmación de pago"""
         # TODO: Implementar con servicio de email
-        print(f"Payment confirmation sent to {user.email} for ${payment.amount}")
+        logger.info("Payment confirmation queued user_id=%s payment_id=%s", user.id, payment.id)
     
     @staticmethod
     def send_subscription_expiry_warning(user, subscription):
         """Enviar advertencia de expiración"""
         # TODO: Implementar con servicio de email
-        print(f"Subscription expiry warning sent to {user.email}")
+        logger.info("Subscription expiry warning queued user_id=%s subscription_id=%s", user.id, subscription.id)

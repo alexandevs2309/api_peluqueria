@@ -1,7 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.http import HttpResponse
@@ -9,6 +8,7 @@ from django.conf import settings
 
 import stripe
 
+from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Payment, PaymentProvider
 from .services import StripeService, OnboardingService, NotificationService
 from .serializers import PaymentSerializer
@@ -17,7 +17,17 @@ from apps.subscriptions_api.models import SubscriptionPlan
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
     serializer_class = PaymentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'payments_api.view_payment',
+        'retrieve': 'payments_api.view_payment',
+        'create': 'payments_api.add_payment',
+        'update': 'payments_api.change_payment',
+        'partial_update': 'payments_api.change_payment',
+        'destroy': 'payments_api.delete_payment',
+        'create_subscription_payment': 'payments_api.add_payment',
+        'confirm_payment': 'payments_api.change_payment',
+    }
     
     def get_queryset(self):
         return Payment.objects.filter(user=self.request.user)

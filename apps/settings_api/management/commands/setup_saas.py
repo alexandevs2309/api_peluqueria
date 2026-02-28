@@ -1,3 +1,5 @@
+import os
+from django.utils.crypto import get_random_string
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from apps.roles_api.models import Role
@@ -42,10 +44,6 @@ class Command(BaseCommand):
         self.stdout.write(f'   • Roles creados: {Role.objects.count()}')
         self.stdout.write(f'   • Planes disponibles: {SubscriptionPlan.objects.count()}')
         self.stdout.write(f'   • Tenants registrados: {Tenant.objects.count()}')
-        self.stdout.write('')
-        self.stdout.write('🔐 Credenciales Super Admin:')
-        self.stdout.write('   Email: super@admin.com')
-        self.stdout.write('   Password: SuperAdmin123!')
 
     def create_system_settings(self):
         """Crear configuraciones globales del sistema"""
@@ -152,10 +150,29 @@ class Command(BaseCommand):
 
     def create_super_admin(self):
         """Crear usuario Super Admin"""
-        if not User.objects.filter(email='super@admin.com').exists():
+        super_admin_email = os.getenv('SUPERADMIN_EMAIL')
+        super_admin_password = os.getenv('SUPERADMIN_PASSWORD')
+
+        if not super_admin_email:
+            self.stdout.write(
+                self.style.WARNING(
+                    '⚠️ SUPERADMIN_EMAIL no definido. Se omite creación automática de super admin.'
+                )
+            )
+            return
+
+        if not super_admin_password:
+            super_admin_password = get_random_string(24)
+            self.stdout.write(
+                self.style.WARNING(
+                    '⚠️ SUPERADMIN_PASSWORD no definido. Se generó una contraseña aleatoria temporal.'
+                )
+            )
+
+        if not User.objects.filter(email=super_admin_email).exists():
             super_admin = User.objects.create_user(
-                email='super@admin.com',
-                password='SuperAdmin123!',
+                email=super_admin_email,
+                password=super_admin_password,
                 full_name='Super Administrador',
                 is_staff=True,
                 is_superuser=True

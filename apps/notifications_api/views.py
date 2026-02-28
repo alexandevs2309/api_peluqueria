@@ -1,12 +1,18 @@
 from rest_framework import generics, permissions
 from rest_framework.response import Response
 from django.utils import timezone
+from apps.core.tenant_permissions import tenant_permission
 from .models import Notification, NotificationTemplate, InAppNotification
 from .serializers import NotificationSerializer, NotificationTemplateSerializer, NotificationPreferenceSerializer, InAppNotificationSerializer
 
 class NotificationListCreateView(generics.ListCreateAPIView):
     serializer_class = InAppNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [tenant_permission('notifications_api.add_inappnotification')()]
+        return [tenant_permission('notifications_api.view_inappnotification')()]
 
     def get_queryset(self):
         user = self.request.user
@@ -22,6 +28,13 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = InAppNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def get_permissions(self):
+        if self.request.method in ['PUT', 'PATCH']:
+            return [tenant_permission('notifications_api.change_inappnotification')()]
+        if self.request.method == 'DELETE':
+            return [tenant_permission('notifications_api.delete_inappnotification')()]
+        return [tenant_permission('notifications_api.view_inappnotification')()]
+
     def get_queryset(self):
         user = self.request.user
         
@@ -35,13 +48,18 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
 class NotificationTemplateListView(generics.ListAPIView):
     queryset = NotificationTemplate.objects.filter(is_active=True)
     serializer_class = NotificationTemplateSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [tenant_permission('notifications_api.view_notificationtemplate')]
 
 
 
 class NotificationPreferenceView(generics.RetrieveUpdateAPIView):
     serializer_class = NotificationPreferenceSerializer
     permission_classes = [permissions.IsAuthenticated]
+
+    def get_permissions(self):
+        if self.request.method in ['PUT', 'PATCH']:
+            return [tenant_permission('notifications_api.change_notificationpreference')()]
+        return [tenant_permission('notifications_api.view_notificationpreference')()]
     
     def get_object(self):
         from .models import NotificationPreference
@@ -51,7 +69,7 @@ class NotificationPreferenceView(generics.RetrieveUpdateAPIView):
         return obj
 
 class NotificationStatsView(generics.GenericAPIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [tenant_permission('notifications_api.view_notification')]
     
     def get(self, request):
         from .services import NotificationService
@@ -60,7 +78,7 @@ class NotificationStatsView(generics.GenericAPIView):
         return Response(stats)
 
 class SendTestNotificationView(generics.GenericAPIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [tenant_permission('notifications_api.add_notification')]
     
     def post(self, request):
         from .services import NotificationService

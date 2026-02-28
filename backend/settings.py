@@ -15,7 +15,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
 )
-environ.Env.read_env(BASE_DIR / '.env')
+configured_env_file = os.getenv('DJANGO_ENV_FILE')
+env_path = None
+
+# En contenedores/producción, tomar variables de entorno como fuente principal.
+# Solo cargar archivo .env cuando DEBUG no viene definido en el entorno o se
+# especifica explícitamente DJANGO_ENV_FILE.
+if configured_env_file:
+    env_path = Path(configured_env_file)
+    if not env_path.is_absolute():
+        env_path = BASE_DIR / configured_env_file
+elif 'DEBUG' not in os.environ:
+    env_path = BASE_DIR / '.env'
+
+if env_path and env_path.exists():
+    environ.Env.read_env(env_path)
 SECRET_KEY = env('SECRET_KEY')
 
 # Sentry configuration
@@ -255,6 +269,7 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'America/Santo_Domingo'
+APPOINTMENT_NO_SHOW_GRACE_MINUTES = env.int('APPOINTMENT_NO_SHOW_GRACE_MINUTES', default=15)
 
 # Celery Beat Schedule
 from celery.schedules import crontab
@@ -424,6 +439,10 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = 'DENY'
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+
+# Request payload limits (DoS hardening)
+DATA_UPLOAD_MAX_MEMORY_SIZE = env.int('DATA_UPLOAD_MAX_MEMORY_SIZE', default=5 * 1024 * 1024)  # 5MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = env.int('FILE_UPLOAD_MAX_MEMORY_SIZE', default=5 * 1024 * 1024)  # 5MB
 
 # Logging mejorado con seguridad
 LOGGING = {

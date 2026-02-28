@@ -4,6 +4,9 @@ from django.utils import timezone
 from datetime import datetime
 from apps.subscriptions_api.models import UserSubscription
 from django.core.cache import cache
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
@@ -193,8 +196,12 @@ class APIRateLimitMiddleware(MiddlewareMixin):
         current_hour_bucket = timezone.now().strftime('%Y%m%d%H')
         cache_key = f'api_rate_limit:{request.user.id}:{scope}:{current_hour_bucket}'
 
-        # Obtener contador actual
-        current_count = cache.get(cache_key, 0)
+        # Obtener contador actual (fail-open controlado si Redis/cache falla)
+        try:
+            current_count = cache.get(cache_key, 0)
+        except Exception as exc:
+            logger.error("RateLimit cache get failed: %s", str(exc))
+            return None
 
         # Verificar límite
         if current_count >= rate_limit:
@@ -209,7 +216,11 @@ class APIRateLimitMiddleware(MiddlewareMixin):
             }, status=429)
         
         # Incrementar contador (expira en 1 hora)
-        cache.set(cache_key, current_count + 1, 3600)
+        try:
+            cache.set(cache_key, current_count + 1, 3600)
+        except Exception as exc:
+            logger.error("RateLimit cache set failed: %s", str(exc))
+            return None
         
         # Agregar headers de rate limit
         request.rate_limit_remaining = rate_limit - current_count - 1

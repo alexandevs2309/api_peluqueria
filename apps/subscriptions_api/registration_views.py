@@ -1,4 +1,5 @@
 from rest_framework import status
+import logging
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -14,6 +15,7 @@ import string
 import re
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -44,12 +46,7 @@ def register_with_plan(request):
     """
     try:
         data = request.data
-        print(f"\n=== REGISTRO SaaS DEBUG ===")
-        print(f"Datos recibidos: {data}")
-        print(f"Content-Type: {request.content_type}")
-        print(f"Method: {request.method}")
-        print(f"Headers: {dict(request.headers)}")
-        print(f"========================\n")
+        logger.info("SaaS register_with_plan request received content_type=%s method=%s", request.content_type, request.method)
         
         # Validar datos requeridos
         required_fields = ['fullName', 'email', 'businessName', 'planType']
@@ -59,7 +56,7 @@ def register_with_plan(request):
                 missing_fields.append(field)
         
         if missing_fields:
-            print(f"Campos faltantes: {missing_fields}")
+            logger.warning("SaaS register missing_fields=%s", missing_fields)
             return Response({
                 'error': f'Campos requeridos faltantes: {", ".join(missing_fields)}',
                 'missing_fields': missing_fields,
@@ -78,7 +75,7 @@ def register_with_plan(request):
             from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
             try:
                 subscription_plan = SubscriptionPlan.objects.get(name=data['planType'])
-                print(f"Plan encontrado: {subscription_plan.name}")
+                logger.info("Subscription plan selected plan_id=%s", subscription_plan.id)
             except SubscriptionPlan.DoesNotExist:
                 return Response({
                     'error': f'Plan no válido: {data["planType"]}'
@@ -86,10 +83,8 @@ def register_with_plan(request):
             
             # 2. Generar contraseña
             password = generate_random_password()
-            print(f"Generando contraseña aleatoria: {password}")
             
             # 3. Crear usuario temporal como superuser (para evitar validación de tenant)
-            print(f"Creando usuario temporal: {data['email']}")
             user = User(
                 email=data['email'],
                 full_name=data['fullName'],
@@ -102,11 +97,10 @@ def register_with_plan(request):
             )
             user.set_password(password)
             user.save(skip_validation=True)
-            print(f"Usuario temporal creado: {user.id}")
+            logger.info("Temporary user created user_id=%s", user.id)
             
             # 4. Crear tenant con owner
             subdomain = generate_unique_subdomain(data['businessName'], user.id)
-            print(f"Creando tenant con subdomain: {subdomain}")
             tenant = Tenant.objects.create(
                 name=data['businessName'],
                 subdomain=subdomain,
@@ -117,14 +111,14 @@ def register_with_plan(request):
                 subscription_plan=subscription_plan,
                 is_active=True
             )
-            print(f"Tenant creado: {tenant.id}")
+            logger.info("Tenant created tenant_id=%s", tenant.id)
             
             # 5. Actualizar usuario a Client-Admin con tenant
             user.is_superuser = False
             user.tenant = tenant
             user.role = 'Client-Admin'
             user.save(skip_validation=True)
-            print(f"Usuario actualizado a Client-Admin con tenant")
+            logger.info("User converted to Client-Admin user_id=%s tenant_id=%s", user.id, tenant.id)
             
             # 6. Crear suscripción del usuario con trial
             trial_end = timezone.now() + timezone.timedelta(days=7)
@@ -136,7 +130,7 @@ def register_with_plan(request):
                 is_active=True,
                 auto_renew=False
             )
-            print(f"Suscripción trial creada: {user_subscription.id} hasta {trial_end}")
+            logger.info("Trial subscription created subscription_id=%s", user_subscription.id)
 
             # 7. Crear factura inicial (pendiente para después del trial)
             from apps.billing_api.models import Invoice
@@ -148,7 +142,7 @@ def register_with_plan(request):
                 due_date=trial_end,
                 status='pending'
             )
-            print(f"Factura creada: #{invoice.id} por ${invoice.amount} vence {trial_end}")
+            logger.info("Initial invoice created invoice_id=%s", invoice.id)
 
             # 8. Crear sucursal principal por defecto
             default_branch = Branch.objects.create(
@@ -158,7 +152,7 @@ def register_with_plan(request):
                 is_main=True,
                 is_active=True
             )
-            print(f"Sucursal creada correctamente: {default_branch.id}")
+            logger.info("Default branch created branch_id=%s", default_branch.id)
             
             # 9. Crear configuración inicial para esa sucursal
             Setting.objects.create(
@@ -170,7 +164,7 @@ def register_with_plan(request):
                 currency='USD',
                 timezone='America/Santo_Domingo'
             )
-            print(f'Configuración por defecto creada para sucursal: {default_branch.id}')
+            logger.info("Default settings created for branch_id=%s", default_branch.id)
             
             # 10. Enviar email de bienvenida
             send_welcome_email(user, password, tenant)
@@ -204,9 +198,7 @@ def register_with_plan(request):
             return Response(response_data, status=status.HTTP_201_CREATED)
             
     except Exception as e:
-        print(f"Error en registro: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error in register_with_plan")
         return Response({
             'error': f'Error: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -280,11 +272,7 @@ def send_welcome_email(user, password, tenant):
     ═══════════════════════════════════════════════════════════════
     """
     
-    print("\n" + "="*60)
-    print("📧 EMAIL ENVIADO A:", user.email)
-    print("="*60)
-    print(email_content)
-    print("="*60 + "\n")
+    logger.info("Welcome email prepared for user_id=%s tenant_id=%s", user.id, tenant.id)
     
     return {
         'email_sent': True,

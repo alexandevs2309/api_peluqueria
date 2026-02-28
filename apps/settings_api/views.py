@@ -11,15 +11,13 @@ from .integration_service import IntegrationService
 class SystemSettingsRetrieveUpdateView(generics.RetrieveUpdateAPIView):
     """Vista para obtener y actualizar configuraciones globales del sistema"""
     serializer_class = SystemSettingsSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
     def get_object(self):
         return SystemSettings.get_settings()
     
     def get_permissions(self):
-        if self.request.method in ['PUT', 'PATCH']:
-            return [permissions.IsAdminUser()]
-        return [permissions.IsAuthenticated()]
+        return [permissions.IsAdminUser()]
     
     def perform_update(self, serializer):
         serializer.save()

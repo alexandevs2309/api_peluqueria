@@ -1,4 +1,5 @@
 from rest_framework import viewsets
+import logging
 from rest_framework.response import Response
 from rest_framework import status
 from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan, Subscription
@@ -22,6 +23,7 @@ from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permis
 from apps.core.permissions import IsSuperAdmin
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
+logger = logging.getLogger(__name__)
 
 
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
@@ -53,7 +55,7 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
     
     def update(self, request, *args, **kwargs):
-        print(f"DEBUG: Update data received: {request.data}")
+        logger.debug("Subscription plan update requested by user_id=%s", request.user.id)
         
         # Bloquear solo las características
         blocked_fields = ['features', 'name']
@@ -65,14 +67,10 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
             if field in request.data:
                 del request.data[field]
                 
-        print(f"DEBUG: Filtered data: {request.data}")
         try:
             return super().update(request, *args, **kwargs)
         except Exception as e:
-            print(f"DEBUG: Update error: {str(e)}")
-            print(f"DEBUG: Error type: {type(e)}")
-            import traceback
-            print(f"DEBUG: Full traceback: {traceback.format_exc()}")
+            logger.exception("Subscription plan update failed user_id=%s", request.user.id)
             
             # Devolver error más específico
             from rest_framework.response import Response

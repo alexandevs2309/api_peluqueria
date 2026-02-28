@@ -2,6 +2,9 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import AnonRateThrottle
+from django.utils.decorators import method_decorator
+from django_ratelimit.decorators import ratelimit
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import LoginSerializer
@@ -10,13 +13,23 @@ from .utils import get_client_ip, get_user_agent, get_client_jti
 from django.utils.timezone import now
 
 
+class CookieLoginThrottle(AnonRateThrottle):
+    scope = 'login'
+
+
+class CookieRefreshThrottle(AnonRateThrottle):
+    scope = 'login'
+
+
 class CookieLoginView(APIView):
     """
     Vista de login que establece JWT tokens en httpOnly cookies
     Ruta: /api/auth/cookie-login/
     """
     permission_classes = [AllowAny]
+    throttle_classes = [CookieLoginThrottle]
     
+    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -169,6 +182,7 @@ class CookieRefreshView(APIView):
     Ruta: /api/auth/cookie-refresh/
     """
     permission_classes = [AllowAny]
+    throttle_classes = [CookieRefreshThrottle]
     
     def post(self, request):
         refresh_token = request.COOKIES.get('refresh_token')

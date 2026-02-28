@@ -1,7 +1,7 @@
 from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
-from django.db.models import Q
+from django.conf import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -14,16 +14,29 @@ def mark_expired_appointments(self):
         from apps.notifications_api.models import InAppNotification
         
         now = timezone.now()
+        grace_minutes = getattr(settings, 'APPOINTMENT_NO_SHOW_GRACE_MINUTES', 15)
+        cutoff_time = now - timedelta(minutes=grace_minutes)
+
         expired_appointments = Appointment.objects.filter(
-            date_time__lt=now,
+            date_time__lt=cutoff_time,
             status='scheduled'
         ).select_related('stylist', 'client')
         
+        if not expired_appointments.exists():
+            logger.info("No expired appointments to mark as no_show")
+            return "Marked 0 appointments as no_show"
+
+        # Snapshot for notifications before bulk update.
+        expired_data = list(expired_appointments)
+        appointment_ids = [appt.id for appt in expired_data]
+
+        updated_count = Appointment.objects.filter(
+            id__in=appointment_ids,
+            status='scheduled'
+        ).update(status='no_show')
+
         count = 0
-        for appointment in expired_appointments:
-            appointment.status = 'no_show'
-            appointment.save()
-            
+        for appointment in expired_data:
             # Create notification for stylist
             InAppNotification.objects.create(
                 recipient=appointment.stylist,
@@ -33,7 +46,13 @@ def mark_expired_appointments(self):
             )
             count += 1
         
-        return f"Marked {count} appointments as no_show"
+        logger.info(
+            "Marked expired appointments as no_show updated=%s notifications=%s grace_minutes=%s",
+            updated_count,
+            count,
+            grace_minutes,
+        )
+        return f"Marked {updated_count} appointments as no_show"
     except Exception as e:
         logger.error(f"Error marking expired appointments: {str(e)}")
         raise self.retry(exc=e)

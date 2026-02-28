@@ -5,7 +5,6 @@ from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permis
 from apps.subscriptions_api.permissions import HasFeaturePermission
 from .models import Product, Supplier, StockMovement
 from .serializers import ProductSerializer, SupplierSerializer, StockMovementSerializer
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.decorators import action, api_view, permission_classes
 from django.db.models import Q
 from rest_framework.response import Response
@@ -139,14 +138,26 @@ def low_stock_alerts(request):
 class SupplierViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Supplier.objects.all()
     serializer_class = SupplierSerializer
-    permission_classes = [IsAuthenticated, HasFeaturePermission]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'inventory'
+    permission_map = {
+        'list': 'inventory_api.view_supplier',
+        'retrieve': 'inventory_api.view_supplier',
+        'create': 'inventory_api.add_supplier',
+        'update': 'inventory_api.change_supplier',
+        'partial_update': 'inventory_api.change_supplier',
+        'destroy': 'inventory_api.delete_supplier',
+    }
 
 class StockMovementViewSet(TenantScopedReadOnlyViewSet):
     queryset = StockMovement.objects.all()
     serializer_class = StockMovementSerializer
-    permission_classes = [permissions.IsAuthenticated, HasFeaturePermission]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'inventory'
+    permission_map = {
+        'list': 'inventory_api.view_stockmovement',
+        'retrieve': 'inventory_api.view_stockmovement',
+    }
     
     def get_queryset(self):
         """Override para filtrar por product__tenant"""

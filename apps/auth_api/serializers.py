@@ -1,5 +1,6 @@
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework import serializers
+import logging
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
@@ -8,6 +9,7 @@ from .models import ActiveSession
 from apps.tenants_api.models import Tenant
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 class ActiveSessionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -159,18 +161,15 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
         
         # Asignar tenant automáticamente si no se especifica
         request = self.context.get('request')
-        print(f'🔍 [SERIALIZER] Request user: {request.user if request else "No request"}')
-        print(f'🔍 [SERIALIZER] Request user tenant: {request.user.tenant if request and hasattr(request, "user") else "No tenant"}')
-        print(f'🔍 [SERIALIZER] Validated data before: {validated_data}')
+        logger.debug('EmployeeUserSerializer.create request_user_id=%s', getattr(getattr(request, 'user', None), 'id', None))
         
         if 'tenant' not in validated_data or validated_data['tenant'] is None:
             if request and hasattr(request, 'user') and request.user.tenant:
                 validated_data['tenant'] = request.user.tenant
-                print(f'🔍 [SERIALIZER] Tenant asignado: {request.user.tenant.id}')
+                logger.debug('Tenant auto-assigned tenant_id=%s', request.user.tenant.id)
         
-        print(f'🔍 [SERIALIZER] Validated data after: {validated_data}')
         user = User.objects.create_user(**validated_data)
-        print(f'🔍 [SERIALIZER] Usuario creado: ID={user.id}, Email={user.email}, Tenant={user.tenant_id}')
+        logger.info('Employee user created user_id=%s tenant_id=%s', user.id, user.tenant_id)
         return user
     
     def update(self, instance, validated_data):

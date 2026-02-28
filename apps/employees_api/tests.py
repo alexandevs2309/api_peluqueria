@@ -1,14 +1,18 @@
 import pytest
+from django.contrib.auth.models import Permission
+from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 from django.urls import reverse
 from apps.auth_api.factories import UserFactory
 from apps.roles_api.models import Role, UserRole
 from apps.employees_api.models import Employee, WorkSchedule
-from apps.services_api.models import Service
+from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
-from apps.subscriptions_api.tests import user
+
+User = get_user_model()
 
 @pytest.fixture
 def admin_client(db):
@@ -32,7 +36,7 @@ def normal_client(db):
     return client
 
 @pytest.mark.django_db
-def test_create_employee_success(admin_client, stylist_user, user):
+def test_create_employee_success(admin_client, stylist_user):
     # Crear plan con 5 empleados permitidos
     plan = SubscriptionPlan.objects.create(
         name="Pro",
@@ -128,3 +132,131 @@ def test_delete_employee_permission_denied_other_roles():
     client.force_authenticate(user=user)
     response = client.delete(reverse("employee-detail", args=[employee.id]))
     assert response.status_code in [403, 401]
+
+
+@pytest.fixture
+def tenant_for_schedules(db):
+    plan, _ = SubscriptionPlan.objects.get_or_create(
+        name='basic',
+        defaults={
+            'description': 'Plan base test',
+            'price': 0,
+            'duration_month': 1,
+            'max_employees': 50,
+            'max_users': 50,
+            'is_active': True,
+            'features': {}
+        }
+    )
+    owner = User.objects.create_superuser(
+        email='owner.schedules@example.com',
+        password='testpassword123',
+        full_name='Owner Schedules'
+    )
+    return Tenant.objects.create(
+        name=f"Tenant Schedules {owner.id}",
+        subdomain=f"tenant-schedules-{owner.id}",
+        owner=owner,
+        is_active=True,
+        subscription_plan=plan,
+        subscription_status='active',
+    )
+
+
+@pytest.fixture
+def manager_user(tenant_for_schedules):
+    manager = User.objects.create_user(
+        email='manager.schedules@example.com',
+        password='testpassword123',
+        full_name='Manager Schedules',
+        tenant=tenant_for_schedules,
+        is_email_verified=True
+    )
+    role, _ = Role.objects.get_or_create(
+        name='Manager',
+        defaults={'scope': 'TENANT', 'description': 'Manager test role'}
+    )
+    perms = Permission.objects.filter(
+        content_type__app_label='employees_api',
+        codename__in=['view_employee', 'change_employee']
+    )
+    role.permissions.add(*perms)
+    UserRole.objects.get_or_create(user=manager, role=role, tenant=tenant_for_schedules)
+    Employee.objects.get_or_create(
+        user=manager,
+        defaults={'tenant': tenant_for_schedules, 'specialty': 'Manager'}
+    )
+    return manager
+
+
+@pytest.fixture
+def manager_client(manager_user):
+    client = APIClient()
+    refresh = RefreshToken.for_user(manager_user)
+    refresh['tenant_id'] = manager_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
+    return client
+
+
+@pytest.fixture
+def team_employee(tenant_for_schedules):
+    worker_user = User.objects.create_user(
+        email='worker.schedules@example.com',
+        password='testpassword123',
+        full_name='Worker Schedules',
+        tenant=tenant_for_schedules,
+        is_email_verified=True
+    )
+    return Employee.objects.create(
+        user=worker_user,
+        tenant=tenant_for_schedules,
+        specialty='Stylist'
+    )
+
+
+@pytest.mark.django_db
+def test_manager_can_create_schedule_for_team_employee(manager_client, team_employee):
+    payload = {
+        'employee': team_employee.id,
+        'day_of_week': 'monday',
+        'start_time': '09:00:00',
+        'end_time': '17:00:00'
+    }
+    response = manager_client.post(reverse('work_schedule-list'), payload, format='json')
+    assert response.status_code == status.HTTP_201_CREATED
+
+
+@pytest.mark.django_db
+def test_manager_can_update_schedule_for_team_employee(manager_client, team_employee):
+    schedule = WorkSchedule.objects.create(
+        employee=team_employee,
+        day_of_week='tuesday',
+        start_time='09:00:00',
+        end_time='17:00:00'
+    )
+    payload = {
+        'employee': team_employee.id,
+        'day_of_week': 'tuesday',
+        'start_time': '10:00:00',
+        'end_time': '18:00:00'
+    }
+    response = manager_client.put(
+        reverse('work_schedule-detail', kwargs={'pk': schedule.id}),
+        payload,
+        format='json'
+    )
+    assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.django_db
+def test_manager_cannot_delete_schedule_sensitive_action(manager_client, team_employee):
+    schedule = WorkSchedule.objects.create(
+        employee=team_employee,
+        day_of_week='wednesday',
+        start_time='09:00:00',
+        end_time='17:00:00'
+    )
+    response = manager_client.delete(
+        reverse('work_schedule-detail', kwargs={'pk': schedule.id})
+    )
+    assert response.status_code == status.HTTP_403_FORBIDDEN
