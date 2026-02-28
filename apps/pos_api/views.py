@@ -11,6 +11,8 @@ from django.db.models import Sum, Q
 from decimal import Decimal, InvalidOperation
 from apps.core.permissions import IsSuperAdmin
 from apps.settings_api.barbershop_models import BarbershopSettings
+from django.conf import settings
+from apps.audit_api.models import AuditLog
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.none()  # Seguro por defecto
@@ -226,6 +228,17 @@ class SaleViewSet(viewsets.ModelViewSet):
                 raise serializers.ValidationError(
                     f"El descuento ({discount}) no puede ser mayor al total ({total})"
                 )
+
+            # Requerir motivo para descuentos altos
+            discount_threshold_percent = Decimal(str(getattr(settings, 'POS_HIGH_DISCOUNT_THRESHOLD_PERCENT', 20)))
+            if total > 0:
+                discount_percent = (discount / total) * Decimal('100')
+                if discount_percent > discount_threshold_percent:
+                    discount_reason = (self.request.data.get('discount_reason') or '').strip()
+                    if len(discount_reason) < 10:
+                        raise serializers.ValidationError(
+                            f"Descuentos mayores a {discount_threshold_percent}% requieren motivo (mínimo 10 caracteres)"
+                        )
             
             total_with_discount = total - discount
             
@@ -254,6 +267,26 @@ class SaleViewSet(viewsets.ModelViewSet):
                 tenant=tenant_to_assign,
                 total=total_with_discount
             )
+
+            # Auditoría de descuentos altos
+            if total > 0:
+                discount_percent = (discount / total) * Decimal('100')
+                if discount_percent > discount_threshold_percent:
+                    AuditLog.objects.create(
+                        user=self.request.user,
+                        action='ADMIN_ACTION',
+                        description=f"Descuento alto aplicado en venta #{sale.id}",
+                        content_object=sale,
+                        ip_address=self.request.META.get('REMOTE_ADDR'),
+                        user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
+                        source='SYSTEM',
+                        extra_data={
+                            'sale_id': sale.id,
+                            'discount_amount': str(discount),
+                            'discount_percent': str(round(discount_percent, 2)),
+                            'discount_reason': (self.request.data.get('discount_reason') or '').strip(),
+                        }
+                    )
             
             # NUEVO: Recalcular período después de guardar venta
             if active_period:
@@ -394,6 +427,13 @@ class SaleViewSet(viewsets.ModelViewSet):
         from django.db import IntegrityError
         import calendar
         
+        reason = (request.data.get('reason') or '').strip()
+        if len(reason) < 10:
+            return Response(
+                {'error': 'El motivo del reembolso es requerido (mínimo 10 caracteres)'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         with transaction.atomic():
             # CRÍTICO: Bloquear venta Y validar tenant
             try:
@@ -430,10 +470,28 @@ class SaleViewSet(viewsets.ModelViewSet):
                     {'error': 'Esta venta ya fue reembolsada'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+
+            # Regla de negocio: reembolso solo para ventas de productos
+            sale_details = list(sale.details.select_related('content_type').all())
+            if not sale_details:
+                return Response(
+                    {'error': 'La venta no tiene detalles para reembolsar'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            has_non_product_items = any(
+                getattr(detail.content_type, 'model', None) != 'product'
+                for detail in sale_details
+            )
+            if has_non_product_items:
+                return Response(
+                    {'error': 'Solo se permiten reembolsos en ventas de productos'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             
             # Restaurar inventario
-            for detail in sale.details.all():
-                if detail.content_type == 'product':
+            for detail in sale_details:
+                if getattr(detail.content_type, 'model', None) == 'product':
                     from apps.inventory_api.models import Product, StockMovement
                     try:
                         product = Product.objects.get(id=detail.object_id)
@@ -504,7 +562,7 @@ class SaleViewSet(viewsets.ModelViewSet):
                             employee=sale.employee,
                             amount=-sale.commission_amount_snapshot,
                             reason='refund',
-                            description=f'Reembolso de venta #{sale.id}',
+                            description=f'Reembolso de venta #{sale.id}. Motivo: {reason}',
                             created_by=request.user,
                             tenant=sale.employee.tenant
                         )
@@ -520,10 +578,27 @@ class SaleViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST
                         )
             
-            # Marcar como reembolsada
-            sale.total = Decimal('0')
-            sale.paid = Decimal('0')
-            sale.save()
+            # Marcar como reembolsada respetando inmutabilidad financiera.
+            # El modelo Sale permite transición de estado confirmed -> refunded.
+            refunded_amount = sale.total
+            sale.status = 'refunded'
+            sale.closed = True
+            sale.save(update_fields=['status', 'closed', 'updated_at'])
+
+            AuditLog.objects.create(
+                user=request.user,
+                action='ADMIN_ACTION',
+                description=f"Reembolso procesado para venta #{sale.id}",
+                content_object=sale,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                source='SYSTEM',
+                extra_data={
+                    'sale_id': sale.id,
+                    'refund_reason': reason,
+                    'refund_amount': str(refunded_amount),
+                }
+            )
             
             return Response({'detail': 'Venta reembolsada correctamente'})
     
@@ -1082,9 +1157,7 @@ def pos_categories(request):
 @permission_classes([IsSuperAdmin])
 def debug_sale_data(request):
     """Endpoint temporal para debug de datos de venta"""
-    print(f"DEBUG ENDPOINT: Datos recibidos: {request.data}")
-    print(f"DEBUG ENDPOINT: Usuario: {request.user}")
-    print(f"DEBUG ENDPOINT: Headers: {dict(request.headers)}")
+    logger.info("debug_sale_data called by user_id=%s", request.user.id if request.user.is_authenticated else None)
     
     return Response({
         'received_data': request.data,

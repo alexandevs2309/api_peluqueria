@@ -447,7 +447,7 @@ class EmployeeViewSet(TenantScopedViewSet):
         return Response(summary)
 
 class WorkScheduleViewSet(viewsets.ModelViewSet):
-    queryset = WorkSchedule.objects.all()
+    queryset = WorkSchedule.objects.select_related('employee', 'employee__user', 'employee__tenant').all()
     serializer_class = WorkScheduleSerializer
     permission_classes = [TenantPermissionByAction]
     permission_map = {
@@ -456,7 +456,7 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
         'create': 'employees_api.change_employee',
         'update': 'employees_api.change_employee',
         'partial_update': 'employees_api.change_employee',
-        'destroy': 'employees_api.change_employee',
+        'destroy': 'employees_api.delete_employee',
     }
 
     def get_queryset(self):
@@ -471,7 +471,7 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
         is_tenant_admin = UserRole.objects.filter(
             user=user,
             tenant=self.request.tenant,
-            role__name__in=['Admin', 'Client-Admin']
+            role__name__in=['Admin', 'Client-Admin', 'Manager']
         ).exists()
 
         if is_tenant_admin:
@@ -483,5 +483,27 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
         )
 
     def perform_create(self, serializer):
-        employee = Employee.objects.get(user=self.request.user)
+        user = self.request.user
+        tenant = getattr(self.request, 'tenant', None)
+
+        if not tenant and not user.is_superuser:
+            raise ValidationError("Usuario sin tenant asignado")
+
+        # Permitir a admins/manager asignar horario al empleado enviado en payload,
+        # siempre dentro del mismo tenant. Si no viene, usar su propio empleado.
+        employee = serializer.validated_data.get('employee')
+        if employee:
+            if not user.is_superuser and employee.tenant_id != tenant.id:
+                raise ValidationError("No puede asignar horarios a empleados de otro tenant")
+            serializer.save()
+            return
+
+        try:
+            employee = Employee.objects.get(user=user)
+        except Employee.DoesNotExist:
+            raise ValidationError("Debe enviar employee para crear el horario")
+
+        if not user.is_superuser and employee.tenant_id != tenant.id:
+            raise ValidationError("Empleado fuera del tenant")
+
         serializer.save(employee=employee)

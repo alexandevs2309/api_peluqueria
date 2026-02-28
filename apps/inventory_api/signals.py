@@ -4,6 +4,9 @@ from django.db import models
 from .models import Product, StockMovement
 from django.core.mail import send_mail
 from django.conf import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 @receiver(post_save, sender=StockMovement)
 def check_low_stock_after_movement(sender, instance, created, **kwargs):
@@ -33,10 +36,13 @@ def create_low_stock_alert(product):
     """Crear alerta de stock bajo"""
     # Aquí puedes implementar diferentes tipos de alertas:
     
-    # 1. Log en consola (para desarrollo)
-    print(f"⚠️ ALERTA: Stock bajo para {product.name}")
-    print(f"   Stock actual: {product.stock}")
-    print(f"   Stock mínimo: {product.min_stock}")
+    logger.warning(
+        "Low stock alert product_id=%s sku=%s current_stock=%s min_stock=%s",
+        product.id,
+        product.sku,
+        product.stock,
+        product.min_stock,
+    )
     
     # 2. Email a administradores (si está configurado)
     if hasattr(settings, 'ADMIN_EMAIL') and settings.ADMIN_EMAIL:
@@ -56,7 +62,7 @@ def create_low_stock_alert(product):
                 fail_silently=True
             )
         except Exception as e:
-            print(f"Error enviando email de alerta: {e}")
+            logger.exception("Error sending low stock alert email product_id=%s", product.id)
     
     # 3. Crear notificación en base de datos (opcional)
     create_notification_record(product)
@@ -82,7 +88,7 @@ def create_notification_record(product):
             }
         )
     except Exception as e:
-        print(f"Error creando registro de notificación: {e}")
+        logger.exception("Error creating low stock notification record product_id=%s", product.id)
 
 # Función para obtener productos con stock bajo
 def get_low_stock_products():

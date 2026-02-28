@@ -1,6 +1,9 @@
 from django.conf import settings
 from .models import SystemSettings
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 class IntegrationService:
     """Servicio para manejar integraciones basado en feature toggles"""
@@ -100,7 +103,7 @@ class IntegrationService:
             raise Exception("Twilio no está habilitado")
         
         # TODO: Implementar envío real con Twilio
-        print(f"SMS a {phone}: {message}")
+        logger.info("SMS send requested to phone=%s", phone)
         return True
     
     @staticmethod
@@ -136,5 +139,5 @@ class IntegrationService:
             raise Exception("AWS S3 no está habilitado")
         
         # TODO: Implementar subida real a S3
-        print(f"Subiendo {key} a bucket {bucket}")
+        logger.info("S3 upload requested bucket=%s key=%s", bucket, key)
         return f"https://{bucket}.s3.amazonaws.com/{key}"

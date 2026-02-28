@@ -26,19 +26,14 @@ class ProductSerializer(serializers.ModelSerializer):
     
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        print(f"Product {instance.name} - Image field: {instance.image}")
         if instance.image:
             request = self.context.get('request')
             if request:
-                image_url = request.build_absolute_uri(instance.image.url)
-                print(f"Image URL: {image_url}")
-                data['image'] = image_url
+                data['image'] = request.build_absolute_uri(instance.image.url)
             else:
                 data['image'] = instance.image.url
         else:
             data['image'] = None
-            print("No image found")
-        print(f"Final data: {data}")
         return data
 
 class StockMovementSerializer(serializers.ModelSerializer):

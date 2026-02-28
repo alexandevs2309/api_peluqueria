@@ -1,4 +1,5 @@
 import sys
+import logging
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -47,6 +48,7 @@ from apps.core.tenant_permissions import TenantPermissionByAction
 
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 # Helper function to safely create audit logs
 def safe_create_login_audit(user, request, successful, message):
@@ -410,14 +412,12 @@ class PasswordResetRequestView(APIView):
                 timestamp=now()
             )
 
-            # En desarrollo, imprimir en consola
             if settings.DEBUG:
-                print("\n" + "="*80)
-                print(f"🔑 ENLACE DE RECUPERACIÓN DE CONTRASEÑA")
-                print("="*80)
-                print(f"Usuario: {user.email}")
-                print(f"Enlace: {reset_url}")
-                print("="*80 + "\n")
+                logger.debug(
+                    "Password reset link generated for user_id=%s reset_url=%s",
+                    user.id,
+                    reset_url,
+                )
             
             if "pytest" in sys.modules:
                 send_mail(
@@ -708,7 +708,7 @@ class UserViewSet(viewsets.ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         """Override destroy to add logging and proper deletion"""
         instance = self.get_object()
-        print(f"Attempting to delete user: {instance.email} (ID: {instance.id})")
+        logger.info("Attempting to delete user_id=%s by actor_id=%s", instance.id, request.user.id)
         
         # Check if user can be deleted
         if instance.is_superuser and User.objects.filter(is_superuser=True).count() <= 1:
@@ -728,11 +728,11 @@ class UserViewSet(viewsets.ModelViewSet):
             
             # Perform the deletion
             self.perform_destroy(instance)
-            print(f"User {instance.email} deleted successfully")
+            logger.info("User deleted successfully user_id=%s", instance.id)
             
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Exception as e:
-            print(f"Error deleting user: {str(e)}")
+            logger.exception("Error deleting user_id=%s", instance.id)
             return Response({
                 'error': f'Failed to delete user: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)

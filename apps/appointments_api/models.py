@@ -11,6 +11,7 @@ class Appointment(models.Model):
         ('scheduled', 'Scheduled'),
         ('completed', 'Completed'),
         ('cancelled', 'Cancelled'),
+        ('no_show', 'No Show'),
     ]
 
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='appointments')
