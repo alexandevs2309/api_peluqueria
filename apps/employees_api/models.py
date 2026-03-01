@@ -83,3 +83,28 @@ class WorkSchedule(models.Model):
 
     class Meta:
         unique_together = ('employee', 'day_of_week', 'start_time')
+
+
+class AttendanceRecord(models.Model):
+    STATUS_CHOICES = [
+        ('present', 'Present'),
+        ('late', 'Late'),
+        ('absent', 'Absent'),
+    ]
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='attendance_records')
+    work_date = models.DateField()
+    check_in_at = models.DateTimeField(null=True, blank=True)
+    check_out_at = models.DateTimeField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='present')
+    notes = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ('employee', 'work_date')
+        ordering = ['-work_date', '-check_in_at']
+        indexes = [
+            models.Index(fields=['employee', 'work_date']),
+            models.Index(fields=['status']),
+        ]
