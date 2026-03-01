@@ -1,12 +1,16 @@
 from django.http import JsonResponse, HttpResponseForbidden
 from django.utils.deprecation import MiddlewareMixin
+from django.utils import timezone
 from .models import Tenant
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.conf import settings
+import logging
 
 from django.contrib.gis.geoip2 import GeoIP2
 from apps.auth_api.utils import get_client_ip
+
+logger = logging.getLogger(__name__)
 
 class TenantMiddleware(MiddlewareMixin):
     """
@@ -103,33 +107,24 @@ class TenantMiddleware(MiddlewareMixin):
         
         # Si no tenant desde JWT, fallback a usuario autenticado
         if not hasattr(request, 'tenant') or not request.tenant:
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f'DEBUG Middleware: Intentando asignar tenant desde usuario')
-            
             if hasattr(request, 'user') and request.user.is_authenticated:
-                logger.info(f'DEBUG Middleware: Usuario autenticado: {request.user.email}')
-                
                 # Recargar usuario con tenant para evitar lazy loading
                 from django.contrib.auth import get_user_model
                 User = get_user_model()
                 try:
                     user = User.objects.select_related('tenant').get(pk=request.user.pk)
                     request.user = user
-                    logger.info(f'DEBUG Middleware: Usuario recargado, tenant={user.tenant}')
                 except User.DoesNotExist:
-                    logger.error(f'DEBUG Middleware: Usuario no encontrado')
+                    logger.warning('Authenticated user not found while resolving tenant')
                     pass
                 
                 # Permitir acceso a super admins
                 if (request.user.is_superuser or 
                     (hasattr(request.user, 'role') and request.user.role == 'super_admin')):
                     request.tenant = None
-                    logger.info(f'DEBUG Middleware: SuperAdmin detectado, tenant=None')
                 elif hasattr(request.user, 'tenant') and request.user.tenant:
                     # Validar que el tenant del usuario esté activo
                     user_tenant = request.user.tenant
-                    logger.info(f'DEBUG Middleware: Tenant del usuario: {user_tenant.name} (ID: {user_tenant.id})')
                     
                     if user_tenant.deleted_at is not None or not user_tenant.is_active:
                         return JsonResponse({
@@ -139,9 +134,8 @@ class TenantMiddleware(MiddlewareMixin):
                             'support_email': 'support@barbershop.com'
                         }, status=403)
                     request.tenant = user_tenant
-                    logger.info(f'DEBUG Middleware: ✅ Tenant asignado: {request.tenant.name}')
                 else:
-                    logger.error(f'DEBUG Middleware: Usuario sin tenant')
+                    logger.warning('Authenticated user without tenant')
                     if request.path.startswith('/api/subscriptions/me/'):
                         request.tenant = None
                     else:
@@ -199,8 +193,6 @@ class TenantMiddleware(MiddlewareMixin):
                     }, status=403)
             except Exception as e:
                 # Log error pero permitir acceso en caso de fallo de geolocalización
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f'GeoIP error for IP {client_ip}: {str(e)}')
                 pass
         

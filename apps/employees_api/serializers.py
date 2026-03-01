@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from apps.services_api.models import Service
-from .models import Employee, EmployeeService, WorkSchedule
+from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from apps.services_api.serializers import ServiceSerializer
 from django.contrib.auth import get_user_model
 
@@ -74,3 +74,28 @@ class WorkScheduleSerializer(serializers.ModelSerializer):
         model = WorkSchedule
         fields = ['id', 'employee', 'day_of_week', 'start_time', 'end_time', 'created_at']
         read_only_fields = ['created_at']
+
+
+class AttendanceRecordSerializer(serializers.ModelSerializer):
+    employee_name = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = AttendanceRecord
+        fields = [
+            'id',
+            'employee',
+            'employee_name',
+            'work_date',
+            'check_in_at',
+            'check_out_at',
+            'status',
+            'notes',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_employee_name(self, obj):
+        if obj.employee and obj.employee.user:
+            return obj.employee.user.full_name or obj.employee.user.email
+        return ''

@@ -2,15 +2,16 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from django.utils import timezone
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.subscriptions_api.utils import get_user_active_subscription
 from apps.settings_api.utils import validate_employee_limit
-from .models import Employee, EmployeeService, WorkSchedule
+from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from apps.roles_api.models import UserRole
-from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer
+from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer, AttendanceRecordSerializer
 
 class EmployeeViewSet(TenantScopedViewSet):
     queryset = Employee.objects.select_related('user', 'tenant').all()
@@ -507,3 +508,134 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
             raise ValidationError("Empleado fuera del tenant")
 
         serializer.save(employee=employee)
+
+
+class AttendanceRecordViewSet(viewsets.ModelViewSet):
+    queryset = AttendanceRecord.objects.select_related('employee', 'employee__user', 'employee__tenant').all()
+    serializer_class = AttendanceRecordSerializer
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'employees_api.view_employee',
+        'retrieve': 'employees_api.view_employee',
+        'create': 'employees_api.change_employee',
+        'update': 'employees_api.change_employee',
+        'partial_update': 'employees_api.change_employee',
+        'destroy': 'employees_api.delete_employee',
+        'check_in': 'employees_api.change_employee',
+        'check_out': 'employees_api.change_employee',
+    }
+
+    def get_queryset(self):
+        user = self.request.user
+
+        if user.is_superuser:
+            return self.queryset
+
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return AttendanceRecord.objects.none()
+
+        is_tenant_admin = UserRole.objects.filter(
+            user=user,
+            tenant=self.request.tenant,
+            role__name__in=['Admin', 'Client-Admin', 'Manager']
+        ).exists()
+
+        if is_tenant_admin:
+            return self.queryset.filter(employee__tenant=self.request.tenant)
+
+        return self.queryset.filter(
+            employee__tenant=self.request.tenant,
+            employee__user=user
+        )
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        tenant = getattr(self.request, 'tenant', None)
+
+        if not tenant and not user.is_superuser:
+            raise ValidationError("Usuario sin tenant asignado")
+
+        employee = serializer.validated_data.get('employee')
+        if employee:
+            if not user.is_superuser and employee.tenant_id != tenant.id:
+                raise ValidationError("No puede registrar asistencia para otro tenant")
+            serializer.save()
+            return
+
+        try:
+            employee = Employee.objects.get(user=user)
+        except Employee.DoesNotExist:
+            raise ValidationError("Debe enviar employee para registrar asistencia")
+
+        if not user.is_superuser and employee.tenant_id != tenant.id:
+            raise ValidationError("Empleado fuera del tenant")
+
+        serializer.save(employee=employee)
+
+    @action(detail=False, methods=['post'])
+    def check_in(self, request):
+        employee = self._resolve_employee(request)
+        today = timezone.localdate()
+        now = timezone.now()
+
+        record, created = AttendanceRecord.objects.get_or_create(
+            employee=employee,
+            work_date=today,
+            defaults={'check_in_at': now, 'status': 'present'}
+        )
+
+        if not created and record.check_in_at:
+            return Response({'detail': 'Ya existe check-in para hoy'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not record.check_in_at:
+            record.check_in_at = now
+            record.status = 'present'
+            record.save(update_fields=['check_in_at', 'status', 'updated_at'])
+
+        serializer = self.get_serializer(record)
+        return Response(serializer.data, status=status.HTTP_200_OK if not created else status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'])
+    def check_out(self, request):
+        employee = self._resolve_employee(request)
+        today = timezone.localdate()
+        now = timezone.now()
+
+        try:
+            record = AttendanceRecord.objects.get(employee=employee, work_date=today)
+        except AttendanceRecord.DoesNotExist:
+            return Response({'detail': 'No existe check-in para hoy'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not record.check_in_at:
+            return Response({'detail': 'No existe check-in para hoy'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if record.check_out_at:
+            return Response({'detail': 'Ya existe check-out para hoy'}, status=status.HTTP_400_BAD_REQUEST)
+
+        record.check_out_at = now
+        record.save(update_fields=['check_out_at', 'updated_at'])
+        serializer = self.get_serializer(record)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def _resolve_employee(self, request):
+        tenant = getattr(request, 'tenant', None)
+        user = request.user
+        employee_id = request.data.get('employee')
+
+        if employee_id:
+            try:
+                employee = Employee.objects.get(pk=employee_id)
+            except Employee.DoesNotExist:
+                raise ValidationError("Empleado no encontrado")
+            if not user.is_superuser and employee.tenant_id != getattr(tenant, 'id', None):
+                raise ValidationError("No puede registrar asistencia para otro tenant")
+            return employee
+
+        try:
+            employee = Employee.objects.get(user=user)
+        except Employee.DoesNotExist:
+            raise ValidationError("Debe enviar employee")
+
+        if not user.is_superuser and employee.tenant_id != getattr(tenant, 'id', None):
+            raise ValidationError("Empleado fuera del tenant")
+        return employee

@@ -1,6 +1,6 @@
 from django.contrib import admin
 from apps.tenants_api.base_admin import BaseTenantAdmin
-from .models import Employee, EmployeeService, WorkSchedule
+from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 
 @admin.register(Employee)
@@ -41,3 +41,17 @@ class PayrollDeductionAdmin(BaseTenantAdmin):
 class PayrollConfigurationAdmin(BaseTenantAdmin):
     list_display = ['tenant', 'default_period_type', 'tax_rate', 'social_security_rate']
     list_filter = ['default_period_type']
+
+
+@admin.register(AttendanceRecord)
+class AttendanceRecordAdmin(BaseTenantAdmin):
+    list_display = ['employee', 'work_date', 'check_in_at', 'check_out_at', 'status']
+    list_filter = ['status', 'work_date']
+
+    def get_queryset(self, request):
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        if hasattr(request.user, 'tenant') and request.user.tenant:
+            return qs.filter(employee__tenant=request.user.tenant)
+        return qs.none()

@@ -260,3 +260,79 @@ def test_manager_cannot_delete_schedule_sensitive_action(manager_client, team_em
         reverse('work_schedule-detail', kwargs={'pk': schedule.id})
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.fixture
+def other_tenant_employee(db):
+    plan, _ = SubscriptionPlan.objects.get_or_create(
+        name='standard',
+        defaults={
+            'description': 'Plan standard test',
+            'price': 0,
+            'duration_month': 1,
+            'max_employees': 20,
+            'max_users': 20,
+            'is_active': True,
+            'features': {}
+        }
+    )
+    owner = User.objects.create_superuser(
+        email='owner.other.tenant@example.com',
+        password='testpassword123',
+        full_name='Owner Other Tenant'
+    )
+    tenant = Tenant.objects.create(
+        name=f"Tenant Other {owner.id}",
+        subdomain=f"tenant-other-{owner.id}",
+        owner=owner,
+        is_active=True,
+        subscription_plan=plan,
+        subscription_status='active',
+    )
+    worker_user = User.objects.create_user(
+        email='worker.other.tenant@example.com',
+        password='testpassword123',
+        full_name='Worker Other Tenant',
+        tenant=tenant,
+        is_email_verified=True
+    )
+    return Employee.objects.create(user=worker_user, tenant=tenant, specialty='Stylist')
+
+
+@pytest.mark.django_db
+def test_manager_cannot_create_schedule_other_tenant(manager_client, other_tenant_employee):
+    payload = {
+        'employee': other_tenant_employee.id,
+        'day_of_week': 'monday',
+        'start_time': '09:00:00',
+        'end_time': '17:00:00'
+    }
+    response = manager_client.post(reverse('work_schedule-list'), payload, format='json')
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.django_db
+def test_manager_can_check_in_and_check_out_attendance(manager_client, team_employee):
+    check_in_response = manager_client.post(
+        reverse('attendance_record-check-in'),
+        {'employee': team_employee.id},
+        format='json'
+    )
+    assert check_in_response.status_code in [status.HTTP_200_OK, status.HTTP_201_CREATED]
+
+    check_out_response = manager_client.post(
+        reverse('attendance_record-check-out'),
+        {'employee': team_employee.id},
+        format='json'
+    )
+    assert check_out_response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.django_db
+def test_manager_cannot_check_in_attendance_other_tenant(manager_client, other_tenant_employee):
+    response = manager_client.post(
+        reverse('attendance_record-check-in'),
+        {'employee': other_tenant_employee.id},
+        format='json'
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
