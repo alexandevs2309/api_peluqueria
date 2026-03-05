@@ -5,8 +5,42 @@ from django.conf import settings
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import UserSubscription
 import logging
+from html import escape
 
 logger = logging.getLogger(__name__)
+
+def _email_branding_for_tenant(tenant):
+    business_name = tenant.name or 'Auron Suite'
+    logo_url = ''
+    try:
+        from apps.settings_api.barbershop_models import BarbershopSettings
+        shop_settings = BarbershopSettings.objects.filter(tenant=tenant).first()
+        if shop_settings:
+            business_name = shop_settings.name or business_name
+            if shop_settings.logo:
+                raw_logo = shop_settings.logo.url
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+                logo_url = f"{frontend_url}{raw_logo}" if raw_logo.startswith('/') else f"{frontend_url}/{raw_logo}"
+    except Exception:
+        pass
+    return business_name, logo_url
+
+def _build_html_email(tenant, title, message_lines):
+    business_name, logo_url = _email_branding_for_tenant(tenant)
+    logo_block = f'<img src="{escape(logo_url)}" alt="Logo" style="max-height:64px;max-width:180px;object-fit:contain;margin-bottom:12px;" />' if logo_url else ''
+    list_block = ''.join([f'<p style="margin:0 0 10px 0;">{escape(line)}</p>' for line in message_lines])
+    return f"""
+    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
+      <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
+        <div style="text-align:center;border-bottom:1px solid #e5e7eb;padding-bottom:12px;margin-bottom:16px;">
+          {logo_block}
+          <h2 style="margin:0;color:#111827;">{escape(business_name)}</h2>
+        </div>
+        <h3 style="margin:0 0 12px 0;color:#111827;">{escape(title)}</h3>
+        <div style="color:#374151;font-size:14px;line-height:1.6;">{list_block}</div>
+      </div>
+    </div>
+    """
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def check_trial_expirations(self):
@@ -148,11 +182,18 @@ def send_trial_expired_email(tenant):
     """
     
     try:
+        html_message = _build_html_email(tenant, subject, [
+            f"Hola {tenant.owner.full_name},",
+            f"Tu prueba gratuita de 7 días para {tenant.name} ha expirado.",
+            "Para continuar usando BarberSaaS inicia sesión y selecciona un plan de pago.",
+            "No pierdas tus datos. Reactiva tu cuenta hoy."
+        ])
         send_mail(
             subject=subject,
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[tenant.contact_email],
+            html_message=html_message,
             fail_silently=False,
         )
     except Exception as e:
@@ -177,11 +218,18 @@ def send_trial_warning_email(tenant, days_remaining):
     """
     
     try:
+        html_message = _build_html_email(tenant, subject, [
+            f"Hola {tenant.owner.full_name},",
+            f"Tu prueba gratuita de {tenant.name} expira en {days_remaining} días.",
+            "Para evitar suspensión, entra a configuración de suscripción y elige un plan.",
+            "No esperes al último momento."
+        ])
         send_mail(
             subject=subject,
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
             recipient_list=[tenant.contact_email],
+            html_message=html_message,
             fail_silently=False,
         )
     except Exception as e:

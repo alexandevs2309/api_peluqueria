@@ -77,12 +77,18 @@ class CookieLoginView(APIView):
         )
         
         # Respuesta con datos del usuario
+        user_role = (user.role or 'Client-Staff').upper().replace('-', '_')
+
         response_data = {
             'user': {
                 'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name,
-                'role': user.role or 'ClientStaff',
+                'phone': user.phone,
+                'role': user_role,
+                'is_active': user.is_active,
+                'date_joined': user.date_joined,
+                'avatar_url': user.avatar.url if user.avatar else None,
             },
             'message': 'Login exitoso con cookies'
         }

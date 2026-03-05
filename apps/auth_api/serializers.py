@@ -5,6 +5,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
+from django.core.exceptions import MultipleObjectsReturned
 from .models import ActiveSession
 from apps.tenants_api.models import Tenant
 
@@ -57,7 +58,7 @@ class LoginSerializer(serializers.Serializer):
                 data['user'] = superadmin
                 data['tenant'] = None
                 return data
-        except User.DoesNotExist:
+        except (User.DoesNotExist, MultipleObjectsReturned):
             pass
         
         # ✅ DETECCIÓN AUTOMÁTICA: Obtener tenant del request context
@@ -71,12 +72,27 @@ class LoginSerializer(serializers.Serializer):
             if not tenant_subdomain:
                 tenant_subdomain = request.META.get('HTTP_X_TENANT_SUBDOMAIN')
         
-        # ✅ NUEVO: Si no hay tenant_subdomain, buscar por email
+        # ✅ NUEVO: Si no hay tenant_subdomain, intentar resolver por email + password
         if not tenant_subdomain:
             try:
-                user = User.objects.filter(email=email).first()
-                if user and user.tenant:
-                    tenant_subdomain = user.tenant.subdomain
+                candidates = list(User.objects.filter(email=email).select_related('tenant'))
+                if candidates:
+                    matching_users = [u for u in candidates if u.check_password(password)]
+
+                    if len(matching_users) == 1:
+                        matched_user = matching_users[0]
+                        if not matched_user.is_active:
+                            raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
+                        data['user'] = matched_user
+                        data['tenant'] = matched_user.tenant
+                        return data
+
+                    if len(matching_users) > 1:
+                        raise serializers.ValidationError({
+                            'tenant_subdomain': 'Múltiples cuentas con este correo. Indique el tenant.'
+                        })
+            except serializers.ValidationError:
+                raise
             except Exception:
                 pass
         
@@ -191,10 +207,14 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
 class UserListSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
+    avatar_url = serializers.SerializerMethodField()
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant', 'tenant_name', 'is_active', 'date_joined', 'last_login']
+        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant', 'tenant_name', 'is_active', 'date_joined', 'last_login', 'avatar_url']
+
+    def get_avatar_url(self, obj):
+        return obj.avatar.url if obj.avatar else None
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod

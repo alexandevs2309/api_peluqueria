@@ -123,7 +123,11 @@ class PayrollPeriod(models.Model):
             raise ValidationError("No se puede modificar payment_type_snapshot")
         if old_instance.fixed_salary_snapshot != self.fixed_salary_snapshot:
             raise ValidationError("No se puede modificar fixed_salary_snapshot")
-        if old_instance.calculation_snapshot != self.calculation_snapshot:
+        # Permitir establecer snapshot por primera vez durante aprobación.
+        # Tratar snapshot vacío ({}) como no inicializado.
+        old_snapshot = old_instance.calculation_snapshot
+        had_real_snapshot = old_snapshot not in (None, {}, [])
+        if had_real_snapshot and old_snapshot != self.calculation_snapshot:
             raise ValidationError("No se puede modificar calculation_snapshot")
         
         # FIX 3: is_finalized BLOQUEA TODO
@@ -349,9 +353,16 @@ class PayrollPeriod(models.Model):
         if self.status != 'pending_approval':
             raise ValueError("Solo se pueden aprobar períodos pendientes")
         
-        # Calcular montos finales y crear snapshot ANTES de aprobar
+        # Calcular montos finales antes de aprobar.
         self.calculate_amounts()
-        self._create_calculation_snapshot()
+
+        # Regla de negocio: no se permite aprobar períodos con neto <= 0.
+        if self.net_amount <= 0 or not self.can_pay:
+            raise ValueError(self.pay_block_reason or "No se puede aprobar un período con monto neto cero o negativo")
+
+        # Respetar inmutabilidad: si ya existe snapshot, no reescribirlo.
+        if self.calculation_snapshot in (None, {}, []):
+            self._create_calculation_snapshot()
         
         self.status = 'approved'
         self.approved_at = timezone.now()

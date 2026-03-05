@@ -569,6 +569,35 @@ class RenewSubscriptionView(APIView):
         except SubscriptionPlan.DoesNotExist:
             return Response({'error': 'Invalid plan'}, status=400)
         
+        # En desarrollo permitimos activación manual para no bloquear onboarding.
+        # Producción siempre requiere Stripe.
+        if settings.DEBUG and payment_method_id in {'manual', 'manual_entry', 'test'}:
+            with transaction.atomic():
+                tenant.subscription_plan = plan
+                tenant.subscription_status = 'active'
+                tenant.trial_end_date = None
+                tenant.save(update_fields=['subscription_plan', 'subscription_status', 'trial_end_date'])
+
+                from apps.billing_api.models import Invoice
+                Invoice.objects.create(
+                    user=request.user,
+                    amount=plan.price,
+                    due_date=timezone.now(),
+                    is_paid=True,
+                    paid_at=timezone.now(),
+                    payment_method='transfer',
+                    status='paid',
+                    description=f"Subscription renewal (manual dev) - {plan.get_name_display()}"
+                )
+
+            return Response({
+                'message': 'Subscription renewed successfully (manual dev mode)',
+                'plan': plan.name,
+                'status': tenant.subscription_status,
+                'access_level': tenant.get_access_level(),
+                'payment_mode': 'manual_dev'
+            })
+
         # ✅ PAGO REAL con Stripe
         try:
             # Obtener o crear customer en Stripe

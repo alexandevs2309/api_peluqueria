@@ -39,7 +39,7 @@ class SaleSerializer(serializers.ModelSerializer):
     def validate(self, data):
         import logging
         logger = logging.getLogger(__name__)
-        logger.debug(f"Validating sale data: {data}")
+        logger.debug("Validating sale payload")
         
         # Validar que existan details y payments
         if not data.get('details'):

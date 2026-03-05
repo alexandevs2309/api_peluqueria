@@ -23,6 +23,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
         required=False
     )
     sale = serializers.PrimaryKeyRelatedField(read_only=True)
+    client_name = serializers.SerializerMethodField(read_only=True)
+    stylist_name = serializers.SerializerMethodField(read_only=True)
+    service_name = serializers.SerializerMethodField(read_only=True)
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -33,7 +36,8 @@ class AppointmentSerializer(serializers.ModelSerializer):
         model = Appointment
         fields = [
             'id', 'client', 'stylist', 'role', 'service', 'stylist_info',
-            'status', 'created_at', 'description', 'updated_at', 'date_time' ,'sale'
+            'status', 'created_at', 'description', 'updated_at', 'date_time' ,'sale',
+            'client_name', 'stylist_name', 'service_name'
         ]
         read_only_fields = ['created_at', 'updated_at']
         extra_kwargs = {'stylist_info': {'read_only': True}}
@@ -83,3 +87,18 @@ class AppointmentSerializer(serializers.ModelSerializer):
         if value < timezone.now():
             raise serializers.ValidationError(_('Appointment date and time cannot be in the past'))
         return value
+
+    def get_client_name(self, obj):
+        if obj.client_id and obj.client:
+            return obj.client.full_name
+        return None
+
+    def get_stylist_name(self, obj):
+        if obj.stylist_id and obj.stylist:
+            return obj.stylist.full_name or obj.stylist.email
+        return None
+
+    def get_service_name(self, obj):
+        if obj.service_id and obj.service:
+            return obj.service.name
+        return None

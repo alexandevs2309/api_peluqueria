@@ -32,7 +32,7 @@ class Command(BaseCommand):
                 patterns = ["sale", "saledetail", "cashregister", "payment"]
                 for pattern in patterns:
                     perms |= Permission.objects.filter(codename__icontains=pattern)
-            elif role.name in ["Client-Staff", "Stilista"]:
+            elif role.name in ["Client-Staff", "Estilista", "Stilista"]:
                 patterns = ["appointment", "service", "earning"]
                 for pattern in patterns:
                     perms |= Permission.objects.filter(codename__icontains=pattern)

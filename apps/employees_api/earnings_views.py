@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied
 from django.utils import timezone
+from django.core.exceptions import ValidationError
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
@@ -177,6 +178,8 @@ class PayrollViewSet(viewsets.ViewSet):
         except PayrollPeriod.DoesNotExist:
             return Response({'error': 'Período no encontrado'}, status=404)
         except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+        except ValidationError as e:
             return Response({'error': str(e)}, status=400)
     
     @action(detail=False, methods=['post'], url_path='client/payroll/(?P<period_id>[^/.]+)/reject')

@@ -78,8 +78,8 @@ class SaleViewSet(viewsets.ModelViewSet):
         pass
 
     def create(self, request, *args, **kwargs):
-        logger.info(f"Creating sale for user {request.user}")
-        logger.debug(f"Sale creation data: {request.data}")
+        logger.info("Creating sale request")
+        logger.debug("Sale create payload received")
         try:
             return super().create(request, *args, **kwargs)
         except Exception as e:
@@ -129,6 +129,8 @@ class SaleViewSet(viewsets.ModelViewSet):
     def _get_or_create_active_period(self, employee):
         """Obtiene o crea el período activo para el empleado"""
         from apps.employees_api.earnings_models import PayrollPeriod
+        from django.db import IntegrityError
+        import calendar
         
         # Buscar período abierto o pendiente
         active_period = PayrollPeriod.objects.filter(
@@ -147,19 +149,85 @@ class SaleViewSet(viewsets.ModelViewSet):
             end_date = today.replace(day=15)
         else:
             start_date = today.replace(day=16)
-            last_day = (today.replace(month=today.month+1 if today.month < 12 else 1, 
-                                     year=today.year if today.month < 12 else today.year+1, day=1) 
-                       - timezone.timedelta(days=1)).day
+            last_day = calendar.monthrange(today.year, today.month)[1]
             end_date = today.replace(day=last_day)
-        
-        period = PayrollPeriod.objects.create(
+
+        # Si ya existe un período para ese rango (cualquier estado), reutilizarlo
+        # para evitar choques de unique_employee_period.
+        existing_period = PayrollPeriod.objects.filter(
             employee=employee,
-            period_type='biweekly',
             period_start=start_date,
-            period_end=end_date,
-            status='open'
-        )
-        return period
+            period_end=end_date
+        ).first()
+        if existing_period:
+            return existing_period
+
+        try:
+            return PayrollPeriod.objects.create(
+                employee=employee,
+                period_type='biweekly',
+                period_start=start_date,
+                period_end=end_date,
+                status='open'
+            )
+        except IntegrityError:
+            # Carrera de concurrencia: otro request creó el período.
+            existing_period = PayrollPeriod.objects.filter(
+                employee=employee,
+                period_start=start_date,
+                period_end=end_date
+            ).first()
+            if existing_period:
+                return existing_period
+            raise
+
+    def _get_or_create_adjustment_period(self, employee, reference_date):
+        """Obtiene (o crea) un período abierto para aplicar ajustes de comisión."""
+        from apps.employees_api.earnings_models import PayrollPeriod
+        from django.db import IntegrityError
+        import calendar
+
+        # Reusar cualquier período abierto/pending existente
+        target_period = PayrollPeriod.objects.filter(
+            employee=employee,
+            status__in=['open', 'pending_approval']
+        ).order_by('period_start').first()
+        if target_period:
+            return target_period
+
+        # Si no hay período abierto, crear el próximo período quincenal
+        if reference_date.day <= 15:
+            start_date = reference_date.replace(day=16)
+            last_day = calendar.monthrange(reference_date.year, reference_date.month)[1]
+            end_date = reference_date.replace(day=last_day)
+        else:
+            next_month = 1 if reference_date.month == 12 else reference_date.month + 1
+            next_year = reference_date.year + 1 if reference_date.month == 12 else reference_date.year
+            start_date = reference_date.replace(year=next_year, month=next_month, day=1)
+            end_date = reference_date.replace(year=next_year, month=next_month, day=15)
+
+        existing = PayrollPeriod.objects.filter(
+            employee=employee,
+            period_start=start_date,
+            period_end=end_date
+        ).first()
+        if existing:
+            return existing
+
+        try:
+            return PayrollPeriod.objects.create(
+                employee=employee,
+                period_type='biweekly',
+                period_start=start_date,
+                period_end=end_date,
+                status='open'
+            )
+        except IntegrityError:
+            return PayrollPeriod.objects.get(
+                employee=employee,
+                period_start=start_date,
+                period_end=end_date
+            )
 
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
@@ -288,8 +356,28 @@ class SaleViewSet(viewsets.ModelViewSet):
                         }
                     )
             
-            # NUEVO: Recalcular período después de guardar venta
-            if active_period:
+            # Recalcular período después de guardar venta.
+            # Si el período está finalizado, mover comisión a un ajuste en período abierto.
+            if active_period and getattr(active_period, 'is_finalized', False):
+                from apps.employees_api.adjustment_models import CommissionAdjustment
+
+                if sale_employee and sale.commission_amount_snapshot and sale.commission_amount_snapshot > 0:
+                    target_period = self._get_or_create_adjustment_period(sale_employee, timezone.now().date())
+
+                    CommissionAdjustment.objects.create(
+                        sale=sale,
+                        payroll_period=target_period,
+                        employee=sale_employee,
+                        amount=sale.commission_amount_snapshot,
+                        reason='correction',
+                        description=f'Ajuste automático por venta #{sale.id} en período finalizado',
+                        created_by=self.request.user,
+                        tenant=sale_employee.tenant
+                    )
+
+                    target_period.calculate_amounts()
+                    target_period.save()
+            elif active_period:
                 active_period.calculate_amounts()
                 active_period.save()
             
