@@ -13,12 +13,15 @@ class ServiceCategoryViewSet(TenantScopedViewSet):
     serializer_class = ServiceCategorySerializer
     permission_classes = [TenantPermissionByAction]
     permission_map = {
-        'list': 'services_api.view_servicecategory',
-        'retrieve': 'services_api.view_servicecategory',
-        'create': 'services_api.add_servicecategory',
-        'update': 'services_api.change_servicecategory',
-        'partial_update': 'services_api.change_servicecategory',
-        'destroy': 'services_api.delete_servicecategory',
+        # Reusar permisos base de servicios para mantener compatibilidad
+        # con roles existentes (Client-Admin) que no incluyen codenames
+        # default de ServiceCategory.
+        'list': 'services_api.view_service',
+        'retrieve': 'services_api.view_service',
+        'create': 'services_api.add_service',
+        'update': 'services_api.change_service',
+        'partial_update': 'services_api.change_service',
+        'destroy': 'services_api.delete_service',
     }
 
 class ServiceViewSet(AuditLoggingMixin, TenantScopedViewSet):

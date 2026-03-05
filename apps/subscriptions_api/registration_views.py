@@ -13,6 +13,7 @@ import uuid
 import secrets
 import string
 import re
+from datetime import datetime, time
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -74,7 +75,7 @@ def register_with_plan(request):
             # 1. Obtener el plan de suscripción primero
             from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
             try:
-                subscription_plan = SubscriptionPlan.objects.get(name=data['planType'])
+                subscription_plan = SubscriptionPlan.objects.get(name=data['planType'], is_active=True)
                 logger.info("Subscription plan selected plan_id=%s", subscription_plan.id)
             except SubscriptionPlan.DoesNotExist:
                 return Response({
@@ -119,9 +120,22 @@ def register_with_plan(request):
             user.role = 'Client-Admin'
             user.save(skip_validation=True)
             logger.info("User converted to Client-Admin user_id=%s tenant_id=%s", user.id, tenant.id)
+
+            # 5.1 Asignar rol RBAC para permisos por action/tenant
+            client_admin_role = Role.objects.filter(name='Client-Admin').first()
+            if client_admin_role:
+                UserRole.objects.get_or_create(
+                    user=user,
+                    role=client_admin_role,
+                    tenant=tenant
+                )
             
             # 6. Crear suscripción del usuario con trial
             trial_end = timezone.now() + timezone.timedelta(days=7)
+            if tenant.trial_end_date:
+                trial_end = timezone.make_aware(
+                    datetime.combine(tenant.trial_end_date, time.max)
+                )
             user_subscription = UserSubscription.objects.create(
                 user=user,
                 plan=subscription_plan,

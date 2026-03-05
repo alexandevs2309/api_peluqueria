@@ -32,6 +32,7 @@ from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan
 from apps.roles_api.models import Role, UserRole
 import re
+from html import escape
 from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
 
@@ -71,6 +72,64 @@ def safe_create_access_log(user, event_type, request):
         user_agent=get_user_agent(request)[:255] if get_user_agent(request) else '',
         timestamp=now()
     )
+
+def _resolve_business_branding(user, request=None):
+    business_name = 'Auron Suite'
+    logo_url = ''
+
+    if getattr(user, 'tenant', None):
+        try:
+            from apps.settings_api.barbershop_models import BarbershopSettings
+            shop_settings = BarbershopSettings.objects.filter(tenant=user.tenant).first()
+            if shop_settings:
+                business_name = shop_settings.name or business_name
+                if shop_settings.logo:
+                    raw_logo = shop_settings.logo.url
+                    if request is not None:
+                        logo_url = request.build_absolute_uri(raw_logo)
+                    else:
+                        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+                        logo_url = f"{frontend_url}{raw_logo}" if raw_logo.startswith('/') else f"{frontend_url}/{raw_logo}"
+        except Exception:
+            pass
+
+        if user.tenant.name and business_name == 'Auron Suite':
+            business_name = user.tenant.name
+
+    return business_name, logo_url
+
+def _build_branded_email_html(user, title, message_html, cta_url=None, cta_label=None, request=None):
+    business_name, logo_url = _resolve_business_branding(user, request=request)
+    safe_title = escape(title)
+    safe_business_name = escape(business_name)
+    logo_block = f'<img src="{escape(logo_url)}" alt="Logo" style="max-height:64px;max-width:180px;object-fit:contain;margin-bottom:12px;" />' if logo_url else ''
+    cta_block = (
+        f'<p style="margin:24px 0;"><a href="{escape(cta_url)}" '
+        'style="background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;display:inline-block;font-weight:600;">'
+        f'{escape(cta_label or "Abrir enlace")}</a></p>'
+    ) if cta_url else ''
+
+    return f"""
+    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
+      <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
+        <div style="text-align:center;border-bottom:1px solid #e5e7eb;padding-bottom:12px;margin-bottom:16px;">
+          {logo_block}
+          <h2 style="margin:0;color:#111827;">{safe_business_name}</h2>
+        </div>
+        <h3 style="margin:0 0 12px 0;color:#111827;">{safe_title}</h3>
+        <div style="color:#374151;font-size:14px;line-height:1.6;">{message_html}</div>
+        {cta_block}
+      </div>
+    </div>
+    """
+
+def _deliver_user_email(user, subject, text_body, html_body):
+    email_from = "no-reply@peluqueria.com"
+    recipients = [user.email]
+    if "pytest" in sys.modules:
+        send_mail(subject, text_body, email_from, recipients, html_message=html_body)
+    else:
+        send_email_async.delay(subject, text_body, email_from, recipients, html_message=html_body)
 
 class RegisterThrottle(AnonRateThrottle):
     scope = 'register'
@@ -150,14 +209,20 @@ class RegisterView(generics.CreateAPIView):
         
         # Enviar email de verificación (fuera de transacción)
         email_subject = "Verifica tu correo"
-        email_body = f"Hola {user.full_name}, verifica tu correo en: http://localhost:4200/verify-email/{user.email_verification_token}/"
-        email_from = "no-reply@peluqueria.com"
-        email_to = [user.email]
-        
-        if "pytest" in sys.modules:
-            send_email_async(email_subject, email_body, email_from, email_to)
-        else:
-            send_email_async.delay(email_subject, email_body, email_from, email_to)
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        verify_url = f"{frontend_url}/verify-email/{user.email_verification_token}/"
+        email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
+        email_html = _build_branded_email_html(
+            user=user,
+            title=email_subject,
+            message_html=(
+                f"<p>Hola {escape(user.full_name or user.email)},</p>"
+                "<p>Activa tu cuenta para continuar usando la plataforma.</p>"
+            ),
+            cta_url=verify_url,
+            cta_label="Verificar correo"
+        )
+        _deliver_user_email(user, email_subject, email_body, email_html)
 
 class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
@@ -369,20 +434,18 @@ class ChangePasswordView(generics.UpdateAPIView):
                 timestamp=now()
             )
 
-            if "pytest" in sys.modules:
-                send_mail(
-                    "Cambio de contraseña exitoso",
-                    f"Hola {user.full_name}, tu contraseña ha sido cambiada exitosamente.",
-                    "no-reply@peluqueria.com",
-                    [user.email]
-                )
-            else:
-                send_email_async.delay(
-                    "Cambio de contraseña exitoso",
-                    f"Hola {user.full_name}, tu contraseña ha sido cambiada exitosamente.",
-                    "no-reply@peluqueria.com",
-                    [user.email]
-                )
+            subject = "Cambio de contraseña exitoso"
+            text_body = f"Hola {user.full_name}, tu contraseña ha sido cambiada exitosamente."
+            html_body = _build_branded_email_html(
+                user=user,
+                title=subject,
+                message_html=(
+                    f"<p>Hola {escape(user.full_name or user.email)},</p>"
+                    "<p>Tu contraseña fue actualizada correctamente.</p>"
+                ),
+                request=request
+            )
+            _deliver_user_email(user, subject, text_body, html_body)
 
             return Response({"detail": "Contraseña actualizada correctamente."})
 
@@ -419,20 +482,20 @@ class PasswordResetRequestView(APIView):
                     reset_url,
                 )
             
-            if "pytest" in sys.modules:
-                send_mail(
-                    "Restablecer contraseña",
-                    f"Hola {user.full_name}, para restablecer tu contraseña haz clic en el siguiente enlace:\n{reset_url}",
-                    "no-reply@peluqueria.com",
-                    [user.email]
-                )
-            else:
-                send_email_async.delay(
-                    "Restablecer contraseña",
-                    f"Hola {user.full_name}, para restablecer tu contraseña haz clic en el siguiente enlace:\n{reset_url}",
-                    "no-reply@peluqueria.com",
-                    [user.email]
-                )
+            subject = "Restablecer contraseña"
+            text_body = f"Hola {user.full_name}, para restablecer tu contraseña haz clic en el siguiente enlace:\n{reset_url}"
+            html_body = _build_branded_email_html(
+                user=user,
+                title=subject,
+                message_html=(
+                    f"<p>Hola {escape(user.full_name or user.email)},</p>"
+                    "<p>Recibimos una solicitud para restablecer tu contraseña.</p>"
+                ),
+                cta_url=reset_url,
+                cta_label="Restablecer contraseña",
+                request=request
+            )
+            _deliver_user_email(user, subject, text_body, html_body)
 
             return Response({"detail": "Correo enviado para restablecer contraseña."}, status=status.HTTP_200_OK)
         except User.DoesNotExist:
@@ -454,20 +517,18 @@ class PasswordResetConfirmView(APIView):
             timestamp=now()
         )
 
-        if "pytest" in sys.modules:
-            send_mail(
-                "Contraseña restablecida",
-                f"Hola {user.full_name}, tu contraseña ha sido restablecida exitosamente.",
-                "no-reply@peluqueria.com",
-                [user.email]
-            )
-        else:
-            send_email_async.delay(
-                "Contraseña restablecida",
-                f"Hola {user.full_name}, tu contraseña ha sido restablecida exitosamente.",
-                "no-reply@peluqueria.com",
-                [user.email]
-            )
+        subject = "Contraseña restablecida"
+        text_body = f"Hola {user.full_name}, tu contraseña ha sido restablecida exitosamente."
+        html_body = _build_branded_email_html(
+            user=user,
+            title=subject,
+            message_html=(
+                f"<p>Hola {escape(user.full_name or user.email)},</p>"
+                "<p>Tu contraseña fue restablecida exitosamente.</p>"
+            ),
+            request=request
+        )
+        _deliver_user_email(user, subject, text_body, html_body)
 
         return Response({"detail": "Contraseña restablecida con éxito."})
 
@@ -701,12 +762,25 @@ class UserViewSet(viewsets.ModelViewSet):
         'destroy': 'auth_api.delete_user',
         'available_for_employee': 'auth_api.view_user',
         'bulk_delete': 'auth_api.delete_user',
+        'upload_avatar': 'auth_api.change_user',
     }
     serializer_class = UserListSerializer
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
+
+    def _is_tenant_admin_or_superuser(self, request) -> bool:
+        """Solo SuperAdmin o Client-Admin pueden gestionar usuarios."""
+        if request.user.is_superuser:
+            return True
+        return (request.user.role or '') == 'Client-Admin'
     
     def destroy(self, request, *args, **kwargs):
         """Override destroy to add logging and proper deletion"""
+        if not self._is_tenant_admin_or_superuser(request):
+            return Response(
+                {'error': 'Solo Client-Admin puede eliminar usuarios'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         instance = self.get_object()
         logger.info("Attempting to delete user_id=%s by actor_id=%s", instance.id, request.user.id)
         
@@ -747,6 +821,12 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserListSerializer
 
     def create(self, request, *args, **kwargs):
+        if not self._is_tenant_admin_or_superuser(request):
+            return Response(
+                {'error': 'Solo Client-Admin puede crear usuarios'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         # Check user limits for non-superadmin
         if not request.user.is_superuser and request.user.tenant:
             if not request.user.tenant.can_add_user():
@@ -810,8 +890,39 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     def update(self, request, *args, **kwargs):
+        if not self._is_tenant_admin_or_superuser(request):
+            return Response(
+                {'error': 'Solo Client-Admin puede modificar usuarios'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         partial = kwargs.pop('partial', False)
         instance = self.get_object()
+        is_self_update = instance.id == request.user.id
+
+        # Permitir auto-edición básica del propio perfil sin validación jerárquica de roles.
+        if is_self_update:
+            allowed_self_fields = {'full_name', 'email', 'phone'}
+            requested_fields = set(request.data.keys())
+            blocked_fields = requested_fields - allowed_self_fields
+            if blocked_fields:
+                return Response(
+                    {
+                        'error': 'No puedes modificar estos campos en tu propio perfil',
+                        'blocked_fields': sorted(list(blocked_fields))
+                    },
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            try:
+                serializer.is_valid(raise_exception=True)
+                user = serializer.save()
+                return Response(UserListSerializer(user).data)
+            except ValidationError as e:
+                return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
         # ✅ VALIDAR QUE PUEDE MODIFICAR ESTE USUARIO
         can_modify, error_msg = can_modify_user(
@@ -896,10 +1007,31 @@ class UserViewSet(viewsets.ModelViewSet):
             'tenant_id': user.tenant_id,
             'roles': [{'id': role.id, 'name': role.name} for role in user.roles.all()]
         } for user in users])
+
+    @action(detail=False, methods=['post'], url_path='me/avatar', permission_classes=[IsAuthenticated])
+    def upload_avatar(self, request):
+        """Subir avatar del usuario autenticado."""
+        if 'avatar' not in request.FILES:
+            return Response({'error': 'No avatar file provided'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        user.avatar = request.FILES['avatar']
+        user.save()
+
+        return Response({
+            'avatar_url': user.avatar.url if user.avatar else None,
+            'message': 'Avatar actualizado correctamente'
+        })
     
     @action(detail=False, methods=['post'])
     def bulk_delete(self, request):
         """Bulk delete users"""
+        if not self._is_tenant_admin_or_superuser(request):
+            return Response(
+                {'error': 'Solo Client-Admin puede eliminar usuarios'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
         user_ids = request.data.get('user_ids', [])
         users = self.get_queryset().filter(id__in=user_ids)
         

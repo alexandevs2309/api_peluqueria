@@ -68,6 +68,10 @@ client_admin = Role.objects.get(name='Client-Admin')
 admin_perms = Permission.objects.filter(
     content_type__in=[employee_ct, sale_ct, client_ct, appointment_ct, cashregister_ct, product_ct, service_ct, promotion_ct]
 )
+auth_user_perms = Permission.objects.filter(
+    content_type__app_label='auth_api',
+    codename__in=['view_user', 'add_user', 'change_user', 'delete_user']
+)
 client_admin_report_perms = Permission.objects.filter(
     content_type=report_permission_ct,
     codename__in=[
@@ -78,7 +82,7 @@ client_admin_report_perms = Permission.objects.filter(
         'view_advanced_analytics',
     ]
 )
-client_admin.permissions.set((admin_perms | client_admin_report_perms).distinct())
+client_admin.permissions.set((admin_perms | client_admin_report_perms | auth_user_perms).distinct())
 print(f"✅ Permisos asignados a Client-Admin: {client_admin.permissions.count()}")
 
 # Asignar permisos a Manager
@@ -104,7 +108,12 @@ manager_report_perms = Permission.objects.filter(
         'view_kpi_dashboard',
     ]
 )
-manager.permissions.set((manager_perms | manager_report_perms).distinct())
+# Hardening: Manager nunca debe gestionar usuarios auth_api
+manager_user_mgmt_perms = Permission.objects.filter(
+    content_type__app_label='auth_api',
+    codename__in=['add_user', 'change_user', 'delete_user', 'view_user']
+)
+manager.permissions.set((manager_perms | manager_report_perms).exclude(id__in=manager_user_mgmt_perms.values('id')).distinct())
 print(f"✅ Permisos asignados a Manager: {manager.permissions.count()}")
 
 # Asignar permisos a Cajera (operación POS sin gestión administrativa)
