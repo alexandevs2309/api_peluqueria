@@ -138,6 +138,8 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['post'], url_path='client/payroll/(?P<period_id>[^/.]+)/submit')
     def submit_for_approval(self, request, period_id=None):
         """Enviar período para aprobación"""
+        self._require_admin_role(request)
+
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
