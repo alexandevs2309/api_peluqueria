@@ -357,13 +357,18 @@ class PayrollPeriod(models.Model):
         self.calculate_amounts()
 
         # Regla de negocio: no se permite aprobar períodos con neto <= 0.
-        if self.net_amount <= 0 or not self.can_pay:
-            raise ValueError(self.pay_block_reason or "No se puede aprobar un período con monto neto cero o negativo")
+        # Nota: can_pay se usa para habilitar el pago (no la aprobación) y en
+        # pending_approval será False por diseño.
+        if self.net_amount <= 0:
+            raise ValueError("No se puede aprobar un período con monto neto cero o negativo")
 
         # Respetar inmutabilidad: si ya existe snapshot, no reescribirlo.
         if self.calculation_snapshot in (None, {}, []):
             self._create_calculation_snapshot()
         
+        # Al aprobar, este flag debe reflejar "listo para pagar".
+        self.can_pay = True
+        self.pay_block_reason = None
         self.status = 'approved'
         self.approved_at = timezone.now()
         self.approved_by = approved_by
