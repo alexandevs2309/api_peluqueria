@@ -6,8 +6,30 @@ import json
 from .reconciliation_models import ProcessedStripeEvent, ReconciliationLog, ReconciliationAlert
 
 
+class SuperuserReadOnlyAdmin(admin.ModelAdmin):
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop("delete_selected", None)
+        return actions
+
+
 @admin.register(ProcessedStripeEvent)
-class ProcessedStripeEventAdmin(admin.ModelAdmin):
+class ProcessedStripeEventAdmin(SuperuserReadOnlyAdmin):
     list_display = ['stripe_event_id', 'event_type', 'processed_at']
     list_filter = ['event_type', 'processed_at']
     search_fields = ['stripe_event_id', 'event_type']
@@ -20,7 +42,7 @@ class ProcessedStripeEventAdmin(admin.ModelAdmin):
 
 
 @admin.register(ReconciliationLog)
-class ReconciliationLogAdmin(admin.ModelAdmin):
+class ReconciliationLogAdmin(SuperuserReadOnlyAdmin):
     list_display = ['id', 'started_at', 'status_badge', 'discrepancies_found', 'duration']
     list_filter = ['status', 'started_at']
     readonly_fields = [
@@ -64,12 +86,12 @@ class ReconciliationLogAdmin(admin.ModelAdmin):
 
 
 @admin.register(ReconciliationAlert)
-class ReconciliationAlertAdmin(admin.ModelAdmin):
+class ReconciliationAlertAdmin(SuperuserReadOnlyAdmin):
     list_display = ['id', 'severity_badge', 'alert_type', 'reconciliation_link', 'created_at', 'resolved_badge']
     list_filter = ['severity', 'alert_type', 'resolved', 'created_at']
     search_fields = ['description', 'alert_type']
     readonly_fields = ['reconciliation', 'severity', 'alert_type', 'description', 'formatted_details', 'created_at']
-    fields = ['reconciliation', 'severity', 'alert_type', 'description', 'formatted_details', 
+    fields = ['reconciliation', 'severity', 'alert_type', 'description', 'formatted_details',
               'created_at', 'resolved', 'resolved_at', 'resolved_by']
     ordering = ['-created_at']
     

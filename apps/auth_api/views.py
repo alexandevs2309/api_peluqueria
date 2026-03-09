@@ -25,6 +25,7 @@ from .serializers import (
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
     EmployeeUserSerializer, UserListSerializer
 )
+from .role_utils import normalize_role_for_api
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -264,7 +265,8 @@ class LoginView(generics.GenericAPIView):
         user = serializer.validated_data['user']
         tenant = serializer.validated_data['tenant']
 
-        if not tenant and user.role != 'SuperAdmin' and not user.is_superuser:
+        user_role_api = normalize_role_for_api(user.role, is_superuser=user.is_superuser)
+        if not tenant and user_role_api != 'SUPER_ADMIN':
             return Response({"detail": "Usuario sin tenant asignado. Contacte al administrador."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not user.is_active:
@@ -320,12 +322,9 @@ class LoginView(generics.GenericAPIView):
             timestamp=now()
         )
 
-        user_role = user.role or 'CLIENT_STAFF'
+        user_role = normalize_role_for_api(user.role, is_superuser=user.is_superuser)
         if not user_role and user.roles.exists():
-            user_role = user.roles.first().name
-        
-        # Normalizar rol para frontend: Client-Admin -> CLIENT_ADMIN
-        user_role = user_role.upper().replace('-', '_')
+            user_role = normalize_role_for_api(user.roles.first().name, is_superuser=user.is_superuser)
         
         response_data = {
             'user': {
@@ -1059,6 +1058,6 @@ class VerifyAuthView(APIView):
             'user': {
                 'id': request.user.id,
                 'email': request.user.email,
-                'role': request.user.role
+                'role': normalize_role_for_api(request.user.role, is_superuser=request.user.is_superuser)
             }
         })

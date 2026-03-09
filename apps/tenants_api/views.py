@@ -115,6 +115,47 @@ class TenantViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(tenant)
         return response.Response(serializer.data, status=status.HTTP_200_OK)
 
+    @decorators.action(detail=True, methods=["post"])
+    def suspend(self, request, pk=None):
+        tenant = self.get_object()
+        reason = request.data.get("reason", "").strip()
+
+        if tenant.subscription_status == "suspended":
+            return response.Response(
+                {"status": "tenant already suspended"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tenant.subscription_status = "suspended"
+        tenant.is_active = False
+        tenant.save(update_fields=["subscription_status", "is_active", "updated_at"])
+
+        self._create_audit_log(
+            request.user,
+            f"Suspended tenant ({reason})" if reason else "Suspended tenant",
+            tenant
+        )
+        serializer = self.get_serializer(tenant)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=True, methods=["post"])
+    def resume(self, request, pk=None):
+        tenant = self.get_object()
+
+        if tenant.subscription_status != "suspended":
+            return response.Response(
+                {"status": "tenant is not suspended"},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tenant.subscription_status = "active"
+        tenant.is_active = True
+        tenant.save(update_fields=["subscription_status", "is_active", "updated_at"])
+
+        self._create_audit_log(request.user, "Resumed tenant", tenant)
+        serializer = self.get_serializer(tenant)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)
+
     @decorators.action(detail=True, methods=["get"])
     def stats(self, request, pk=None):
         tenant = self.get_object()
@@ -154,14 +195,33 @@ class TenantViewSet(viewsets.ModelViewSet):
     def subscription_status(self, request):
         """Check subscription status - will trigger middleware validation"""
         if request.user.tenant:
-            return response.Response({"status": "active"})
+            tenant = request.user.tenant
+            access_level = tenant.get_access_level()
+            payload = {
+                "status": tenant.subscription_status,
+                "access_level": access_level
+            }
+            if access_level == 'blocked':
+                if tenant.is_paid_access_expired():
+                    payload.update({
+                        "error": "Subscription expired",
+                        "code": "SUBSCRIPTION_EXPIRED",
+                        "access_until": tenant.access_until
+                    })
+                    return response.Response(payload, status=status.HTTP_402_PAYMENT_REQUIRED)
+                payload.update({
+                    "error": "Subscription required",
+                    "code": "SUBSCRIPTION_REQUIRED"
+                })
+                return response.Response(payload, status=status.HTTP_402_PAYMENT_REQUIRED)
+            return response.Response(payload, status=status.HTTP_200_OK)
         return response.Response({"error": "No tenant assigned"}, status=403)
     
     @decorators.action(detail=False, methods=["post"])
     def bulk_activate(self, request):
         """Bulk activate tenants"""
         tenant_ids = request.data.get('tenant_ids', [])
-        tenants = Tenant.objects.filter(id__in=tenant_ids)
+        tenants = Tenant.objects.filter(id__in=tenant_ids, deleted_at__isnull=True)
         tenants.update(is_active=True)
         return response.Response({"activated": len(tenants)})
     
@@ -169,7 +229,7 @@ class TenantViewSet(viewsets.ModelViewSet):
     def bulk_deactivate(self, request):
         """Bulk deactivate tenants"""
         tenant_ids = request.data.get('tenant_ids', [])
-        tenants = Tenant.objects.filter(id__in=tenant_ids)
+        tenants = Tenant.objects.filter(id__in=tenant_ids, deleted_at__isnull=True)
         tenants.update(is_active=False)
         return response.Response({"deactivated": len(tenants)})
     
@@ -190,7 +250,7 @@ class TenantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        tenants = Tenant.objects.filter(id__in=tenant_ids)
+        tenants = Tenant.objects.filter(id__in=tenant_ids, deleted_at__isnull=True)
         deleted_count = 0
         
         for tenant in tenants:

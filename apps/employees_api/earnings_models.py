@@ -134,6 +134,7 @@ class PayrollPeriod(models.Model):
         if old_instance.is_finalized:
             # Solo permitir cambios administrativos mínimos
             allowed_when_finalized = {
+                'status',  # Permitir transición approved -> paid
                 'payment_method',
                 'payment_reference',
                 'paid_at',

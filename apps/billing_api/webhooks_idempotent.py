@@ -11,9 +11,38 @@ from apps.tenants_api.utils import get_active_tenant
 from apps.billing_api.models import Invoice, PaymentAttempt
 from apps.billing_api.reconciliation_models import ProcessedStripeEvent
 from django.apps import apps
+from datetime import datetime, timezone as dt_timezone
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_user_id_from_invoice(invoice_data):
+    metadata = invoice_data.get('metadata') or {}
+    user_id = metadata.get('user_id')
+    if user_id:
+        return user_id
+
+    customer_id = invoice_data.get('customer')
+    if not customer_id:
+        return None
+
+    user = User.objects.filter(stripe_customer_id=customer_id).first()
+    return user.id if user else None
+
+
+def _extract_cycle_end(invoice_data):
+    """Extraer fin de ciclo desde invoice lines.period.end (Stripe)."""
+    try:
+        lines = (invoice_data.get('lines') or {}).get('data') or []
+        if not lines:
+            return None
+        period_end = (lines[0].get('period') or {}).get('end')
+        if not period_end:
+            return None
+        return datetime.fromtimestamp(period_end, tz=dt_timezone.utc)
+    except Exception:
+        return None
 
 
 @csrf_exempt
@@ -76,8 +105,9 @@ def stripe_webhook(request):
 def handle_payment_succeeded(invoice_data):
     """Manejar pago exitoso con protección contra duplicados"""
     try:
-        user_id = invoice_data['metadata'].get('user_id')
+        user_id = _resolve_user_id_from_invoice(invoice_data)
         payment_intent_id = invoice_data.get('payment_intent')
+        cycle_end = _extract_cycle_end(invoice_data)
         
         if not user_id:
             logger.warning("Payment succeeded: missing user_id in metadata")
@@ -128,11 +158,24 @@ def handle_payment_succeeded(invoice_data):
         # Reactivar tenant si estaba suspendido
         if hasattr(user, 'tenant') and user.tenant:
             tenant = user.tenant
-            if tenant.subscription_status == 'suspended':
+            update_fields = []
+            if tenant.subscription_status != 'active':
                 tenant.subscription_status = 'active'
+                update_fields.append('subscription_status')
+            if not tenant.is_active:
                 tenant.is_active = True
-                tenant.save()
-                logger.info(f"Tenant {tenant.id} reactivated after payment")
+                update_fields.append('is_active')
+            if cycle_end:
+                tenant.access_until = cycle_end
+                update_fields.append('access_until')
+            if update_fields:
+                update_fields.append('updated_at')
+                tenant.save(update_fields=update_fields)
+            logger.info(
+                "Tenant %s payment succeeded. access_until=%s",
+                tenant.id,
+                tenant.access_until.isoformat() if tenant.access_until else None
+            )
                 
     except User.DoesNotExist:
         logger.warning(f"Payment succeeded: user {user_id} not found")
@@ -216,7 +259,7 @@ def handle_subscription_cancelled(subscription_data):
             tenant = user.tenant
             tenant.subscription_status = 'cancelled'
             tenant.is_active = False
-            tenant.save()
+            tenant.save(update_fields=['subscription_status', 'is_active', 'updated_at'])
             logger.info(f"Tenant {tenant.id} cancelled subscription")
             
     except User.DoesNotExist:

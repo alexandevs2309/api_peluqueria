@@ -83,6 +83,20 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                     'action_required': 'upgrade_plan',
                     'upgrade_url': '/subscriptions/plans/'
                 }, status=402)  # Payment Required
+
+        # Validar expiración de acceso pago (fecha de corte)
+        if (
+            tenant.subscription_status == 'active' and
+            tenant.access_until and
+            tenant.access_until < timezone.now()
+        ):
+            return JsonResponse({
+                'error': 'Subscription expired',
+                'code': 'SUBSCRIPTION_EXPIRED',
+                'expired_date': tenant.access_until.isoformat(),
+                'action_required': 'renew_subscription',
+                'renewal_url': '/client/payment'
+            }, status=402)
             
         # Validar suscripciones de usuario expiradas
         user_subscription = UserSubscription.objects.filter(

@@ -1,11 +1,12 @@
-from rest_framework import views, response, permissions
+from rest_framework import views, response
 from .integration_service import IntegrationService
 from apps.audit_api.views import AuditLogViewSet
+from apps.core.permissions import IsSuperAdmin
 import os
 
 class IntegrationStatusView(views.APIView):
     """Vista para obtener el estado de todas las integraciones"""
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsSuperAdmin]
     
     def get(self, request):
         """Obtener estado de integraciones disponibles"""
@@ -17,7 +18,7 @@ class IntegrationStatusView(views.APIView):
 
 class IntegrationTestView(views.APIView):
     """Vista para probar integraciones específicas"""
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [IsSuperAdmin]
     
     def post(self, request):
         """Probar una integración específica"""

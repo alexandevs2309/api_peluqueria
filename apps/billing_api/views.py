@@ -28,18 +28,23 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'head', 'options']
 
     def get_queryset(self):
+        queryset = Invoice.objects.select_related(
+            'user', 'user__tenant', 'subscription', 'subscription__plan'
+        )
+
         # ✅ ESTANDARIZADO: Usar is_superuser
         if hasattr(self.request.user, 'roles') and self.request.user.is_superuser:
-            return Invoice.objects.select_related(
-                'user', 'user__tenant', 'subscription', 'subscription__plan'
-            ).all()
+            tenant_id = self.request.query_params.get('tenant')
+            if tenant_id:
+                return queryset.filter(user__tenant_id=tenant_id)
+            return queryset.all()
         elif self.request.user.is_superuser:
-            return Invoice.objects.select_related(
-                'user', 'user__tenant', 'subscription', 'subscription__plan'
-            ).all()
-        return Invoice.objects.select_related(
-            'user', 'user__tenant', 'subscription', 'subscription__plan'
-        ).filter(user=self.request.user)
+            tenant_id = self.request.query_params.get('tenant')
+            if tenant_id:
+                return queryset.filter(user__tenant_id=tenant_id)
+            return queryset.all()
+
+        return queryset.filter(user=self.request.user)
     
     def update(self, request, *args, **kwargs):
         return Response(
