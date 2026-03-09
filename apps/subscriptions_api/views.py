@@ -15,6 +15,7 @@ from django.db import transaction
 from django.conf import settings
 from stripe.error import StripeError
 import stripe
+from dateutil.relativedelta import relativedelta
 from apps.tenants_api.models import Tenant
 from apps.auth_api.models import User
 from apps.roles_api.models import Role, UserRole
@@ -440,13 +441,12 @@ class OnboardingView(APIView):
             # 3. Obtener plan y validar stripe_price_id
             plan = SubscriptionPlan.objects.get(id=data['plan_id'])
             
-            # ✅ Validar que plan tiene stripe_price_id configurado
-            if not hasattr(plan, 'stripe_price_id') or not plan.stripe_price_id:
-                # Fallback: usar plan.name si no hay stripe_price_id
-                # NOTA: Esto requiere que plan.name coincida con price_id en Stripe
-                stripe_price_id = plan.name
-            else:
-                stripe_price_id = plan.stripe_price_id
+            # ✅ Requerir stripe_price_id explícito para evitar cobros a precio incorrecto
+            if not plan.stripe_price_id:
+                return Response({
+                    'error': f'Plan {plan.name} missing stripe_price_id configuration'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            stripe_price_id = plan.stripe_price_id
             
             # 4. Crear suscripción Stripe
             stripe_subscription = stripe.Subscription.create(
@@ -513,6 +513,50 @@ class OnboardingView(APIView):
 
 class RenewSubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def _parse_months(self, raw_months):
+        try:
+            months = int(raw_months or 1)
+        except (TypeError, ValueError):
+            return None
+        if months < 1 or months > 24:
+            return None
+        return months
+
+    def _apply_paid_access(self, tenant, user, plan, months, auto_renew=False, access_until_override=None):
+        now = timezone.now()
+        base_time = now
+        if tenant.access_until and tenant.access_until > now:
+            base_time = tenant.access_until
+        access_until = access_until_override or (base_time + relativedelta(months=months))
+
+        tenant.subscription_plan = plan
+        tenant.subscription_status = 'active'
+        tenant.trial_end_date = None
+        tenant.is_active = True
+        tenant.access_until = access_until
+        tenant.save(update_fields=[
+            'subscription_plan',
+            'subscription_status',
+            'trial_end_date',
+            'is_active',
+            'access_until',
+            'updated_at'
+        ])
+
+        UserSubscription.objects.filter(user=user, is_active=True).update(
+            is_active=False,
+            end_date=now
+        )
+        UserSubscription.objects.create(
+            user=user,
+            plan=plan,
+            start_date=base_time,
+            end_date=access_until,
+            is_active=True,
+            auto_renew=auto_renew
+        )
+        return access_until
     
     def get(self, request):
         """Obtener información de renovación"""
@@ -535,13 +579,18 @@ class RenewSubscriptionView(APIView):
         # Obtener planes disponibles
         plans = SubscriptionPlan.objects.filter(is_active=True)
         plans_data = SubscriptionPlanSerializer(plans, many=True).data
+        access_level = tenant.get_access_level()
+        days_in_grace = 0
+        if access_level == 'grace' and tenant.trial_end_date:
+            days_in_grace = max(0, 3 - (timezone.now().date() - tenant.trial_end_date).days)
         
         return Response({
             'tenant_name': tenant.name,
             'current_status': tenant.subscription_status,
             'trial_end_date': tenant.trial_end_date,
-            'access_level': tenant.get_access_level(),
-            'days_in_grace': max(0, 3 - (timezone.now().date() - tenant.trial_end_date).days) if tenant.trial_end_date else 0,
+            'access_until': tenant.access_until,
+            'access_level': access_level,
+            'days_in_grace': days_in_grace,
             'available_plans': plans_data
         })
     
@@ -557,12 +606,19 @@ class RenewSubscriptionView(APIView):
         
         plan_id = request.data.get('plan_id')
         payment_method_id = request.data.get('payment_method_id')
+        months = self._parse_months(request.data.get('months'))
+        auto_renew_raw = request.data.get('auto_renew', False)
+        auto_renew = str(auto_renew_raw).lower() in {'1', 'true', 'yes', 'on'}
         
         if not plan_id:
             return Response({'error': 'Plan ID required'}, status=400)
         
         if not payment_method_id:
             return Response({'error': 'Payment method required'}, status=400)
+        if months is None:
+            return Response({'error': 'Months must be an integer between 1 and 24'}, status=400)
+        if auto_renew and months != 1:
+            return Response({'error': 'Auto-renew currently supports only 1 month per cycle'}, status=400)
         
         try:
             plan = SubscriptionPlan.objects.get(id=plan_id, is_active=True)
@@ -572,22 +628,21 @@ class RenewSubscriptionView(APIView):
         # En desarrollo permitimos activación manual para no bloquear onboarding.
         # Producción siempre requiere Stripe.
         if settings.DEBUG and payment_method_id in {'manual', 'manual_entry', 'test'}:
+            if auto_renew:
+                return Response({'error': 'Auto-renew requires a real Stripe payment method'}, status=400)
             with transaction.atomic():
-                tenant.subscription_plan = plan
-                tenant.subscription_status = 'active'
-                tenant.trial_end_date = None
-                tenant.save(update_fields=['subscription_plan', 'subscription_status', 'trial_end_date'])
+                access_until = self._apply_paid_access(tenant, request.user, plan, months)
 
                 from apps.billing_api.models import Invoice
                 Invoice.objects.create(
                     user=request.user,
-                    amount=plan.price,
+                    amount=plan.price * months,
                     due_date=timezone.now(),
                     is_paid=True,
                     paid_at=timezone.now(),
                     payment_method='transfer',
                     status='paid',
-                    description=f"Subscription renewal (manual dev) - {plan.get_name_display()}"
+                    description=f"Subscription renewal (manual dev) - {plan.get_name_display()} x{months}m"
                 )
 
             return Response({
@@ -595,6 +650,9 @@ class RenewSubscriptionView(APIView):
                 'plan': plan.name,
                 'status': tenant.subscription_status,
                 'access_level': tenant.get_access_level(),
+                'months': months,
+                'access_until': access_until,
+                'auto_renew': False,
                 'payment_mode': 'manual_dev'
             })
 
@@ -611,10 +669,96 @@ class RenewSubscriptionView(APIView):
                 request.user.save(update_fields=['stripe_customer_id'])
             else:
                 customer = stripe.Customer.retrieve(request.user.stripe_customer_id)
+
+            if auto_renew:
+                # Adjuntar método de pago y establecerlo por defecto para cobros automáticos.
+                try:
+                    stripe.PaymentMethod.attach(payment_method_id, customer=customer.id)
+                except stripe.error.InvalidRequestError:
+                    # Ya adjunto u otro estado aceptable.
+                    pass
+
+                stripe.Customer.modify(
+                    customer.id,
+                    invoice_settings={'default_payment_method': payment_method_id}
+                )
+
+                stripe_price_id = plan.stripe_price_id
+                if not stripe_price_id:
+                    return Response({
+                        'error': f'Plan {plan.name} missing stripe_price_id configuration'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                stripe_subscription = stripe.Subscription.create(
+                    customer=customer.id,
+                    items=[{'price': stripe_price_id}],
+                    default_payment_method=payment_method_id,
+                    payment_behavior='error_if_incomplete',
+                    metadata={
+                        'user_id': str(request.user.id),
+                        'tenant_id': str(tenant.id),
+                        'plan_id': str(plan.id)
+                    },
+                    expand=['latest_invoice.payment_intent']
+                )
+
+                if stripe_subscription.status not in {'active', 'trialing'}:
+                    return Response({
+                        'error': 'Subscription activation failed',
+                        'status': stripe_subscription.status
+                    }, status=402)
+
+                period_end_ts = stripe_subscription.get('current_period_end')
+                access_until_override = timezone.datetime.fromtimestamp(
+                    period_end_ts, tz=timezone.utc
+                ) if period_end_ts else None
+
+                with transaction.atomic():
+                    access_until = self._apply_paid_access(
+                        tenant, request.user, plan, months,
+                        auto_renew=True,
+                        access_until_override=access_until_override
+                    )
+
+                    Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
+                    Subscription.objects.update_or_create(
+                        tenant=tenant,
+                        plan=plan,
+                        defaults={
+                            'stripe_subscription_id': stripe_subscription.id,
+                            'is_active': True
+                        }
+                    )
+
+                    from apps.billing_api.models import Invoice
+                    first_invoice = stripe_subscription.get('latest_invoice') or {}
+                    first_payment_intent = first_invoice.get('payment_intent') or {}
+                    amount_paid = first_invoice.get('amount_paid') or int(plan.price * 100)
+                    Invoice.objects.create(
+                        user=request.user,
+                        amount=amount_paid / 100,
+                        due_date=timezone.now(),
+                        is_paid=True,
+                        paid_at=timezone.now(),
+                        payment_method='stripe',
+                        status='paid',
+                        stripe_payment_intent_id=first_payment_intent.get('id'),
+                        description=f"Auto-renew subscription - {plan.get_name_display()}"
+                    )
+
+                return Response({
+                    'message': 'Auto-renew subscription activated successfully',
+                    'plan': plan.name,
+                    'status': tenant.subscription_status,
+                    'access_level': tenant.get_access_level(),
+                    'months': 1,
+                    'access_until': access_until,
+                    'auto_renew': True,
+                    'stripe_subscription_id': stripe_subscription.id
+                })
             
             # Crear PaymentIntent y cobrar inmediatamente
             payment_intent = stripe.PaymentIntent.create(
-                amount=int(plan.price * 100),  # Centavos
+                amount=int(plan.price * months * 100),  # Centavos
                 currency='usd',
                 customer=customer.id,
                 payment_method=payment_method_id,
@@ -622,7 +766,8 @@ class RenewSubscriptionView(APIView):
                 metadata={
                     'user_id': request.user.id,
                     'tenant_id': tenant.id,
-                    'plan_id': plan.id
+                    'plan_id': plan.id,
+                    'months': months
                 }
             )
             
@@ -636,23 +781,20 @@ class RenewSubscriptionView(APIView):
             
             # Solo entonces activar nueva suscripción
             with transaction.atomic():
-                tenant.subscription_plan = plan
-                tenant.subscription_status = 'active'
-                tenant.trial_end_date = None
-                tenant.save(update_fields=['subscription_plan', 'subscription_status', 'trial_end_date'])
+                access_until = self._apply_paid_access(tenant, request.user, plan, months)
                 
                 # Crear factura local
                 from apps.billing_api.models import Invoice
                 Invoice.objects.create(
                     user=request.user,
-                    amount=plan.price,
+                    amount=plan.price * months,
                     due_date=timezone.now(),
                     is_paid=True,
                     paid_at=timezone.now(),
                     payment_method='stripe',
                     status='paid',
                     stripe_payment_intent_id=payment_intent.id,
-                    description=f"Subscription renewal - {plan.get_name_display()}"
+                    description=f"Subscription renewal - {plan.get_name_display()} x{months}m"
                 )
             
             return Response({
@@ -660,6 +802,8 @@ class RenewSubscriptionView(APIView):
                 'plan': plan.name,
                 'status': tenant.subscription_status,
                 'access_level': tenant.get_access_level(),
+                'months': months,
+                'access_until': access_until,
                 'payment_intent_id': payment_intent.id
             })
             

@@ -2,6 +2,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import views, status
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
+from apps.core.permissions import IsSuperAdmin
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
 from datetime import datetime, timedelta
@@ -10,14 +11,6 @@ from apps.billing_api.models import Invoice
 from apps.auth_api.models import User
 from apps.subscriptions_api.permissions import requires_feature
 from .pagination import ReportsPagination
-
-class IsSuperAdmin:
-    def has_permission(self, request, view):
-        return (
-            request.user and 
-            request.user.is_authenticated and 
-            request.user.roles.filter(name='Super-Admin').exists()
-        )
 
 @api_view(['GET'])
 @permission_classes([TenantPermissionByAction])
@@ -131,6 +124,8 @@ def dashboard_stats(request):
     from django.core.cache import cache
     from apps.clients_api.models import Client
     from apps.employees_api.models import Employee
+    from apps.pos_api.models import Sale
+    from apps.appointments_api.models import Appointment
     
     # Cache key basado en tenant
     cache_key = f'dashboard_stats_{getattr(request.user.tenant, "id", "none")}'
@@ -140,15 +135,26 @@ def dashboard_stats(request):
         return Response(cached_data)
     
     tenant = request.user.tenant
+    month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     # Estadísticas básicas que sabemos que funcionan
     total_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
     active_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
     
+    monthly_appointments = Appointment.objects.filter(
+        client__tenant=tenant,
+        date_time__gte=month_start
+    ).count()
+
+    monthly_revenue = Sale.objects.filter(
+        user__tenant=tenant,
+        date_time__gte=month_start
+    ).aggregate(total=Sum('total'))['total'] or 0
+
     data = {
         'total_clients': total_clients,
-        'monthly_appointments': 25,  # Simulado por ahora
-        'monthly_revenue': 15420.50,  # Simulado por ahora
+        'monthly_appointments': monthly_appointments,
+        'monthly_revenue': float(monthly_revenue),
         'active_employees': active_employees
     }
     
@@ -213,16 +219,40 @@ def reports_by_type(request):
 
 class AdminReportsView(views.APIView):
     """Reportes financieros para SuperAdmin"""
-    permission_classes = [TenantPermissionByAction]
-    permission_map = {'get': 'reports_api.view_financial_reports'}
+    permission_classes = [IsSuperAdmin]
     
     def get(self, request):
         try:
             period = request.GET.get('period', 'last_30_days')
-            
-            # Calcular fechas según período
             end_date = timezone.now()
-            if period == 'last_7_days':
+
+            # Calcular fechas según período (incluye rango custom real)
+            if period == 'custom':
+                start_raw = request.GET.get('start_date')
+                end_raw = request.GET.get('end_date')
+                if not start_raw or not end_raw:
+                    return Response(
+                        {'error': 'start_date y end_date son requeridos para período custom'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+                try:
+                    start_date = datetime.fromisoformat(start_raw).replace(
+                        hour=0, minute=0, second=0, microsecond=0
+                    )
+                    end_date = datetime.fromisoformat(end_raw).replace(
+                        hour=23, minute=59, second=59, microsecond=999999
+                    )
+                    if timezone.is_naive(start_date):
+                        start_date = timezone.make_aware(start_date)
+                    if timezone.is_naive(end_date):
+                        end_date = timezone.make_aware(end_date)
+                except ValueError:
+                    return Response(
+                        {'error': 'Formato de fecha inválido. Use YYYY-MM-DD'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+            elif period == 'last_7_days':
                 start_date = end_date - timedelta(days=7)
             elif period == 'last_30_days':
                 start_date = end_date - timedelta(days=30)
@@ -232,7 +262,7 @@ class AdminReportsView(views.APIView):
                 start_date = end_date - timedelta(days=365)
             else:
                 start_date = end_date - timedelta(days=30)
-            
+
             # Filtrar facturas del período
             invoices = Invoice.objects.filter(
                 issued_at__gte=start_date,
@@ -247,22 +277,38 @@ class AdminReportsView(views.APIView):
                 due_date__lt=timezone.now()
             ).count()
             
-            # Tendencia de ingresos (últimos 6 meses)
+            # Tendencia de ingresos REAL según el período seleccionado
             revenue_trend = []
-            for i in range(6):
-                month_start = (timezone.now() - timedelta(days=30*i)).replace(day=1)
-                month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
-                
-                month_revenue = Invoice.objects.filter(
-                    issued_at__gte=month_start,
-                    issued_at__lte=month_end,
-                    is_paid=True
-                ).aggregate(Sum('amount'))['amount__sum'] or 0
-                
-                revenue_trend.insert(0, {
-                    'month': month_start.strftime('%b'),
-                    'revenue': float(month_revenue)
-                })
+            total_days = max(1, (end_date.date() - start_date.date()).days + 1)
+            if total_days <= 45:
+                cursor = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                while cursor <= end_date:
+                    day_end = cursor + timedelta(days=1)
+                    day_revenue = Invoice.objects.filter(
+                        issued_at__gte=cursor,
+                        issued_at__lt=day_end,
+                        is_paid=True
+                    ).aggregate(Sum('amount'))['amount__sum'] or 0
+                    revenue_trend.append({
+                        'label': cursor.strftime('%d %b'),
+                        'revenue': float(day_revenue)
+                    })
+                    cursor = day_end
+            else:
+                cursor = start_date.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                while cursor <= end_date:
+                    next_month = (cursor + timedelta(days=32)).replace(day=1)
+                    month_revenue = Invoice.objects.filter(
+                        issued_at__gte=cursor,
+                        issued_at__lt=next_month,
+                        issued_at__lte=end_date,
+                        is_paid=True
+                    ).aggregate(Sum('amount'))['amount__sum'] or 0
+                    revenue_trend.append({
+                        'label': cursor.strftime('%b %Y'),
+                        'revenue': float(month_revenue)
+                    })
+                    cursor = next_month
             
             # Top tenants por revenue - OPTIMIZADO: Una sola query
             top_tenants_data = Invoice.objects.filter(

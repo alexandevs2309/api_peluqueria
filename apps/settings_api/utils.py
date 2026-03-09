@@ -20,7 +20,8 @@ def validate_tenant_limit():
     """Validar si se puede crear un nuevo tenant"""
     from apps.tenants_api.models import Tenant
     config = get_system_config()
-    current_count = Tenant.objects.count()
+    # Excluir tenants eliminados lógicamente del límite global
+    current_count = Tenant.objects.filter(deleted_at__isnull=True).count()
     return current_count < config.max_tenants
 
 

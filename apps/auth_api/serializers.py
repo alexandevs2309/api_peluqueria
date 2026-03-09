@@ -7,6 +7,7 @@ from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.core.exceptions import MultipleObjectsReturned
 from .models import ActiveSession
+from .role_utils import normalize_role_for_api
 from apps.tenants_api.models import Tenant
 
 User = get_user_model()
@@ -45,9 +46,17 @@ class LoginSerializer(serializers.Serializer):
     tenant_subdomain = serializers.CharField(required=False)  # Opcional, se detecta del request
 
     def validate(self, data):
-        email = data.get('email')
+        email = (data.get('email') or '').strip().lower()
         password = data.get('password')
-        tenant_subdomain = data.get('tenant_subdomain')
+        tenant_subdomain = (data.get('tenant_subdomain') or '').strip().lower() or None
+
+        if not email:
+            raise serializers.ValidationError({'email': 'El correo es requerido.'})
+
+        # Persist normalized values for downstream consumers
+        data['email'] = email
+        if tenant_subdomain:
+            data['tenant_subdomain'] = tenant_subdomain
         
         # ✅ CASO ESPECIAL: Verificar si es super-admin sin tenant
         try:
@@ -208,6 +217,7 @@ class UserListSerializer(serializers.ModelSerializer):
     tenant_name = serializers.CharField(source='tenant.name', read_only=True)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     avatar_url = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
     
     class Meta:
         model = User
@@ -215,6 +225,9 @@ class UserListSerializer(serializers.ModelSerializer):
 
     def get_avatar_url(self, obj):
         return obj.avatar.url if obj.avatar else None
+
+    def get_role(self, obj):
+        return normalize_role_for_api(getattr(obj, 'role', None), is_superuser=getattr(obj, 'is_superuser', False))
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod

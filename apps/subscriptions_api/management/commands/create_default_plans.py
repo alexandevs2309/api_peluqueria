@@ -30,6 +30,7 @@ class Command(BaseCommand):
                 'description': 'Plan Profesional para pequeñas peluquerías',
                 'price': 29.99,
                 'duration_month': 1,
+                'stripe_price_id': '',
                 'max_employees': 8,
                 'max_users': 16,
                 'allows_multiple_branches': False,
@@ -52,6 +53,7 @@ class Command(BaseCommand):
                 'description': 'Plan Negocio para peluquerías en crecimiento',
                 'price': 69.99,
                 'duration_month': 1,
+                'stripe_price_id': '',
                 'max_employees': 25,
                 'max_users': 50,
                 'allows_multiple_branches': True,
@@ -74,6 +76,7 @@ class Command(BaseCommand):
                 'description': 'Plan Empresarial para cadenas grandes',
                 'price': 129.99,
                 'duration_month': 1,
+                'stripe_price_id': '',
                 'max_employees': 0,  # Unlimited
                 'max_users': 0,      # Unlimited
                 'allows_multiple_branches': True,

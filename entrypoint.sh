@@ -30,32 +30,8 @@ wait_for_db() {
     exit 1
 }
 
-setup_django() {
-    log "Iniciando setup de Django..."
-    
-    # Crear migraciones solo si no existen
-    log "Creando migraciones..."
-    python manage.py makemigrations --no-input
-    
-    # Aplicar migraciones con orden específico para modelo personalizado
-    log "Aplicando migraciones..."
-    python manage.py migrate contenttypes --no-input
-    python manage.py migrate auth --no-input
-    python manage.py migrate auth_api --no-input
-    python manage.py migrate tenants_api --no-input
-    python manage.py migrate roles_api --no-input
-    python manage.py migrate --no-input
-    
-    log "Setup de Django completado"
-}
-
 main() {
     wait_for_db
-    
-    if [ "${1:-}" = "web" ] || [ "${1:-}" = "python" ]; then
-        setup_django
-    fi
-    
     log "Ejecutando comando: $*"
     exec "$@"
 }

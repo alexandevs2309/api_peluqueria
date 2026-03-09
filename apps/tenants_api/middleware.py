@@ -28,17 +28,18 @@ class TenantMiddleware(MiddlewareMixin):
         
         # Rutas exentas (solo públicas)
         exempt_paths = [
+            '/api/auth/',  # Permitir login/refresh/verify aunque tenant esté suspendido
             '/api/auth/login/',
             '/api/auth/register/',
             '/api/auth/password-reset/',
-            '/api/schema/',
-            '/api/docs/',
             '/api/healthz/',
             '/api/subscriptions/plans/',  # Solo lectura
             '/api/subscriptions/register/',
             '/api/subscriptions/register-with-plan/',
             '/api/settings/contact/',  # Formulario público
         ]
+        if settings.DEBUG:
+            exempt_paths.extend(['/api/schema/', '/api/docs/'])
         for exempt_path in exempt_paths:
             if request.path.startswith(exempt_path):
                 return None
@@ -164,6 +165,15 @@ class TenantMiddleware(MiddlewareMixin):
                 access_level = request.tenant.get_access_level()
                 
                 if access_level == 'blocked':
+                    is_paid_expired = request.tenant.is_paid_access_expired() if hasattr(request.tenant, 'is_paid_access_expired') else False
+                    if is_paid_expired:
+                        return JsonResponse({
+                            'error': 'Subscription expired',
+                            'code': 'SUBSCRIPTION_EXPIRED',
+                            'message': 'Your paid period has expired. Please renew to continue using the service.',
+                            'renewal_url': '/client/payment',
+                            'access_until': request.tenant.access_until.isoformat() if request.tenant.access_until else None
+                        }, status=402)
                     return JsonResponse({
                         'error': 'Access blocked',
                         'code': 'SUBSCRIPTION_REQUIRED',

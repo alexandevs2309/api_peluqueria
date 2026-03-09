@@ -32,8 +32,6 @@ urlpatterns = [
     path('api/', include([
         path('auth/', include('apps.auth_api.urls')),
         path('roles/', include('apps.roles_api.urls')),
-        path('schema/', SpectacularAPIView.as_view(), name='schema'),
-        path('docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
         path('clients/', include('apps.clients_api.urls')),
         path('appointments/', include('apps.appointments_api.urls')),
         path('services/', include('apps.services_api.urls')),
@@ -57,6 +55,12 @@ urlpatterns = [
         path("sentry-test/", sentry_test, name="sentry_test"),
     ])),
 ]
+
+if settings.DEBUG:
+    urlpatterns += [
+        path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
+        path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
+    ]
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

@@ -19,6 +19,13 @@ class SubscriptionPlan(models.Model):
     description = models.TextField(blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
     duration_month = models.PositiveIntegerField( default = 1,help_text="Duration in month for the subscription plan")
+    stripe_price_id = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Stripe Price ID (ej: price_...) para cobro recurrente"
+    )
     is_active = models.BooleanField(default=True)
     max_employees = models.PositiveIntegerField(default=0)
     max_users = models.PositiveIntegerField(default=0)

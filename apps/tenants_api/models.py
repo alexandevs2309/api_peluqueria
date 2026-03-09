@@ -4,6 +4,7 @@ from django.utils import timezone
 import sys
 from django.contrib.auth import get_user_model
 from datetime import timedelta
+from dateutil.relativedelta import relativedelta
 
 class Tenant(models.Model):
     PLAN_CHOICES = [
@@ -38,6 +39,7 @@ class Tenant(models.Model):
     subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.SET_NULL, null=True, blank=True)
     subscription_status = models.CharField(max_length=20, choices=SUBSCRIPTION_STATUS, default="trial")
     trial_end_date = models.DateField(null=True, blank=True)
+    access_until = models.DateTimeField(null=True, blank=True, help_text='Fecha/hora límite de acceso para planes pagos')
     trial_notifications_sent = models.JSONField(default=dict, blank=True)
     billing_info = models.JSONField(default=dict, blank=True)
     settings = models.JSONField(default=dict, blank=True)
@@ -155,6 +157,16 @@ class Tenant(models.Model):
         return (self.subscription_status == 'trial' and 
                 self.trial_end_date and 
                 timezone.now().date() > self.trial_end_date)
+
+    def is_paid_access_expired(self):
+        """Verificar si el acceso pagado expiró."""
+        if self.subscription_status != 'active':
+            return False
+        if not self.access_until:
+            # Compatibilidad hacia atrás: tenants activos sin access_until
+            # no se bloquean hasta migración completa.
+            return False
+        return timezone.now() > self.access_until
     
     def get_trial_days_remaining(self):
         """Obtener días restantes del trial"""
@@ -167,20 +179,21 @@ class Tenant(models.Model):
         """Verificar y suspender trial expirado"""
         if self.is_trial_expired():
             self.subscription_status = 'suspended'
-            self.save()
+            # Mantener consistencia: un tenant suspendido no debe quedar activo.
+            self.is_active = False
+            self.save(update_fields=['subscription_status', 'is_active', 'updated_at'])
             return True
         return False
     
     def get_access_level(self):
         """Determinar nivel de acceso del tenant"""
         if self.subscription_status == 'active':
+            if self.is_paid_access_expired():
+                return 'blocked'
             return 'full'
         elif self.subscription_status == 'trial':
             return 'full' if not self.is_trial_expired() else 'grace'
         elif self.subscription_status == 'suspended':
-            if self.trial_end_date:
-                days_since_expiry = (timezone.now().date() - self.trial_end_date).days
-                return 'grace' if days_since_expiry <= 3 else 'blocked'
             return 'blocked'
         return 'blocked'
     
@@ -200,10 +213,26 @@ class Tenant(models.Model):
     
     def activate_subscription(self):
         """Activar suscripción (después de pago)"""
+        months = 1
+        if self.subscription_plan and self.subscription_plan.duration_month:
+            months = max(1, int(self.subscription_plan.duration_month))
+        base_time = timezone.now()
+        if self.access_until and self.access_until > base_time:
+            base_time = self.access_until
+
         self.subscription_status = 'active'
         self.trial_end_date = None
+        self.is_active = True
+        self.access_until = base_time + relativedelta(months=months)
         self.trial_notifications_sent = {}
-        self.save()
+        self.save(update_fields=[
+            'subscription_status',
+            'trial_end_date',
+            'is_active',
+            'access_until',
+            'trial_notifications_sent',
+            'updated_at'
+        ])
     
     def soft_delete(self):
         """Eliminación lógica del tenant"""

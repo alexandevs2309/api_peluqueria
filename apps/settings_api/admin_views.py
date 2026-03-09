@@ -29,13 +29,17 @@ class SaasMetricsView(views.APIView):
             mrr = monthly_invoices.aggregate(total=Sum('amount'))['total'] or 0
             
             # Métricas de tenants
-            total_tenants = Tenant.objects.count()
-            active_tenants = Tenant.objects.filter(is_active=True).count()
+            total_tenants = Tenant.objects.filter(deleted_at__isnull=True).count()
+            active_tenants = Tenant.objects.filter(
+                is_active=True,
+                deleted_at__isnull=True
+            ).count()
             
             # Calcular churn rate (últimos 30 días)
             thirty_days_ago = timezone.now() - timedelta(days=30)
             churned_tenants = Tenant.objects.filter(
                 is_active=False,
+                deleted_at__isnull=True,
                 updated_at__gte=thirty_days_ago
             ).count()
             churn_rate = (churned_tenants / total_tenants * 100) if total_tenants > 0 else 0
@@ -56,7 +60,10 @@ class SaasMetricsView(views.APIView):
             for plan in SubscriptionPlan.objects.filter(is_active=True):
                 plan_invoices = monthly_invoices.filter(subscription__plan=plan)
                 plan_revenue = plan_invoices.aggregate(total=Sum('amount'))['total'] or 0
-                tenant_count = Tenant.objects.filter(subscription_plan=plan).count()
+                tenant_count = Tenant.objects.filter(
+                    subscription_plan=plan,
+                    deleted_at__isnull=True
+                ).count()
                 
                 revenue_by_plan.append({
                     'plan_name': plan.name,
@@ -66,7 +73,9 @@ class SaasMetricsView(views.APIView):
             
             # Registros recientes
             recent_signups = []
-            for tenant in Tenant.objects.order_by('-created_at')[:10]:
+            for tenant in Tenant.objects.filter(
+                deleted_at__isnull=True
+            ).order_by('-created_at')[:10]:
                 recent_signups.append({
                     'tenant_name': tenant.name,
                     'plan': tenant.subscription_plan.name if tenant.subscription_plan else 'FREE',
@@ -112,7 +121,7 @@ class SystemMonitorView(views.APIView):
             metrics = {
                 'response_time': self._calculate_avg_response_time(services),
                 'error_rate': self._calculate_error_rate(services),
-                'uptime': 99.9  # Mock por ahora
+                'uptime': self._calculate_uptime(services)
             }
             
             # Alertas del sistema
@@ -223,6 +232,11 @@ class SystemMonitorView(views.APIView):
         total = len(services)
         errors = sum(1 for s in services.values() if s['status'] == 'down')
         return (errors / total) * 100
+
+    def _calculate_uptime(self, services):
+        total = len(services)
+        available = sum(1 for s in services.values() if s['status'] == 'up')
+        return round((available / total) * 100, 2) if total else 0
     
     def _generate_system_alerts(self, services):
         alerts = []
