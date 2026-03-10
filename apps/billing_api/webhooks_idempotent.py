@@ -5,6 +5,7 @@ from django.views.decorators.http import require_POST
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
+from django.core.exceptions import FieldError
 from apps.auth_api.models import User
 from apps.subscriptions_api.models import UserSubscription
 from apps.tenants_api.utils import get_active_tenant
@@ -27,8 +28,15 @@ def _resolve_user_id_from_invoice(invoice_data):
     if not customer_id:
         return None
 
-    user = User.objects.filter(stripe_customer_id=customer_id).first()
-    return user.id if user else None
+    try:
+        user = User.objects.filter(stripe_customer_id=customer_id).only('id').first()
+        return user.id if user else None
+    except FieldError:
+        logger.warning(
+            "Stripe webhook fallback skipped: User.stripe_customer_id not available yet. customer=%s",
+            customer_id,
+        )
+        return None
 
 
 def _extract_cycle_end(invoice_data):
@@ -187,7 +195,8 @@ def handle_payment_succeeded(invoice_data):
 def handle_payment_failed(invoice_data):
     """Manejar pago fallido"""
     try:
-        user_id = invoice_data['metadata'].get('user_id')
+        metadata = invoice_data.get('metadata') or {}
+        user_id = metadata.get('user_id')
         if not user_id:
             logger.warning("Payment failed: missing user_id in metadata")
             return
@@ -233,7 +242,8 @@ def handle_payment_failed(invoice_data):
 def handle_subscription_cancelled(subscription_data):
     """Manejar cancelación de suscripción"""
     try:
-        user_id = subscription_data['metadata'].get('user_id')
+        metadata = subscription_data.get('metadata') or {}
+        user_id = metadata.get('user_id')
         if not user_id:
             logger.warning("Subscription cancelled: missing user_id in metadata")
             return
@@ -272,7 +282,8 @@ def handle_subscription_cancelled(subscription_data):
 def handle_invoice_created(invoice_data):
     """Manejar creación de factura"""
     try:
-        user_id = invoice_data['metadata'].get('user_id')
+        metadata = invoice_data.get('metadata') or {}
+        user_id = metadata.get('user_id')
         if not user_id:
             logger.warning("Invoice created: missing user_id in metadata")
             return
