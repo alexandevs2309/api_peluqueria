@@ -126,7 +126,9 @@ class LoginAudit(models.Model):
         ]
 
     def __str__(self):
-        return f"Login attempt for {self.user.email if self.user else 'unknown'} - {'Success' if self.successful else 'Failed'}"
+        # Evitar resolver FK durante cascadas de borrado (puede lanzar User.DoesNotExist).
+        user_label = f"user_id={self.user_id}" if self.user_id else "unknown"
+        return f"Login attempt for {user_label} - {'Success' if self.successful else 'Failed'}"
     
 
 
@@ -151,7 +153,8 @@ class AccessLog(models.Model):
             models.Index(fields=['timestamp']),
         ]
     def __str__(self):
-        return f"{self.user} - {self.event_type} at {self.timestamp}"
+        user_label = f"user_id={self.user_id}" if self.user_id else "unknown"
+        return f"{user_label} - {self.event_type} at {self.timestamp}"
 
 
 
@@ -179,4 +182,5 @@ class ActiveSession(models.Model):
         ordering = ['-last_seen']
     
     def __str__(self):
-        return f"{self.user.email} - {self.ip_address} - {'Activa' if self.is_active else 'Inactiva'}"
+        user_label = f"user_id={self.user_id}" if self.user_id else "unknown"
+        return f"{user_label} - {self.ip_address} - {'Activa' if self.is_active else 'Inactiva'}"

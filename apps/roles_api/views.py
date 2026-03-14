@@ -12,6 +12,38 @@ from rest_framework.pagination import PageNumberPagination
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from .utils import log_admin_action
 
+CANONICAL_ROLES = [
+    {'name': 'Super-Admin', 'scope': 'GLOBAL', 'description': 'Administrador del SaaS'},
+    {'name': 'Soporte', 'scope': 'GLOBAL', 'description': 'Equipo de soporte tecnico'},
+    {'name': 'Client-Admin', 'scope': 'TENANT', 'description': 'Administrador de peluqueria'},
+    {'name': 'Client-Staff', 'scope': 'TENANT', 'description': 'Empleado general'},
+    {'name': 'Estilista', 'scope': 'TENANT', 'description': 'Estilista/Peluquero'},
+    {'name': 'Cajera', 'scope': 'TENANT', 'description': 'Cajera/Recepcionista'},
+    {'name': 'Manager', 'scope': 'TENANT', 'description': 'Encargado operativo'},
+    {'name': 'Utility', 'scope': 'TENANT', 'description': 'Personal de apoyo'},
+]
+
+
+def ensure_canonical_roles() -> None:
+    for role_data in CANONICAL_ROLES:
+        role, created = Role.objects.get_or_create(
+            name=role_data['name'],
+            defaults={
+                'scope': role_data['scope'],
+                'description': role_data['description']
+            }
+        )
+        if not created:
+            changed = False
+            if role.scope != role_data['scope']:
+                role.scope = role_data['scope']
+                changed = True
+            if not role.description:
+                role.description = role_data['description']
+                changed = True
+            if changed:
+                role.save(update_fields=['scope', 'description'])
+
 @extend_schema_view(
     list=extend_schema(description="Lista todos los roles disponibles."),
     retrieve=extend_schema(description="Obtiene los detalles de un rol específico."),
@@ -31,6 +63,10 @@ class RoleViewSet(viewsets.ModelViewSet):
     ordering_fields = ['id', 'name' , 'module']
     search_fields = ['name', 'description','module']
     ordering = ['id']
+
+    def get_queryset(self):
+        ensure_canonical_roles()
+        return super().get_queryset()
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)

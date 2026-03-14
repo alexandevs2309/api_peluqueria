@@ -37,6 +37,11 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             if not hasattr(self.request, 'tenant') or not self.request.tenant:
                 return AuditLog.objects.none()
             queryset = queryset.filter(user__tenant=self.request.tenant)
+
+        # Permite scope explícito por tenant (especialmente útil para SuperAdmin).
+        tenant_id = self.request.query_params.get('tenant')
+        if tenant_id:
+            queryset = queryset.filter(user__tenant_id=tenant_id)
         
         # Filtrar por fecha desde
         date_from = self.request.query_params.get('date_from')

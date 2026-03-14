@@ -13,6 +13,7 @@ from apps.core.permissions import IsSuperAdmin
 from apps.settings_api.barbershop_models import BarbershopSettings
 from django.conf import settings
 from apps.audit_api.models import AuditLog
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.none()  # Seguro por defecto
@@ -82,6 +83,9 @@ class SaleViewSet(viewsets.ModelViewSet):
         logger.debug("Sale create payload received")
         try:
             return super().create(request, *args, **kwargs)
+        except DjangoValidationError as e:
+            logger.error(f"Error creating sale (validation): {str(e)}")
+            raise serializers.ValidationError(e.messages if hasattr(e, 'messages') else str(e))
         except Exception as e:
             logger.error(f"Error creating sale: {str(e)}")
             raise
@@ -192,42 +196,57 @@ class SaleViewSet(viewsets.ModelViewSet):
             employee=employee,
             status__in=['open', 'pending_approval']
         ).order_by('period_start').first()
-        if target_period:
+        if target_period and not getattr(target_period, 'is_finalized', False):
             return target_period
 
-        # Si no hay período abierto, crear el próximo período quincenal
-        if reference_date.day <= 15:
-            start_date = reference_date.replace(day=16)
-            last_day = calendar.monthrange(reference_date.year, reference_date.month)[1]
-            end_date = reference_date.replace(day=last_day)
-        else:
-            next_month = 1 if reference_date.month == 12 else reference_date.month + 1
-            next_year = reference_date.year + 1 if reference_date.month == 12 else reference_date.year
-            start_date = reference_date.replace(year=next_year, month=next_month, day=1)
-            end_date = reference_date.replace(year=next_year, month=next_month, day=15)
+        # Si no hay período abierto, buscar/crear el próximo período no finalizado.
+        cursor_date = reference_date
+        for _ in range(24):  # Límite defensivo: máximo 12 meses (24 quincenas)
+            if cursor_date.day <= 15:
+                start_date = cursor_date.replace(day=16)
+                last_day = calendar.monthrange(cursor_date.year, cursor_date.month)[1]
+                end_date = cursor_date.replace(day=last_day)
+            else:
+                next_month = 1 if cursor_date.month == 12 else cursor_date.month + 1
+                next_year = cursor_date.year + 1 if cursor_date.month == 12 else cursor_date.year
+                start_date = cursor_date.replace(year=next_year, month=next_month, day=1)
+                end_date = cursor_date.replace(year=next_year, month=next_month, day=15)
 
-        existing = PayrollPeriod.objects.filter(
-            employee=employee,
-            period_start=start_date,
-            period_end=end_date
-        ).first()
-        if existing:
-            return existing
-
-        try:
-            return PayrollPeriod.objects.create(
-                employee=employee,
-                period_type='biweekly',
-                period_start=start_date,
-                period_end=end_date,
-                status='open'
-            )
-        except IntegrityError:
-            return PayrollPeriod.objects.get(
+            existing = PayrollPeriod.objects.filter(
                 employee=employee,
                 period_start=start_date,
                 period_end=end_date
-            )
+            ).first()
+            if existing:
+                if existing.status in ['open', 'pending_approval'] and not getattr(existing, 'is_finalized', False):
+                    return existing
+                cursor_date = existing.period_end
+                continue
+
+            try:
+                return PayrollPeriod.objects.create(
+                    employee=employee,
+                    period_type='biweekly',
+                    period_start=start_date,
+                    period_end=end_date,
+                    status='open'
+                )
+            except IntegrityError:
+                existing = PayrollPeriod.objects.filter(
+                    employee=employee,
+                    period_start=start_date,
+                    period_end=end_date
+                ).first()
+                if existing and existing.status in ['open', 'pending_approval'] and not getattr(existing, 'is_finalized', False):
+                    return existing
+                if existing:
+                    cursor_date = existing.period_end
+                    continue
+                raise
+
+        raise serializers.ValidationError(
+            "No se encontró un período disponible para registrar el ajuste de comisión"
+        )
 
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
@@ -1125,7 +1144,7 @@ def dashboard_stats(request):
     # Usar una sola query para todos los meses
     six_months_ago = current_date - timedelta(days=180)
     monthly_data = all_sales.filter(
-        date_time__gte=six_months_ago
+        date_time__date__gte=six_months_ago
     ).extra(
         select={'month': "DATE_TRUNC('month', date_time)"}
     ).values('month').annotate(
