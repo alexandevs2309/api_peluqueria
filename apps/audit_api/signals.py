@@ -9,6 +9,15 @@ from django.contrib.auth import get_user_model
 User = get_user_model()
 
 
+def _safe_instance_label(instance):
+    try:
+        return str(instance)
+    except Exception:
+        model = getattr(getattr(instance, '_meta', None), 'label', instance.__class__.__name__)
+        instance_id = getattr(instance, 'pk', None)
+        return f"{model}(pk={instance_id})"
+
+
 @receiver(post_save)
 def audit_log_on_save(sender, instance, created, **kwargs):
     """Registra automáticamente todas las operaciones de guardado de modelos"""
@@ -90,10 +99,12 @@ def audit_log_on_delete(sender, instance, **kwargs):
         user = instance.created_by
     
     # Diferir auditoría hasta después del commit
+    deleted_object_label = _safe_instance_label(instance)
+
     transaction.on_commit(lambda: create_audit_log(
         user=user,
         action='DELETE',
         description=f"{sender._meta.verbose_name} eliminado",
         content_object=None,
-        extra_data={'deleted_object': str(instance)}
+        extra_data={'deleted_object': deleted_object_label}
     ))

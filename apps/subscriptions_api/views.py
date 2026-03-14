@@ -141,6 +141,9 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
 class UserSubscriptionViewSet(viewsets.ModelViewSet):
     serializer_class = UserSubscriptionSerializer
     permission_classes = [TenantPermissionByAction]
+    filterset_fields = ['is_active', 'plan', 'user']
+    ordering_fields = ['start_date', 'end_date', 'id']
+    ordering = ['-start_date', '-id']
     permission_map = {
         'list': 'subscriptions_api.view_usersubscription',
         'retrieve': 'subscriptions_api.view_usersubscription',
@@ -153,9 +156,15 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
     }
 
     def get_queryset(self):
+        queryset = UserSubscription.objects.select_related('user', 'plan').all()
+
         if self.request.user.is_superuser:
-            return UserSubscription.objects.all()
-        return UserSubscription.objects.filter(user=self.request.user)
+            tenant_id = self.request.query_params.get('tenant')
+            if tenant_id:
+                return queryset.filter(user__tenant_id=tenant_id)
+            return queryset
+
+        return queryset.filter(user=self.request.user)
     
     def perform_create(self, serializer):
         user = self.request.user

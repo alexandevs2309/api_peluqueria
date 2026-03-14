@@ -69,6 +69,15 @@ class EmployeeViewSet(TenantScopedViewSet):
             
         serializer.save(tenant=tenant)
 
+    @action(detail=False, methods=['get'], url_path=r'by-user/(?P<user_id>[^/.]+)')
+    def by_user(self, request, user_id=None):
+        employee = self.get_queryset().filter(user_id=user_id).first()
+        if not employee:
+            return Response({'detail': 'Empleado no encontrado'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = self.get_serializer(employee)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'])
     def assign_service(self, request, pk=None):
         employee = self.get_object()
@@ -585,7 +594,14 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
         )
 
         if not created and record.check_in_at:
-            return Response({'detail': 'Ya existe check-in para hoy'}, status=status.HTTP_400_BAD_REQUEST)
+            serializer = self.get_serializer(record)
+            return Response(
+                {
+                    'detail': 'Ya existe check-in para hoy',
+                    'record': serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
 
         if not record.check_in_at:
             record.check_in_at = now
@@ -610,7 +626,14 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
             return Response({'detail': 'No existe check-in para hoy'}, status=status.HTTP_400_BAD_REQUEST)
 
         if record.check_out_at:
-            return Response({'detail': 'Ya existe check-out para hoy'}, status=status.HTTP_400_BAD_REQUEST)
+            serializer = self.get_serializer(record)
+            return Response(
+                {
+                    'detail': 'Ya existe check-out para hoy',
+                    'record': serializer.data
+                },
+                status=status.HTTP_200_OK
+            )
 
         record.check_out_at = now
         record.save(update_fields=['check_out_at', 'updated_at'])

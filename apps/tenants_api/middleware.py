@@ -28,7 +28,6 @@ class TenantMiddleware(MiddlewareMixin):
         
         # Rutas exentas (solo públicas)
         exempt_paths = [
-            '/api/auth/',  # Permitir login/refresh/verify aunque tenant esté suspendido
             '/api/auth/login/',
             '/api/auth/register/',
             '/api/auth/password-reset/',

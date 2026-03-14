@@ -76,6 +76,8 @@ class Command(BaseCommand):
             {'name': 'Client-Admin', 'scope': 'TENANT', 'description': 'Administrador de peluquería'},
             {'name': 'Cajera', 'scope': 'TENANT', 'description': 'Cajera/Recepcionista'},
             {'name': 'Client-Staff', 'scope': 'TENANT', 'description': 'Estilista/Peluquero'},
+            {'name': 'Estilista', 'scope': 'TENANT', 'description': 'Estilista/Peluquero'},
+            {'name': 'Manager', 'scope': 'TENANT', 'description': 'Encargado operativo'},
             {'name': 'Utility', 'scope': 'TENANT', 'description': 'Personal de apoyo'},
         ]
 

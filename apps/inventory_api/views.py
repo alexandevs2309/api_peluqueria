@@ -155,13 +155,14 @@ class StockMovementViewSet(TenantScopedReadOnlyViewSet):
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'inventory'
     permission_map = {
-        'list': 'inventory_api.view_stockmovement',
-        'retrieve': 'inventory_api.view_stockmovement',
+        # Reutiliza permiso de lectura de inventario para permitir historial
+        # a roles que ya pueden ver productos (ej. Client-Admin/Manager).
+        'list': 'inventory_api.view_product',
+        'retrieve': 'inventory_api.view_product',
     }
     
     def get_queryset(self):
-        """Override para filtrar por product__tenant"""
-        queryset = super().get_queryset()
+        """Filtrar por tenant vía product__tenant (StockMovement no tiene tenant directo)."""
         user = self.request.user
         
         if user.is_superuser:

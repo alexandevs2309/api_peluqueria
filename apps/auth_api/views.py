@@ -766,6 +766,17 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserListSerializer
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
 
+    def _get_request_tenant(self):
+        tenant = getattr(self.request, 'tenant', None)
+        if tenant is not None:
+            return tenant
+
+        user = getattr(self.request, 'user', None)
+        if getattr(user, 'is_authenticated', False):
+            return getattr(user, 'tenant', None)
+
+        return None
+
     def _is_tenant_admin_or_superuser(self, request) -> bool:
         """Solo SuperAdmin o Client-Admin pueden gestionar usuarios."""
         if request.user.is_superuser:
@@ -813,6 +824,31 @@ class UserViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         """Actually delete the user instance"""
         instance.delete()
+
+    def get_object(self):
+        """
+        Resolve detail objects without DRF filter backends interfering with
+        DELETE/PUT lookups. This keeps the same visibility rules as get_queryset
+        while avoiding false 404s on existing users.
+        """
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs.get(lookup_url_kwarg)
+        filter_kwargs = {self.lookup_field: lookup_value}
+
+        obj = self.get_queryset().filter(**filter_kwargs).first()
+        if obj is None:
+            logger.warning(
+                "User lookup failed user_id=%s actor_id=%s actor_superuser=%s actor_tenant_id=%s request_tenant_id=%s",
+                lookup_value,
+                getattr(self.request.user, 'id', None),
+                getattr(self.request.user, 'is_superuser', False),
+                getattr(getattr(self.request.user, 'tenant', None), 'id', None),
+                getattr(getattr(self.request, 'tenant', None), 'id', None),
+            )
+            raise NotFound("Usuario no encontrado.")
+
+        self.check_object_permissions(self.request, obj)
+        return obj
     
     def get_serializer_class(self):
         if self.action in ['create', 'update', 'partial_update']:
@@ -986,14 +1022,19 @@ class UserViewSet(viewsets.ModelViewSet):
         
         # SuperAdmin: acceso total
         if user.is_superuser:
-            return User.objects.select_related('tenant').all()
+            tenant_id = self.request.query_params.get('tenant')
+            queryset = User.objects.select_related('tenant').all()
+            if tenant_id:
+                return queryset.filter(tenant_id=tenant_id)
+            return queryset
         
         # Usuario sin tenant: sin acceso
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+        tenant = self._get_request_tenant()
+        if not tenant:
             return User.objects.none()
         
-        # Filtrar por tenant del request
-        return User.objects.select_related('tenant').filter(tenant=self.request.tenant)
+        # Filtrar por tenant del request o del usuario autenticado como fallback
+        return User.objects.select_related('tenant').filter(tenant=tenant)
 
     @action(detail=False, methods=['get'])
     def available_for_employee(self, request):
