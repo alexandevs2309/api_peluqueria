@@ -3,9 +3,9 @@ import logging
 from rest_framework.response import Response
 from rest_framework import status
 from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan, Subscription
-from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer, OnboardingSerializer
+from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer, OnboardingSerializer, PublicSubscriptionPlanSerializer
 from .permissions import IsSuperuserOrReadOnly
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
 from django.utils import timezone
 from rest_framework.views import APIView
@@ -134,6 +134,12 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
             'affected_subscriptions': active_subs,
             'note': 'Las suscripciones activas continuarán hasta su vencimiento'
         }, status=status.HTTP_200_OK)
+
+    @action(detail=False, methods=['get'], url_path='public-catalog', permission_classes=[AllowAny])
+    def public_catalog(self, request):
+        plans = self.get_queryset().filter(is_active=True).order_by('price')
+        serializer = PublicSubscriptionPlanSerializer(plans, many=True)
+        return Response(serializer.data)
 
 
     

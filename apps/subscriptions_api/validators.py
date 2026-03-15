@@ -87,7 +87,9 @@ class SubscriptionLimitValidator:
         if not subscription:
             max_appointments = 100  # Plan gratuito
         else:
-            max_appointments = getattr(subscription.plan, 'max_appointments_per_month', 0)
+            max_appointments = getattr(subscription.plan, 'max_appointments_per_month', None)
+            if max_appointments is None:
+                max_appointments = getattr(subscription.plan, 'max_appointments', 0)
             
         if max_appointments == 0:
             return True

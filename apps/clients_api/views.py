@@ -7,6 +7,7 @@ from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.subscriptions_api.permissions import requires_feature
 from .models import Client
 from .serializers import ClientSerializer
 
@@ -54,6 +55,7 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
         return instance
 
     @action(detail=True, methods=['get'])
+    @requires_feature('client_history')
     def history(self, request, pk=None):
         client = self.get_object()
         from apps.appointments_api.models import Appointment

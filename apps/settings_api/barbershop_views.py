@@ -14,6 +14,7 @@ from .permissions import IsClientAdmin
 from apps.pos_api.models import PosConfiguration
 from apps.pos_api.models import Sale
 from apps.employees_api.earnings_models import PayrollPeriod
+from apps.subscriptions_api.permissions import requires_feature
 
 
 class BarbershopSettingsViewSet(viewsets.ViewSet):
@@ -276,6 +277,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         return impacts.get(field, 'Cambio en configuración del sistema')
     
     @action(detail=False, methods=['post'])
+    @requires_feature('custom_branding')
     def upload_logo(self, request):
         """Upload logo"""
         if 'logo' not in request.FILES:
