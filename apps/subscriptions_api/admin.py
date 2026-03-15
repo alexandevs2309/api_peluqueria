@@ -10,7 +10,8 @@ class SubscriptionPlanAdmin(admin.ModelAdmin):
     list_filter = ('is_active',)
     fields = (
         'name', 'description', 'price', 'duration_month', 'stripe_price_id',
-        'max_employees', 'max_users', 'allows_multiple_branches', 'features', 'is_active'
+        'max_employees', 'max_users', 'allows_multiple_branches',
+        'features', 'commercial_benefits', 'is_active'
     )
 
     def has_module_permission(self, request):

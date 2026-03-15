@@ -14,11 +14,13 @@ from apps.settings_api.barbershop_models import BarbershopSettings
 from django.conf import settings
 from apps.audit_api.models import AuditLog
 from django.core.exceptions import ValidationError as DjangoValidationError
+from apps.subscriptions_api.permissions import HasFeaturePermission
 
 class SaleViewSet(viewsets.ModelViewSet):
     queryset = Sale.objects.none()  # Seguro por defecto
     serializer_class = SaleSerializer
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'cash_register'
     
     # Mapeo de permisos por acción
     permission_map = {
@@ -840,7 +842,8 @@ class SaleViewSet(viewsets.ModelViewSet):
 class CashRegisterViewSet(viewsets.ModelViewSet):
     queryset = CashRegister.objects.none()  # Seguro por defecto
     serializer_class = CashRegisterSerializer
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'cash_register'
     permission_map = {
         'list': 'pos_api.view_cashregister',
         'retrieve': 'pos_api.view_cashregister',
@@ -951,7 +954,8 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
 class PromotionViewSet(viewsets.ModelViewSet):
     queryset = Promotion.objects.all()
     serializer_class = PromotionSerializer
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'cash_register'
     permission_map = {
         'list': 'pos_api.view_promotion',
         'retrieve': 'pos_api.view_promotion',
@@ -996,7 +1000,8 @@ class PromotionViewSet(viewsets.ModelViewSet):
 class PosConfigurationViewSet(viewsets.ModelViewSet):
     queryset = PosConfiguration.objects.all()
     serializer_class = PosConfigurationSerializer
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'cash_register'
     permission_map = {
         'list': 'pos_api.view_posconfiguration',
         'retrieve': 'pos_api.view_posconfiguration',

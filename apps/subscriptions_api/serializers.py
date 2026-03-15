@@ -12,7 +12,7 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         model = SubscriptionPlan
         fields = [
             'id', 'name', 'display_name', 'description', 'price', 'duration_month', 'stripe_price_id', 'is_active',
-            'max_employees', 'max_users', 'allows_multiple_branches', 'features',
+            'max_employees', 'max_users', 'allows_multiple_branches', 'features', 'commercial_benefits',
             'features_list', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'name', 'display_name', 'created_at', 'updated_at']
@@ -24,6 +24,61 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
         if isinstance(obj.features, dict):
             return [key.replace('_', ' ').title() for key, value in obj.features.items() if value]
         return obj.features if isinstance(obj.features, list) else []
+
+class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
+    display_name = serializers.CharField(source='get_name_display', read_only=True)
+    highlight_features = serializers.SerializerMethodField()
+    technical_features = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SubscriptionPlan
+        fields = [
+            'id',
+            'name',
+            'display_name',
+            'description',
+            'price',
+            'highlight_features',
+            'technical_features',
+            'commercial_benefits',
+        ]
+
+    def get_highlight_features(self, obj):
+        highlights = []
+
+        if obj.max_employees == 0:
+            highlights.append('Empleados ilimitados')
+        else:
+            highlights.append(f'{obj.max_employees} empleados')
+
+        if obj.max_users == 0:
+            highlights.append('Usuarios ilimitados')
+        else:
+            highlights.append(f'{obj.max_users} usuarios')
+
+        if obj.features.get('custom_branding'):
+            highlights.append('Logo personalizado')
+        elif obj.allows_multiple_branches:
+            highlights.append('Multi-sucursal')
+        else:
+            highlights.append('1 sucursal')
+
+        return highlights[:3]
+
+    def get_technical_features(self, obj):
+        labels = {
+            'appointments': 'Agenda completa',
+            'basic_reports': 'Reportes basicos',
+            'cash_register': 'Caja y ventas',
+            'client_history': 'Historial de clientes',
+            'inventory': 'Inventario',
+            'advanced_reports': 'Reportes avanzados',
+            'multi_location': 'Multiples sucursales',
+            'custom_branding': 'Branding basico con logo personalizado',
+        }
+        if not isinstance(obj.features, dict):
+            return []
+        return [label for key, label in labels.items() if obj.features.get(key)]
 
 class UserSubscriptionSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)

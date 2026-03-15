@@ -19,6 +19,21 @@ def clear_system_config_cache():
 def validate_tenant_limit():
     """Validar si se puede crear un nuevo tenant"""
     from apps.tenants_api.models import Tenant
+    current_count = tenant.employees.filter(is_active=True).count() if hasattr(tenant, 'employees') else 0
+
+    plan = getattr(tenant, 'subscription_plan', None)
+    if plan is not None and hasattr(plan, 'max_employees'):
+        plan_limit = plan.max_employees
+        if plan_limit == 0:
+            return True
+        return current_count < plan_limit
+
+    tenant_limit = getattr(tenant, 'max_employees', None)
+    if tenant_limit is not None:
+        if tenant_limit == 0:
+            return True
+        return current_count < tenant_limit
+
     config = get_system_config()
     # Excluir tenants eliminados lógicamente del límite global
     current_count = Tenant.objects.filter(deleted_at__isnull=True).count()
@@ -30,10 +45,10 @@ def validate_employee_limit(tenant, plan_type='basic'):
     config = get_system_config()
     plan_limits = {
         'basic': config.basic_plan_max_employees,
+        'standard': config.premium_plan_max_employees,
         'premium': config.premium_plan_max_employees,
         'enterprise': config.enterprise_plan_max_employees,
     }
-    current_count = tenant.employees.count() if hasattr(tenant, 'employees') else 0
     return current_count < plan_limits.get(plan_type, config.basic_plan_max_employees)
 
 

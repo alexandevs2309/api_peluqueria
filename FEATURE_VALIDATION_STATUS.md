@@ -1,73 +1,113 @@
-# Estado de Validación de Features por Plan
+# Estado de Validacion de Features por Plan
 
-## ✅ Implementado
+## Implementado
 
-### 1. basic_reports (Plan Basic+)
-- **Archivos modificados:**
+### 1. basic_reports
+- Estado: enforced
+- Planes: `basic`, `standard`, `premium`
+- Backend:
   - `apps/reports_api/views.py`
-    - `employee_report()` → `@requires_feature('basic_reports')`
-    - `sales_report()` → `@requires_feature('basic_reports')`
+  - Se protege el acceso a reportes basicos con `@requires_feature('basic_reports')`
 
-### 2. advanced_reports (Plan Premium+)
-- **Archivos modificados:**
+### 2. advanced_reports
+- Estado: enforced
+- Planes: `standard`, `premium`
+- Backend:
   - `apps/reports_api/analytics_views.py`
-    - `advanced_analytics()` → `@requires_feature('advanced_reports')`
-    - `business_intelligence()` → `@requires_feature('advanced_reports')`
-    - `predictive_analytics()` → `@requires_feature('advanced_reports')`
+  - Se protege el acceso a reportes avanzados con `@requires_feature('advanced_reports')`
 
-### 3. inventory (Plan Standard+)
-- **Archivos modificados:**
+### 3. inventory
+- Estado: enforced
+- Planes: `standard`, `premium`
+- Backend:
   - `apps/inventory_api/views.py`
-    - `ProductViewSet` → `HasFeaturePermission` + `required_feature = 'inventory'`
-    - `SupplierViewSet` → `HasFeaturePermission` + `required_feature = 'inventory'`
-    - `StockMovementViewSet` → `HasFeaturePermission` + `required_feature = 'inventory'`
+  - `ProductViewSet`, `SupplierViewSet` y `StockMovementViewSet` usan `HasFeaturePermission`
 
-### 4. multi_location (Plan Premium+)
-- **Ya validado en modelo:**
-  - `apps/settings_api/models.py` → `Branch.save()` valida `allows_multiple_branches`
-  - No requiere cambios adicionales
+### 4. cash_register
+- Estado: enforced
+- Planes: `basic`, `standard`, `premium`
+- Backend:
+  - `apps/pos_api/views.py`
+  - `SaleViewSet`, `CashRegisterViewSet`, `PromotionViewSet` y `PosConfigurationViewSet`
 
-## ❌ No Implementado (No Crítico)
+### 5. client_history
+- Estado: enforced
+- Planes: `basic`, `standard`, `premium`
+- Backend:
+  - `apps/clients_api/views.py`
+  - La accion `history` usa `@requires_feature('client_history')`
 
-### 5. api_access (Plan Enterprise)
-- **Razón:** No existe sistema de API keys/tokens
-- **Impacto:** Bajo (feature no desarrollada aún)
-- **Acción:** Implementar cuando se desarrolle API pública
+### 6. multi_location
+- Estado: enforced
+- Planes: `standard`, `premium`
+- Backend:
+  - `apps/settings_api/models.py`
+  - La logica de sucursales valida `allows_multiple_branches`
 
-### 6. custom_branding (Plan Premium+)
-- **Razón:** Es feature de frontend, no backend
-- **Impacto:** Bajo (se valida en Angular)
-- **Acción:** Ninguna en backend
+### 7. custom_branding
+- Estado: parcialmente enforced
+- Planes: `premium`
+- Backend:
+  - `apps/settings_api/barbershop_views.py`
+  - `upload_logo` usa `@requires_feature('custom_branding')`
+- Alcance actual:
+  - El branding premium cubre logo personalizado
+  - No representa branding completo de toda la aplicacion
 
-### 7. priority_support (Todos los planes)
-- **Razón:** Es proceso manual, no técnico
-- **Impacto:** Ninguno
-- **Acción:** Ninguna
+### 8. max_users
+- Estado: enforced
+- Planes:
+  - `basic`: 16
+  - `standard`: 50
+  - `premium`: ilimitado
 
-## 📊 Cumplimiento
+### 9. max_employees
+- Estado: enforced
+- Planes:
+  - `basic`: 8
+  - `standard`: 25
+  - `premium`: ilimitado
+- Nota:
+  - La validacion ya toma el plan real como fuente principal
 
-- **Features validadas:** 4/7 (57%)
-- **Features críticas validadas:** 4/4 (100%)
-- **Features no críticas:** 3/7 (43%)
+## No Vendido Como Feature Tecnica
 
-## 🎯 Resultado
+### api_access
+- Estado: no enforced
+- Decision actual:
+  - No se vende como parte activa de la oferta comercial
+  - No debe aparecer como feature destacada hasta que exista enforcement real
 
-El sistema ahora valida correctamente todas las features críticas que impactan la monetización:
-- ✅ Reportes básicos bloqueados para Free
-- ✅ Reportes avanzados bloqueados para Basic/Standard
-- ✅ Inventario bloqueado para Free/Basic
-- ✅ Multi-location bloqueado para Free/Basic/Standard
+### role_permissions
+- Estado: no enforced por plan
+- Decision actual:
+  - No se vende como feature del plan
+  - Requiere una definicion funcional mas precisa antes de monetizarse
 
-## 🧪 Pruebas Necesarias
+### priority_support
+- Estado: no tecnico
+- Decision actual:
+  - No se trata como feature de producto en la oferta principal
 
-1. Login con usuario Free → Intentar acceder a `/api/reports/employee/` → Debe retornar 403
-2. Login con usuario Basic → Intentar acceder a `/api/reports/advanced-analytics/` → Debe retornar 403
-3. Login con usuario Basic → Intentar acceder a `/api/inventory/products/` → Debe retornar 403
-4. Login con usuario Standard → Intentar crear segunda sucursal → Debe retornar error
+### sla_guaranteed
+- Estado: no tecnico
+- Decision actual:
+  - No se trata como feature de producto en la oferta principal
 
-## 📝 Notas
+## Resumen Comercial Actual
 
-- El decorator `@requires_feature` ya existía pero no se usaba
-- La clase `HasFeaturePermission` ya existía pero no se usaba
-- Solo se agregaron las validaciones en los endpoints correctos
-- No se modificó lógica de negocio, solo se agregaron permisos
+La oferta comercial debe apoyarse en estas capacidades:
+- `basic`: agenda, caja, historial de clientes, reportes basicos, 1 sucursal
+- `standard`: todo lo anterior mas inventario, reportes avanzados y multiples sucursales
+- `premium`: todo lo anterior con empleados/usuarios ilimitados y logo personalizado
+
+No se debe vender como feature activa del plan:
+- `api_access`
+- `role_permissions`
+- `priority_support`
+- `sla_guaranteed`
+
+## Notas
+
+- La oferta publica y los comandos ejecutables de planes ya fueron alineados
+- Si se implementan nuevas features monetizables, este documento debe actualizarse junto con el enforcement backend

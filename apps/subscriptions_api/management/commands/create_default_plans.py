@@ -1,5 +1,7 @@
 from django.core.management.base import BaseCommand
+
 from apps.subscriptions_api.models import SubscriptionPlan
+
 
 class Command(BaseCommand):
     help = 'Create default subscription plans'
@@ -8,9 +10,9 @@ class Command(BaseCommand):
         plans = [
             {
                 'name': 'free',
-                'description': 'Plan gratuito de prueba por 7 días',
+                'description': 'Plan gratuito de prueba por 7 dias',
                 'price': 0.00,
-                'duration_month': 0,  # 0 = días, no meses
+                'duration_month': 0,
                 'max_employees': 2,
                 'max_users': 3,
                 'features': {
@@ -23,11 +25,12 @@ class Command(BaseCommand):
                     'custom_branding': False,
                     'priority_support': False
                 },
+                'commercial_benefits': [],
                 'is_active': True
             },
             {
                 'name': 'basic',
-                'description': 'Plan Profesional para pequeñas peluquerías',
+                'description': 'Plan Profesional para barberias pequenas',
                 'price': 29.99,
                 'duration_month': 1,
                 'stripe_price_id': '',
@@ -44,13 +47,14 @@ class Command(BaseCommand):
                     'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
-                    'priority_support': False
+                    'custom_branding': False
                 },
+                'commercial_benefits': [],
                 'is_active': True
             },
             {
                 'name': 'standard',
-                'description': 'Plan Negocio para peluquerías en crecimiento',
+                'description': 'Plan Negocio para barberias en crecimiento',
                 'price': 69.99,
                 'duration_month': 1,
                 'stripe_price_id': '',
@@ -65,20 +69,21 @@ class Command(BaseCommand):
                     'inventory': True,
                     'advanced_reports': True,
                     'multi_location': True,
-                    'role_permissions': True,
+                    'role_permissions': False,
                     'api_access': False,
-                    'priority_support': False
+                    'custom_branding': False
                 },
+                'commercial_benefits': [],
                 'is_active': True
             },
             {
                 'name': 'premium',
-                'description': 'Plan Empresarial para cadenas grandes',
+                'description': 'Plan Premium para operaciones grandes',
                 'price': 129.99,
                 'duration_month': 1,
                 'stripe_price_id': '',
-                'max_employees': 0,  # Unlimited
-                'max_users': 0,      # Unlimited
+                'max_employees': 0,
+                'max_users': 0,
                 'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
@@ -88,11 +93,14 @@ class Command(BaseCommand):
                     'inventory': True,
                     'advanced_reports': True,
                     'multi_location': True,
-                    'role_permissions': True,
-                    'api_access': True,
-                    'priority_support': True,
-                    'sla_guaranteed': True
+                    'role_permissions': False,
+                    'api_access': False,
+                    'custom_branding': True
                 },
+                'commercial_benefits': [
+                    'Atencion prioritaria',
+                    'Acompanamiento comercial'
+                ],
                 'is_active': True
             }
         ]
@@ -103,14 +111,8 @@ class Command(BaseCommand):
                 defaults=plan_data
             )
             if created:
-                self.stdout.write(
-                    self.style.SUCCESS(f'Created plan: {plan.get_name_display()}')
-                )
+                self.stdout.write(self.style.SUCCESS(f'Created plan: {plan.get_name_display()}'))
             else:
-                self.stdout.write(
-                    self.style.WARNING(f'Plan already exists: {plan.get_name_display()}')
-                )
+                self.stdout.write(self.style.WARNING(f'Plan already exists: {plan.get_name_display()}'))
 
-        self.stdout.write(
-            self.style.SUCCESS('Successfully created/verified all default plans')
-        )
+        self.stdout.write(self.style.SUCCESS('Successfully created/verified all default plans'))
