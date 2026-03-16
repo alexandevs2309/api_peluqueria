@@ -193,7 +193,12 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
         
         updated = serializer.save()
         if original.plan != updated.plan:
-            log_subscription_event(user=updated.user, subscription=updated, action='plan_changed')
+            log_subscription_event(
+                user=updated.user,
+                subscription=updated,
+                action='plan_changed',
+                description=f'Plan cambiado de {original.plan.name} a {updated.plan.name}.'
+            )
 
 
     @action(detail=True, methods=['post'], url_path='cancel')
@@ -572,6 +577,104 @@ class RenewSubscriptionView(APIView):
             auto_renew=auto_renew
         )
         return access_until
+
+    def _handle_auto_renew_payment(self, tenant, user, plan, payment_method_id, customer_id):
+        # Adjuntar método de pago y establecerlo por defecto para cobros automáticos.
+        try:
+            stripe.PaymentMethod.attach(payment_method_id, customer=customer_id)
+        except stripe.error.InvalidRequestError:
+            # Ya adjunto u otro estado aceptable.
+            pass
+
+        stripe.Customer.modify(
+            customer_id,
+            invoice_settings={'default_payment_method': payment_method_id}
+        )
+
+        stripe_price_id = plan.stripe_price_id
+        if not stripe_price_id:
+            return Response({
+                'error': f'Plan {plan.name} missing stripe_price_id configuration'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        stripe_subscription = stripe.Subscription.create(
+            customer=customer_id,
+            items=[{'price': stripe_price_id}],
+            default_payment_method=payment_method_id,
+            payment_behavior='default_incomplete',
+            metadata={
+                'user_id': str(user.id),
+                'tenant_id': str(tenant.id),
+                'plan_id': str(plan.id)
+            },
+            expand=['latest_invoice.payment_intent']
+        )
+
+        latest_invoice = stripe_subscription.get('latest_invoice') or {}
+        latest_payment_intent = latest_invoice.get('payment_intent') or {}
+        if latest_payment_intent.get('status') == 'requires_action':
+            return Response({
+                'requires_action': True,
+                'payment_intent_id': latest_payment_intent.get('id'),
+                'client_secret': latest_payment_intent.get('client_secret'),
+                'status': latest_payment_intent.get('status'),
+                'auto_renew': True
+            }, status=status.HTTP_200_OK)
+
+        if stripe_subscription.status not in {'active', 'trialing'}:
+            return Response({
+                'error': 'Subscription activation failed',
+                'status': stripe_subscription.status
+            }, status=402)
+
+        period_end_ts = stripe_subscription.get('current_period_end')
+        access_until_override = timezone.datetime.fromtimestamp(
+            period_end_ts, tz=timezone.utc
+        ) if period_end_ts else None
+
+        with transaction.atomic():
+            access_until = self._apply_paid_access(
+                tenant, user, plan, months=1,
+                auto_renew=True,
+                access_until_override=access_until_override
+            )
+
+            Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
+            Subscription.objects.update_or_create(
+                tenant=tenant,
+                plan=plan,
+                defaults={
+                    'stripe_subscription_id': stripe_subscription.id,
+                    'is_active': True
+                }
+            )
+
+            from apps.billing_api.models import Invoice
+            first_invoice = stripe_subscription.get('latest_invoice') or {}
+            first_payment_intent = first_invoice.get('payment_intent') or {}
+            amount_paid = first_invoice.get('amount_paid') or int(plan.price * 100)
+            Invoice.objects.create(
+                user=user,
+                amount=amount_paid / 100,
+                due_date=timezone.now(),
+                is_paid=True,
+                paid_at=timezone.now(),
+                payment_method='stripe',
+                status='paid',
+                stripe_payment_intent_id=first_payment_intent.get('id'),
+                description=f"Auto-renew subscription - {plan.get_name_display()}"
+            )
+
+        return Response({
+            'message': 'Auto-renew subscription activated successfully',
+            'plan': plan.name,
+            'status': tenant.subscription_status,
+            'access_level': tenant.get_access_level(),
+            'months': 1,
+            'access_until': access_until,
+            'auto_renew': True,
+            'stripe_subscription_id': stripe_subscription.id
+        })
     
     def get(self, request):
         """Obtener información de renovación"""
@@ -621,6 +724,7 @@ class RenewSubscriptionView(APIView):
         
         plan_id = request.data.get('plan_id')
         payment_method_id = request.data.get('payment_method_id')
+        payment_intent_id = request.data.get('payment_intent_id')
         months = self._parse_months(request.data.get('months'))
         auto_renew_raw = request.data.get('auto_renew', False)
         auto_renew = str(auto_renew_raw).lower() in {'1', 'true', 'yes', 'on'}
@@ -628,8 +732,8 @@ class RenewSubscriptionView(APIView):
         if not plan_id:
             return Response({'error': 'Plan ID required'}, status=400)
         
-        if not payment_method_id:
-            return Response({'error': 'Payment method required'}, status=400)
+        if not payment_method_id and not payment_intent_id:
+            return Response({'error': 'Payment method or payment intent required'}, status=400)
         if months is None:
             return Response({'error': 'Months must be an integer between 1 and 24'}, status=400)
         if auto_renew and months != 1:
@@ -685,107 +789,142 @@ class RenewSubscriptionView(APIView):
             else:
                 customer = stripe.Customer.retrieve(request.user.stripe_customer_id)
 
-            if auto_renew:
-                # Adjuntar método de pago y establecerlo por defecto para cobros automáticos.
-                try:
-                    stripe.PaymentMethod.attach(payment_method_id, customer=customer.id)
-                except stripe.error.InvalidRequestError:
-                    # Ya adjunto u otro estado aceptable.
-                    pass
-
-                stripe.Customer.modify(
-                    customer.id,
-                    invoice_settings={'default_payment_method': payment_method_id}
-                )
-
-                stripe_price_id = plan.stripe_price_id
-                if not stripe_price_id:
+            if payment_intent_id:
+                payment_intent = stripe.PaymentIntent.retrieve(payment_intent_id)
+                if payment_intent.customer and str(payment_intent.customer) != str(customer.id):
                     return Response({
-                        'error': f'Plan {plan.name} missing stripe_price_id configuration'
+                        'error': 'Payment intent does not belong to this customer'
                     }, status=status.HTTP_400_BAD_REQUEST)
-                stripe_subscription = stripe.Subscription.create(
-                    customer=customer.id,
-                    items=[{'price': stripe_price_id}],
-                    default_payment_method=payment_method_id,
-                    payment_behavior='error_if_incomplete',
-                    metadata={
-                        'user_id': str(request.user.id),
-                        'tenant_id': str(tenant.id),
-                        'plan_id': str(plan.id)
-                    },
-                    expand=['latest_invoice.payment_intent']
-                )
 
-                if stripe_subscription.status not in {'active', 'trialing'}:
+                if payment_intent.status == 'requires_action':
                     return Response({
-                        'error': 'Subscription activation failed',
-                        'status': stripe_subscription.status
+                        'error': 'Authentication still pending',
+                        'message': 'Payment intent is still awaiting 3D Secure confirmation.',
+                        'payment_intent_id': payment_intent.id,
+                        'status': payment_intent.status
+                    }, status=status.HTTP_409_CONFLICT)
+
+                if payment_intent.status != 'succeeded':
+                    return Response({
+                        'error': 'Payment failed',
+                        'status': payment_intent.status,
+                        'message': 'Payment was not successful'
                     }, status=402)
 
-                period_end_ts = stripe_subscription.get('current_period_end')
-                access_until_override = timezone.datetime.fromtimestamp(
-                    period_end_ts, tz=timezone.utc
-                ) if period_end_ts else None
+                # Validar metadata para evitar fraude o desajustes
+                metadata = payment_intent.metadata or {}
+                if (
+                    ('user_id' in metadata and str(metadata.get('user_id')) != str(request.user.id))
+                    or ('tenant_id' in metadata and str(metadata.get('tenant_id')) != str(tenant.id))
+                    or ('plan_id' in metadata and str(metadata.get('plan_id')) != str(plan.id))
+                    or ('months' in metadata and str(metadata.get('months')) != str(months))
+                ):
+                    return Response({
+                        'error': 'Payment intent metadata mismatch'
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
+                access_until_override = None
+                stripe_subscription_id = payment_intent.get('subscription')
+                if auto_renew and stripe_subscription_id:
+                    try:
+                        stripe_subscription = stripe.Subscription.retrieve(stripe_subscription_id)
+                        period_end_ts = stripe_subscription.get('current_period_end')
+                        access_until_override = timezone.datetime.fromtimestamp(
+                            period_end_ts, tz=timezone.utc
+                        ) if period_end_ts else None
+                    except stripe.error.StripeError:
+                        access_until_override = None
+
+                from apps.billing_api.models import Invoice
                 with transaction.atomic():
+                    existing_invoice = Invoice.objects.select_for_update().filter(
+                        stripe_payment_intent_id=payment_intent.id
+                    ).first()
+                    if existing_invoice:
+                        return Response({
+                            'message': 'Payment already processed',
+                            'plan': plan.name,
+                            'status': tenant.subscription_status,
+                            'access_level': tenant.get_access_level(),
+                            'months': months,
+                            'access_until': tenant.access_until,
+                            'payment_intent_id': payment_intent.id
+                        })
+
                     access_until = self._apply_paid_access(
-                        tenant, request.user, plan, months,
-                        auto_renew=True,
+                        tenant,
+                        request.user,
+                        plan,
+                        months,
+                        auto_renew=auto_renew,
                         access_until_override=access_until_override
                     )
 
-                    Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
-                    Subscription.objects.update_or_create(
-                        tenant=tenant,
-                        plan=plan,
-                        defaults={
-                            'stripe_subscription_id': stripe_subscription.id,
-                            'is_active': True
-                        }
-                    )
+                    if auto_renew and stripe_subscription_id:
+                        Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
+                        Subscription.objects.update_or_create(
+                            tenant=tenant,
+                            plan=plan,
+                            defaults={
+                                'stripe_subscription_id': stripe_subscription_id,
+                                'is_active': True
+                            }
+                        )
 
-                    from apps.billing_api.models import Invoice
-                    first_invoice = stripe_subscription.get('latest_invoice') or {}
-                    first_payment_intent = first_invoice.get('payment_intent') or {}
-                    amount_paid = first_invoice.get('amount_paid') or int(plan.price * 100)
+                    amount = (payment_intent.amount or int(plan.price * months * 100)) / 100
                     Invoice.objects.create(
                         user=request.user,
-                        amount=amount_paid / 100,
+                        amount=amount,
                         due_date=timezone.now(),
                         is_paid=True,
                         paid_at=timezone.now(),
                         payment_method='stripe',
                         status='paid',
-                        stripe_payment_intent_id=first_payment_intent.get('id'),
-                        description=f"Auto-renew subscription - {plan.get_name_display()}"
+                        stripe_payment_intent_id=payment_intent.id,
+                        description=f"Subscription renewal - {plan.get_name_display()} x{months}m"
                     )
 
                 return Response({
-                    'message': 'Auto-renew subscription activated successfully',
+                    'message': 'Subscription renewed successfully',
                     'plan': plan.name,
                     'status': tenant.subscription_status,
                     'access_level': tenant.get_access_level(),
-                    'months': 1,
+                    'months': months,
                     'access_until': access_until,
-                    'auto_renew': True,
-                    'stripe_subscription_id': stripe_subscription.id
+                    'payment_intent_id': payment_intent.id
                 })
+
+            if auto_renew:
+                return self._handle_auto_renew_payment(tenant, request.user, plan, payment_method_id, customer.id)
             
             # Crear PaymentIntent y cobrar inmediatamente
+            frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+            return_url = request.data.get('return_url') or f"{frontend_url}/client/payment"
+
             payment_intent = stripe.PaymentIntent.create(
                 amount=int(plan.price * months * 100),  # Centavos
                 currency='usd',
                 customer=customer.id,
                 payment_method=payment_method_id,
                 confirm=True,  # ✅ Cobrar inmediatamente
+                return_url=return_url,
                 metadata={
-                    'user_id': request.user.id,
-                    'tenant_id': tenant.id,
-                    'plan_id': plan.id,
-                    'months': months
+                    'user_id': str(request.user.id),
+                    'tenant_id': str(tenant.id),
+                    'plan_id': str(plan.id),
+                    'months': str(months)
                 }
             )
             
+            # ✅ Manejar 3D Secure / requires_action
+            if payment_intent.status == 'requires_action':
+                return Response({
+                    'requires_action': True,
+                    'payment_intent_id': payment_intent.id,
+                    'client_secret': payment_intent.client_secret,
+                    'status': payment_intent.status
+                }, status=status.HTTP_200_OK)
+
             # ✅ Validar que el pago fue exitoso
             if payment_intent.status != 'succeeded':
                 return Response({

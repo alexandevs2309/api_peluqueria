@@ -81,7 +81,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='employeecompensationhistory',
             constraint=models.CheckConstraint(
-                check=models.Q(('end_date__isnull', True), ('end_date__gte', models.F('effective_date')), _connector='OR'),
+                condition=models.Q(('end_date__isnull', True), ('end_date__gte', models.F('effective_date')), _connector='OR'),
                 name='valid_date_range'
             ),
         ),

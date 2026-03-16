@@ -69,7 +69,7 @@ class EmployeeCompensationHistory(models.Model):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(end_date__isnull=True) | models.Q(end_date__gte=models.F('effective_date')),
+                condition=models.Q(end_date__isnull=True) | models.Q(end_date__gte=models.F('effective_date')),
                 name='valid_date_range'
             )
         ]

@@ -85,7 +85,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         ]
         constraints = [
             models.CheckConstraint(
-                check=models.Q(tenant__isnull=False) | models.Q(is_superuser=True),
+                condition=models.Q(tenant__isnull=False) | models.Q(is_superuser=True),
                 name='user_must_have_tenant_or_be_superuser',
                 violation_error_message='Los usuarios no superadmin deben tener un tenant asignado.'
             )

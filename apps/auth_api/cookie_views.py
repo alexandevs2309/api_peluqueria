@@ -21,6 +21,14 @@ class CookieRefreshThrottle(AnonRateThrottle):
     scope = 'login'
 
 
+def _jwt_cookie_max_age(setting_name: str) -> int:
+    lifetime = settings.SIMPLE_JWT.get(setting_name)
+    if lifetime is None:
+        return 0
+
+    return max(0, int(lifetime.total_seconds()))
+
+
 class CookieLoginView(APIView):
     """
     Vista de login que establece JWT tokens en httpOnly cookies
@@ -109,7 +117,7 @@ class CookieLoginView(APIView):
             httponly=True,
             secure=not settings.DEBUG,
             samesite='Strict',
-            max_age=8 * 60 * 60,  # 8 horas
+            max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
             path='/'
         )
         
@@ -119,7 +127,7 @@ class CookieLoginView(APIView):
             httponly=True,
             secure=not settings.DEBUG,
             samesite='Strict',
-            max_age=30 * 24 * 60 * 60,  # 30 días
+            max_age=_jwt_cookie_max_age('REFRESH_TOKEN_LIFETIME'),
             path='/'
         )
         
@@ -213,7 +221,7 @@ class CookieRefreshView(APIView):
                 httponly=True,
                 secure=not settings.DEBUG,
                 samesite='Strict',
-                max_age=8 * 60 * 60,  # 8 horas
+                max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
                 path='/'
             )
             

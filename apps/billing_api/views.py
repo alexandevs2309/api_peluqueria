@@ -10,6 +10,7 @@ from django.db.models import Sum, Count, Q
 from django.utils import timezone
 from datetime import timedelta
 from apps.tenants_api.models import Tenant
+from apps.subscriptions_api.models import UserSubscription
 
 
 class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
@@ -19,6 +20,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         'list': 'billing_api.view_invoice',
         'retrieve': 'billing_api.view_invoice',
         'create': 'billing_api.add_invoice',
+        'generate_for_tenant': 'billing_api.add_invoice',
         'update': 'billing_api.change_invoice',
         'partial_update': 'billing_api.change_invoice',
         'destroy': 'billing_api.delete_invoice',
@@ -184,6 +186,59 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 
+    @action(detail=False, methods=['post'], url_path='generate-for-tenant')
+    def generate_for_tenant(self, request):
+        if not request.user.is_superuser:
+            return Response(
+                {'detail': 'Solo el superadministrador puede generar facturas manuales.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        tenant_id = request.data.get('tenant_id')
+        due_date = request.data.get('due_date')
+        description = request.data.get('description', '')
+
+        if not tenant_id or not due_date:
+            return Response(
+                {'detail': 'tenant_id y due_date son requeridos.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            return Response({'detail': 'Tenant no encontrado.'}, status=status.HTTP_404_NOT_FOUND)
+
+        subscription = UserSubscription.objects.select_related('plan', 'user').filter(
+            user__tenant=tenant,
+            is_active=True
+        ).order_by('-start_date', '-id').first()
+
+        if not subscription or not subscription.plan:
+            return Response(
+                {'detail': 'El tenant no tiene una suscripción activa con plan válido.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = InvoiceSerializer(data={
+            'subscription': subscription.id,
+            'due_date': due_date,
+            'description': description
+        }, context={})
+        serializer.is_valid(raise_exception=True)
+
+        invoice = Invoice.objects.create(
+            user=subscription.user,
+            subscription=subscription,
+            amount=subscription.plan.price,
+            due_date=serializer.validated_data['due_date'],
+            description=description or f'Factura manual de suscripción - {subscription.plan.get_name_display()}',
+            status='pending'
+        )
+
+        output = self.get_serializer(invoice)
+        return Response(output.data, status=status.HTTP_201_CREATED)
+
 
 class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     serializer_class = PaymentAttemptSerializer
@@ -251,6 +306,11 @@ class BillingStatsView(views.APIView):
                 'pending': Invoice.objects.filter(is_paid=False, due_date__gte=timezone.now()).count(),
                 'overdue': overdue_invoices
             }
+
+            active_subscriptions = UserSubscription.objects.filter(
+                is_active=True,
+                user__tenant__is_active=True
+            ).count()
             
             # Top tenants por revenue usando agregación única
             top_tenants_data = Invoice.objects.filter(
@@ -294,6 +354,7 @@ class BillingStatsView(views.APIView):
                 'total_revenue': float(total_revenue),
                 'pending_payments': float(pending_payments),
                 'overdue_invoices': overdue_invoices,
+                'active_subscriptions': active_subscriptions,
                 'period_revenue': float(period_revenue),
                 'invoice_stats': invoice_stats,
                 'top_tenants': top_tenants,
