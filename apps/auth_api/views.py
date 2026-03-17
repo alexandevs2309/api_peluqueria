@@ -457,8 +457,40 @@ class PasswordResetRequestView(APIView):
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        email = (serializer.validated_data.get('email') or '').strip().lower()
+        tenant_subdomain = (serializer.validated_data.get('tenant_subdomain') or '').strip().lower() or None
+        if not tenant_subdomain:
+            host = request.META.get('HTTP_HOST', '')
+            if '.' in host and not host.startswith('localhost'):
+                tenant_subdomain = host.split('.')[0]
+            if not tenant_subdomain:
+                tenant_subdomain = request.META.get('HTTP_X_TENANT_SUBDOMAIN')
         try:
-            user = User.objects.get(email=serializer.validated_data['email'])
+            user = None
+            if tenant_subdomain:
+                tenant = Tenant.objects.filter(
+                    subdomain=tenant_subdomain,
+                    is_active=True,
+                    deleted_at__isnull=True
+                ).first()
+                if tenant:
+                    user = User.objects.filter(email=email, tenant=tenant).first()
+            else:
+                candidates = list(User.objects.filter(email=email).select_related('tenant'))
+                if len(candidates) > 1:
+                    return Response(
+                        {
+                            "detail": "Este correo pertenece a varios tenants. Indica el subdominio para continuar.",
+                            "code": "tenant_required"
+                        },
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                if candidates:
+                    user = candidates[0]
+
+            if not user:
+                return Response({"detail": "Correo enviado si el usuario existe."}, status=status.HTTP_200_OK)
+
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
             

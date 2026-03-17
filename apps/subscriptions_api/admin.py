@@ -1,6 +1,6 @@
 from django.contrib import admin
 from apps.tenants_api.base_admin import BaseTenantAdmin
-from .models import SubscriptionPlan, UserSubscription
+from .models import SubscriptionPlan, UserSubscription, SubscriptionAuditLog
 
 
 @admin.register(SubscriptionPlan)
@@ -31,3 +31,12 @@ class UserSubscriptionAdmin(BaseTenantAdmin):
     tenant_lookup = "user__tenant"
     list_display = ('user', 'plan', 'is_active', 'start_date', 'end_date')
     readonly_fields = ('user', 'plan', 'start_date', 'end_date', 'created_at')
+
+
+@admin.register(SubscriptionAuditLog)
+class SubscriptionAuditLogAdmin(BaseTenantAdmin):
+    tenant_lookup = "subscription__user__tenant"
+    list_display = ('created_at', 'user', 'subscription', 'action')
+    list_filter = ('action', 'created_at')
+    search_fields = ('user__email', 'description')
+    readonly_fields = ('created_at', 'user', 'subscription', 'action', 'description')

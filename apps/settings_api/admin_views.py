@@ -10,6 +10,7 @@ from apps.billing_api.models import Invoice
 from apps.auth_api.models import User
 from .integration_service import IntegrationService
 from apps.audit_api.views import AuditLogViewSet
+from django.conf import settings
 
 class SaasMetricsView(views.APIView):
     """Vista para métricas SaaS del SuperAdmin"""
@@ -242,11 +243,15 @@ class SystemMonitorView(views.APIView):
         alerts = []
         for service_name, service in services.items():
             if service['status'] == 'down':
+                error_message = service.get('error_message', '')
+                is_not_configured = isinstance(error_message, str) and 'no configurado' in error_message.lower()
+                alert_type = 'info' if settings.DEBUG and is_not_configured else 'critical'
+                alert_title = f'{service_name.title()} no configurado' if settings.DEBUG and is_not_configured else f'{service_name.title()} fuera de servicio'
                 alerts.append({
                     'id': f'{service_name}-down',
-                    'type': 'critical',
-                    'title': f'{service_name.title()} Service Down',
-                    'message': service.get('error_message', f'{service_name} is not responding'),
+                    'type': alert_type,
+                    'title': alert_title,
+                    'message': error_message or f'{service_name} no está respondiendo',
                     'created_at': service['last_check'],
                     'resolved': False
                 })
@@ -259,20 +264,20 @@ def test_integration_service(request):
     service_type = request.data.get('service')
     
     if service_type == 'email':
-        return _test_email_service()
+        return _test_email_service(request)
     elif service_type == 'payments':
-        return _test_payment_service()
+        return _test_payment_service(request)
     elif service_type == 'paypal':
-        return _test_paypal_service()
+        return _test_paypal_service(request)
     elif service_type == 'twilio':
-        return _test_twilio_service()
+        return _test_twilio_service(request)
     else:
         return response.Response({
             'success': False,
             'message': 'Tipo de servicio no válido'
         }, status=status.HTTP_400_BAD_REQUEST)
 
-def _test_email_service():
+def _test_email_service(request):
     try:
         if not IntegrationService.is_sendgrid_enabled():
             return response.Response({
@@ -292,13 +297,13 @@ def _test_email_service():
             'message': 'Email de prueba enviado correctamente'
         })
     except Exception as e:
-        AuditLogViewSet.log_integration_error('SendGrid', str(e))
+        AuditLogViewSet.log_integration_error('SendGrid', str(e), request=request)
         return response.Response({
             'success': False,
             'message': f'Error en email: {str(e)}'
         })
 
-def _test_payment_service():
+def _test_payment_service(request):
     try:
         if not IntegrationService.is_stripe_enabled():
             return response.Response({
@@ -318,13 +323,13 @@ def _test_payment_service():
             'message': 'Stripe configurado correctamente'
         })
     except Exception as e:
-        AuditLogViewSet.log_integration_error('Stripe', str(e))
+        AuditLogViewSet.log_integration_error('Stripe', str(e), request=request)
         return response.Response({
             'success': False,
             'message': f'Error en Stripe: {str(e)}'
         })
 
-def _test_paypal_service():
+def _test_paypal_service(request):
     try:
         if not IntegrationService.is_paypal_enabled():
             return response.Response({
@@ -337,13 +342,13 @@ def _test_paypal_service():
             'message': 'PayPal configurado correctamente'
         })
     except Exception as e:
-        AuditLogViewSet.log_integration_error('PayPal', str(e))
+        AuditLogViewSet.log_integration_error('PayPal', str(e), request=request)
         return response.Response({
             'success': False,
             'message': f'Error en PayPal: {str(e)}'
         })
 
-def _test_twilio_service():
+def _test_twilio_service(request):
     try:
         if not IntegrationService.is_twilio_enabled():
             return response.Response({
@@ -356,7 +361,7 @@ def _test_twilio_service():
             'message': 'Twilio configurado correctamente'
         })
     except Exception as e:
-        AuditLogViewSet.log_integration_error('Twilio', str(e))
+        AuditLogViewSet.log_integration_error('Twilio', str(e), request=request)
         return response.Response({
             'success': False,
             'message': f'Error en Twilio: {str(e)}'

@@ -141,6 +141,7 @@ class PasswordChangeSerializer(serializers.Serializer):
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
+    tenant_subdomain = serializers.CharField(required=False)
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()

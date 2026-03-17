@@ -76,6 +76,15 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         with transaction.atomic():
             # 🔒 Bloqueo real de fila
             invoice = Invoice.objects.select_for_update().get(pk=pk)
+
+            # Validación de ownership dentro del lock
+            if not request.user.is_superuser:
+                if invoice.user != request.user:
+                    if not (hasattr(request.user, 'tenant') and invoice.user and invoice.user.tenant_id == request.user.tenant_id):
+                        return Response(
+                            {'error': 'No tienes permiso para modificar esta factura.'},
+                            status=status.HTTP_403_FORBIDDEN
+                        )
             
             # Validar doble pago dentro del lock
             if invoice.is_paid:
@@ -150,6 +159,14 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
                 invoice = Invoice.objects.select_for_update().get(pk=pk)
 
                 # Validar dentro del lock
+                if not request.user.is_superuser:
+                    if invoice.user != request.user:
+                        if not (hasattr(request.user, 'tenant') and invoice.user and invoice.user.tenant_id == request.user.tenant_id):
+                            return Response(
+                                {'detail': 'No tienes permiso para modificar esta factura.'},
+                                status=status.HTTP_403_FORBIDDEN
+                            )
+
                 if invoice.is_paid:
                     return Response(
                         {'detail': 'Esta factura ya fue pagada.'},
@@ -371,30 +388,3 @@ class BillingStatsView(views.APIView):
                 'error': str(e),
                 'message': 'Error al obtener estadísticas de facturación'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
-    @action(detail=False, methods=['post'])
-    def mark_invoice_paid(self, request):
-        """Marcar factura como pagada (SuperAdmin)"""
-        invoice_id = request.data.get('invoice_id')
-        
-        try:
-            invoice = Invoice.objects.get(id=invoice_id)
-            
-            if invoice.is_paid:
-                return Response({
-                    'message': 'La factura ya está marcada como pagada'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            invoice.is_paid = True
-            invoice.paid_at = timezone.now()
-            invoice.status = 'paid'
-            invoice.save()
-            
-            return Response({
-                'message': f'Factura #{invoice.id} marcada como pagada'
-            })
-            
-        except Invoice.DoesNotExist:
-            return Response({
-                'error': 'Factura no encontrada'
-            }, status=status.HTTP_404_NOT_FOUND)

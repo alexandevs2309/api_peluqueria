@@ -9,6 +9,22 @@ class PaymentAttemptSerializer(serializers.ModelSerializer):
         fields = "__all__"
         read_only_fields = ["id", "attempted_at"]
 
+    def validate(self, data):
+        request = self.context.get('request')
+        if not request or not request.user or not request.user.is_authenticated:
+            return data
+
+        if request.user.is_superuser:
+            return data
+
+        invoice = data.get('invoice')
+        if invoice:
+            if invoice.user != request.user:
+                if not (hasattr(request.user, 'tenant') and invoice.user and invoice.user.tenant_id == request.user.tenant_id):
+                    raise serializers.ValidationError("No tiene permiso para registrar intentos en esta factura.")
+
+        return data
+
 
 class InvoiceSerializer(serializers.ModelSerializer):
     user_email = serializers.SerializerMethodField()

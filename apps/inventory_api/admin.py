@@ -7,7 +7,6 @@ class ProductAdmin(BaseTenantAdmin):
     list_display = ['name', 'sku', 'price', 'stock', 'category', 'is_active', 'tenant']
     list_filter = ['category', 'is_active', 'tenant']
     search_fields = ['name', 'sku']
-    list_editable = ['price', 'stock', 'is_active']
 
 @admin.register(Supplier)
 class SupplierAdmin(BaseTenantAdmin):

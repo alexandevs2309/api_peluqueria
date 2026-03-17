@@ -18,7 +18,7 @@ class IntegrationService:
         """Verificar si Stripe está habilitado y configurado correctamente"""
         system_settings = IntegrationService.get_system_settings()
         secret_key = os.getenv('STRIPE_SECRET_KEY')
-        public_key = os.getenv('STRIPE_PUBLIC_KEY')
+        public_key = os.getenv('STRIPE_PUBLISHABLE_KEY')
         
         if not system_settings.stripe_enabled:
             return False

@@ -7,7 +7,7 @@ from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfigurati
 class EmployeeAdmin(BaseTenantAdmin):
     list_display = ['user', 'tenant', 'payment_type', 'fixed_salary', 'commission_rate', 'is_active']
     list_filter = ['payment_type', 'is_active', 'tenant']
-    search_fields = ['user__email', 'user__first_name', 'user__last_name']
+    search_fields = ['user__email', 'user__full_name']
 
 @admin.register(PayrollPeriod)
 class PayrollPeriodAdmin(BaseTenantAdmin):

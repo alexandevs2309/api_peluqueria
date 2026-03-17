@@ -5,8 +5,19 @@ from .models import Tenant
 class TenantAdmin(admin.ModelAdmin):  # NO heredar BaseTenantAdmin (es el modelo raíz)
     list_display = ("name", "subdomain", "owner", "subscription_plan", "subscription_status", "is_active", "created_at")
     list_filter = ("subscription_plan", "subscription_status", "is_active")
-    search_fields = ("name", "subdomain", "owner__username")
-    fields = ("name", "subdomain", "owner", "subscription_plan", "subscription_status", "trial_end_date", "max_employees", "max_users", "is_active")
+    search_fields = ("name", "subdomain", "owner__email")
+    fields = (
+        "name",
+        "subdomain",
+        "owner",
+        "subscription_plan",
+        "subscription_status",
+        "trial_end_date",
+        "access_until",
+        "max_employees",
+        "max_users",
+        "is_active",
+    )
     
     def get_queryset(self, request):
         """SuperAdmin ve todo, otros usuarios solo su tenant"""
