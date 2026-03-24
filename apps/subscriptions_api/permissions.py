@@ -37,7 +37,17 @@ def requires_feature(feature_name):
     """
     def decorator(view_func):
         @wraps(view_func)
-        def wrapper(request, *args, **kwargs):
+        def wrapper(self_or_request, *args, **kwargs):
+            # Compatible con ViewSet methods (self, request) y funciones (request)
+            from rest_framework.viewsets import ViewSetMixin
+            if isinstance(self_or_request, ViewSetMixin):
+                self = self_or_request
+                request = args[0]
+                args = args[1:]
+                call = lambda: view_func(self, request, *args, **kwargs)
+            else:
+                request = self_or_request
+                call = lambda: view_func(request, *args, **kwargs)
             if not request.user.is_authenticated:
                 return Response(
                     {"error": "Authentication required"}, 
@@ -45,7 +55,7 @@ def requires_feature(feature_name):
                 )
             
             if request.user.is_superuser:
-                return view_func(request, *args, **kwargs)
+                return call()
                 
             if not request.user.tenant:
                 return Response(
@@ -67,7 +77,7 @@ def requires_feature(feature_name):
                     status=status.HTTP_403_FORBIDDEN
                 )
                 
-            return view_func(request, *args, **kwargs)
+            return call()
         return wrapper
     return decorator
 

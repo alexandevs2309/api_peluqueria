@@ -100,6 +100,28 @@ class TenantPermissionByAction(BasePermission):
         }
     """
     
+    # Permisos implícitos por nombre de rol (cuando no hay permisos asignados en BD)
+    ROLE_IMPLICIT_PERMISSIONS = {
+        'Client-Admin': '*',  # Acceso total al tenant
+        'Manager': '*',
+        'Client-Staff': [
+            'view_employee', 'view_appointment', 'view_client',
+            'view_service', 'view_sale', 'view_attendancerecord',
+            'add_attendancerecord', 'change_attendancerecord',
+        ],
+        'Cajera': [
+            'view_employee', 'view_appointment', 'add_appointment',
+            'change_appointment', 'view_client', 'add_client',
+            'change_client', 'view_service', 'view_sale', 'add_sale',
+        ],
+        'Estilista': [
+            'view_employee', 'view_appointment', 'view_client',
+            'view_service', 'view_sale', 'view_attendancerecord',
+            'add_attendancerecord', 'change_attendancerecord',
+        ],
+        'Utility': ['view_employee', 'view_appointment', 'view_service'],
+    }
+
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
@@ -117,7 +139,6 @@ class TenantPermissionByAction(BasePermission):
         action = getattr(view, 'action', None)
         
         if not action or action not in permission_map:
-            # Sin mapeo, denegar acceso (DENY BY DEFAULT)
             return False
         
         required_perm = permission_map[action]
@@ -133,10 +154,18 @@ class TenantPermissionByAction(BasePermission):
         ).select_related('role').prefetch_related('role__permissions__content_type')
         
         for user_role in user_roles:
-            if user_role.role.permissions.filter(
+            role = user_role.role
+
+            # 1. Verificar permisos explícitos en BD
+            if role.permissions.filter(
                 content_type__app_label=app_label,
                 codename=codename
             ).exists():
+                return True
+
+            # 2. Fallback: permisos implícitos por nombre de rol
+            implicit = self.ROLE_IMPLICIT_PERMISSIONS.get(role.name)
+            if implicit == '*' or (isinstance(implicit, list) and codename in implicit):
                 return True
         
         return False

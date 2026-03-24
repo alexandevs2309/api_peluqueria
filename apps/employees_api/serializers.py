@@ -31,10 +31,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
     user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='user', write_only=True)
     user = UserBasicSerializer(read_only=True)
     user_id_read = serializers.IntegerField(source='user.id', read_only=True)
+    service_ids = serializers.SerializerMethodField()
+    services_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
-        fields = ['id', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'created_at', 'updated_at']
+        fields = ['id', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'service_ids', 'services_count', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
     
     def to_representation(self, instance):
@@ -59,6 +61,12 @@ class EmployeeSerializer(serializers.ModelSerializer):
         user = validated_data.pop('user')
         employee = Employee.objects.create(user=user, **validated_data)
         return employee
+
+    def get_service_ids(self, obj):
+        return [employee_service.service_id for employee_service in obj.services.all()]
+
+    def get_services_count(self, obj):
+        return len(obj.services.all())
 
 class EmployeeServiceSerializer(serializers.ModelSerializer):
     service = ServiceSerializer(read_only=True)

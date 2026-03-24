@@ -6,12 +6,12 @@ Jerarquía de roles y validaciones de seguridad
 # Jerarquía estricta de roles
 ROLE_HIERARCHY = {
     'SuperAdmin': {
-        'can_create': ['SuperAdmin', 'Client-Admin', 'Client-Staff', 'Estilista', 'Cajera', 'Manager'],
+        'can_create': ['SuperAdmin', 'Client-Admin', 'Client-Staff', 'Estilista', 'Cajera', 'Manager', 'Utility'],
         'level': 0,
         'scope': 'GLOBAL'
     },
     'Client-Admin': {
-        'can_create': ['Client-Staff', 'Estilista', 'Cajera', 'Manager'],
+        'can_create': ['Client-Staff', 'Estilista', 'Cajera', 'Manager', 'Utility'],
         'level': 1,
         'scope': 'TENANT'
     },
@@ -31,6 +31,11 @@ ROLE_HIERARCHY = {
         'scope': 'TENANT'
     },
     'Manager': {
+        'can_create': [],
+        'level': 2,
+        'scope': 'TENANT'
+    },
+    'Utility': {
         'can_create': [],
         'level': 2,
         'scope': 'TENANT'

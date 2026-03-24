@@ -30,11 +30,20 @@ class SaleSerializer(serializers.ModelSerializer):
     payments = PaymentSerializer(many=True)
     appointment = serializers.PrimaryKeyRelatedField(queryset=Appointment.objects.all(), required=False)
     client_name = serializers.CharField(source='client.full_name', read_only=True)
+    employee_name = serializers.SerializerMethodField()
+    user_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Sale
-        fields = ['id', 'client', 'client_name', 'user', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment']
-        read_only_fields = ['user', 'date_time', 'closed', 'client_name']
+        fields = ['id', 'client', 'client_name', 'employee_name', 'user', 'user_name', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment']
+        read_only_fields = ['user', 'user_name', 'date_time', 'closed', 'client_name', 'employee_name']
+
+    def get_employee_name(self, obj):
+        employee_user = getattr(getattr(obj, 'employee', None), 'user', None)
+        return getattr(employee_user, 'full_name', None) or getattr(employee_user, 'email', None)
+
+    def get_user_name(self, obj):
+        return getattr(getattr(obj, 'user', None), 'full_name', None) or getattr(getattr(obj, 'user', None), 'email', None)
 
     def validate(self, data):
         import logging
@@ -126,11 +135,12 @@ class SaleSerializer(serializers.ModelSerializer):
 
 class CashRegisterSerializer(serializers.ModelSerializer):
     sales_amount = serializers.SerializerMethodField()
+    user_name = serializers.SerializerMethodField()
     
     class Meta:
         model = CashRegister
-        fields = ['id', 'user', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
-        read_only_fields = ['user', 'opened_at', 'closed_at', 'sales_amount']
+        fields = ['id', 'user', 'user_name', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
+        read_only_fields = ['user', 'user_name', 'opened_at', 'closed_at', 'sales_amount']
     
     def get_sales_amount(self, obj):
         """Calcular ventas del día"""
@@ -146,6 +156,9 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         ).aggregate(total=Sum('total'))['total'] or 0
         
         return float(sales_total)
+
+    def get_user_name(self, obj):
+        return getattr(getattr(obj, 'user', None), 'full_name', None) or getattr(getattr(obj, 'user', None), 'email', None)
 
 class CashCountSerializer(serializers.ModelSerializer):
     class Meta:

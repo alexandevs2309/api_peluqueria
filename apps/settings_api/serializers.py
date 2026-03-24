@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from .models import Setting, Branch, SystemSettings
 
+
 class BranchSerializer(serializers.ModelSerializer):
     class Meta:
         model = Branch
@@ -10,8 +11,9 @@ class BranchSerializer(serializers.ModelSerializer):
             "address",
         ]
 
+
 class SettingSerializer(serializers.ModelSerializer):
-    business_name = serializers.CharField(required=True )
+    business_name = serializers.CharField(required=True)
     business_email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     phone_number = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     address = serializers.CharField(required=False, allow_null=True, allow_blank=True)
@@ -51,9 +53,10 @@ class SettingSerializer(serializers.ModelSerializer):
         for day, hours in value.items():
             if not isinstance(hours, str) or "-" not in hours:
                 raise serializers.ValidationError(
-                    f"Formato inválido para {day}. Ejemplo: '9:00-18:00'"
+                    f"Formato invalido para {day}. Ejemplo: '9:00-18:00'"
                 )
         return value
+
 
 class SettingExportSerializer(serializers.ModelSerializer):
     class Meta:
@@ -61,24 +64,25 @@ class SettingExportSerializer(serializers.ModelSerializer):
         exclude = ["id", "created_at", "updated_at", "logo"]
 
 
-
 class SystemSettingsSerializer(serializers.ModelSerializer):
+    masked_value = "configured"
+
     class Meta:
         model = SystemSettings
         fields = [
             "id",
-            # Configuración General
+            # General
             "platform_name",
             "support_email",
-            # Configuración de Clientes
+            # Clientes
             "max_tenants",
             "trial_days",
             "default_currency",
-            # Configuración de Plataforma
+            # Plataforma
             "platform_domain",
             "supported_languages",
             "platform_commission_rate",
-            # Límites por Plan
+            # Limites por Plan
             "basic_plan_max_employees",
             "premium_plan_max_employees",
             "enterprise_plan_max_employees",
@@ -88,11 +92,51 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             "twilio_enabled",
             "sendgrid_enabled",
             "aws_s3_enabled",
-            # Preferencias del Sistema
+            # Email (SMTP)
+            "smtp_host",
+            "smtp_port",
+            "smtp_username",
+            "smtp_password",
+            "from_email",
+            "from_name",
+            # Stripe
+            "stripe_public_key",
+            "stripe_secret_key",
+            "webhook_secret",
+            # PayPal
+            "paypal_client_id",
+            "paypal_client_secret",
+            "paypal_sandbox",
+            # Twilio
+            "twilio_account_sid",
+            "twilio_auth_token",
+            "twilio_phone_number",
+            # Preferencias
             "maintenance_mode",
             "email_notifications",
             "auto_suspend_expired",
+            "auto_upgrade_limits",
+            # Seguridad
+            "jwt_expiry_minutes",
+            "max_login_attempts",
+            "password_min_length",
+            "require_email_verification",
+            "enable_mfa",
             "created_at",
             "updated_at",
         ]
         read_only_fields = ["created_at", "updated_at"]
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        secret_fields = [
+            "smtp_password",
+            "stripe_secret_key",
+            "webhook_secret",
+            "paypal_client_secret",
+            "twilio_auth_token",
+        ]
+        for field in secret_fields:
+            if data.get(field):
+                data[field] = self.masked_value
+        return data

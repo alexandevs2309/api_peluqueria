@@ -748,15 +748,30 @@ class MFALoginVerifyView(APIView):
             timestamp=now()
         )
 
-        response = Response({
+        user_role = normalize_role_for_api(user.role, is_superuser=user.is_superuser)
+        if not user_role and user.roles.exists():
+            user_role = normalize_role_for_api(user.roles.first().name, is_superuser=user.is_superuser)
+
+        response_data = {
             'user': {
+                'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name,
-                'is_superuser': user.is_superuser
+                'role': user_role,
             },
             'access': access_token,
-            'refresh': refresh_token
-        })
+            'refresh': refresh_token,
+            'message': 'Inicio de sesión con MFA exitoso'
+        }
+
+        if tenant:
+            response_data['tenant'] = {
+                'id': tenant.id,
+                'name': tenant.name,
+                'subdomain': tenant.subdomain,
+            }
+
+        response = Response(response_data)
 
         response.set_cookie(
             'access_token',
@@ -776,6 +791,15 @@ class MFALoginVerifyView(APIView):
             max_age=24 * 60 * 60,
             path='/'
         )
+
+        if tenant:
+            response.set_cookie(
+                'tenant_id',
+                str(tenant.id),
+                httponly=False,
+                secure=not settings.DEBUG,
+                samesite='Strict'
+            )
 
         return response
 

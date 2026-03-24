@@ -1,5 +1,28 @@
 from django.db import models
 
+
+class ProductCategory(models.Model):
+    name = models.CharField(max_length=100)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='product_categories')
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Categoría de Producto'
+        verbose_name_plural = 'Categorías de Productos'
+        unique_together = ('name', 'tenant')
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['tenant']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Supplier(models.Model):
     name = models.CharField(max_length=255)
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='suppliers')
@@ -21,7 +44,7 @@ class Product(models.Model):
     is_active = models.BooleanField(default=True)
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True)
     description = models.TextField(blank=True, default='')
-    category = models.CharField(max_length=100, blank=True, default='')
+    category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
     image = models.ImageField(upload_to='', blank=True, null=True)
 
     class Meta:

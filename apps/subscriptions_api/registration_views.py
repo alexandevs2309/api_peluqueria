@@ -25,15 +25,14 @@ def check_email_availability(request):
     Endpoint para verificar si un email está disponible para registro
     """
     email = request.GET.get('email', '').strip()
-    
+
     if not email:
         return Response({
             'error': 'Email es requerido'
         }, status=status.HTTP_400_BAD_REQUEST)
-    
-    # Verificar si el email ya existe
+
     exists = User.objects.filter(email__iexact=email).exists()
-    
+
     return Response({
         'available': not exists,
         'email': email
@@ -48,14 +47,13 @@ def register_with_plan(request):
     try:
         data = request.data
         logger.info("SaaS register_with_plan request received content_type=%s method=%s", request.content_type, request.method)
-        
-        # Validar datos requeridos
+
         required_fields = ['fullName', 'email', 'businessName', 'planType']
         missing_fields = []
         for field in required_fields:
             if not data.get(field):
                 missing_fields.append(field)
-        
+
         if missing_fields:
             logger.warning("SaaS register missing_fields=%s", missing_fields)
             return Response({
@@ -63,16 +61,13 @@ def register_with_plan(request):
                 'missing_fields': missing_fields,
                 'received_data': list(data.keys())
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Verificar que el email no exista
+
         if User.objects.filter(email=data['email']).exists():
             return Response({
                 'error': 'Ya existe un usuario con este email'
             }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Crear tenant y usuario en una transacción
+
         with transaction.atomic():
-            # 1. Obtener el plan de suscripción primero
             from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
             try:
                 subscription_plan = SubscriptionPlan.objects.get(name=data['planType'], is_active=True)
@@ -81,11 +76,9 @@ def register_with_plan(request):
                 return Response({
                     'error': f'Plan no válido: {data["planType"]}'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # 2. Generar contraseña
+
             password = generate_random_password()
-            
-            # 3. Crear usuario temporal como superuser (para evitar validación de tenant)
+
             user = User(
                 email=data['email'],
                 full_name=data['fullName'],
@@ -99,8 +92,7 @@ def register_with_plan(request):
             user.set_password(password)
             user.save(skip_validation=True)
             logger.info("Temporary user created user_id=%s", user.id)
-            
-            # 4. Crear tenant con owner
+
             subdomain = generate_unique_subdomain(data['businessName'], user.id)
             tenant = Tenant.objects.create(
                 name=data['businessName'],
@@ -113,15 +105,13 @@ def register_with_plan(request):
                 is_active=True
             )
             logger.info("Tenant created tenant_id=%s", tenant.id)
-            
-            # 5. Actualizar usuario a Client-Admin con tenant
+
             user.is_superuser = False
             user.tenant = tenant
             user.role = 'Client-Admin'
             user.save(skip_validation=True)
             logger.info("User converted to Client-Admin user_id=%s tenant_id=%s", user.id, tenant.id)
 
-            # 5.1 Asignar rol RBAC para permisos por action/tenant
             client_admin_role = Role.objects.filter(name='Client-Admin').first()
             if client_admin_role:
                 UserRole.objects.get_or_create(
@@ -129,8 +119,7 @@ def register_with_plan(request):
                     role=client_admin_role,
                     tenant=tenant
                 )
-            
-            # 6. Crear suscripción del usuario con trial
+
             trial_end = timezone.now() + timezone.timedelta(days=7)
             if tenant.trial_end_date:
                 trial_end = timezone.make_aware(
@@ -146,7 +135,6 @@ def register_with_plan(request):
             )
             logger.info("Trial subscription created subscription_id=%s", user_subscription.id)
 
-            # 7. Crear factura inicial (pendiente para después del trial)
             from apps.billing_api.models import Invoice
             invoice = Invoice.objects.create(
                 user=user,
@@ -158,7 +146,6 @@ def register_with_plan(request):
             )
             logger.info("Initial invoice created invoice_id=%s", invoice.id)
 
-            # 8. Crear sucursal principal por defecto
             default_branch = Branch.objects.create(
                 tenant=tenant,
                 name='Sucursal Principal',
@@ -167,8 +154,7 @@ def register_with_plan(request):
                 is_active=True
             )
             logger.info("Default branch created branch_id=%s", default_branch.id)
-            
-            # 9. Crear configuración inicial para esa sucursal
+
             Setting.objects.create(
                 branch=default_branch,
                 business_name=tenant.name,
@@ -179,11 +165,52 @@ def register_with_plan(request):
                 timezone='America/Santo_Domingo'
             )
             logger.info("Default settings created for branch_id=%s", default_branch.id)
-            
-            # 10. Enviar email de bienvenida
+
+            # Crear categorías de servicios por defecto
+            from apps.services_api.models import ServiceCategory
+            default_categories = [
+                {'name': 'Corte de Cabello', 'description': 'Servicios de corte de cabello'},
+                {'name': 'Barba', 'description': 'Servicios de arreglo y diseño de barba'},
+                {'name': 'Afeitado', 'description': 'Servicios de afeitado clásico'},
+                {'name': 'Tratamientos', 'description': 'Tratamientos capilares y de cuero cabelludo'},
+                {'name': 'Peinado', 'description': 'Servicios de peinado y estilizado'},
+                {'name': 'Coloración', 'description': 'Tintes, mechas y coloración'},
+                {'name': 'Keratina', 'description': 'Tratamientos de keratina y alisado'},
+                {'name': 'Cejas', 'description': 'Diseño y depilación de cejas'},
+                {'name': 'Masaje Capilar', 'description': 'Masajes de cuero cabelludo'},
+                {'name': 'Extensiones', 'description': 'Colocación de extensiones de cabello'},
+                {'name': 'Combo', 'description': 'Paquetes y servicios combinados'},
+            ]
+            for cat in default_categories:
+                ServiceCategory.objects.get_or_create(
+                    name=cat['name'],
+                    tenant=tenant,
+                    defaults={'description': cat['description']}
+                )
+            logger.info("Default service categories created for tenant_id=%s", tenant.id)
+
+            # Crear categorías de productos por defecto
+            from apps.inventory_api.models import ProductCategory
+            default_product_categories = [
+                {'name': 'Productos de Cabello', 'description': 'Shampoos, acondicionadores y tratamientos'},
+                {'name': 'Productos de Barba', 'description': 'Aceites, bálsamos y ceras para barba'},
+                {'name': 'Colorantes', 'description': 'Tintes y productos de coloración'},
+                {'name': 'Herramientas de Corte', 'description': 'Tijeras, navajas y maquinillas'},
+                {'name': 'Equipos Eléctricos', 'description': 'Secadores, planchas y rizadores'},
+                {'name': 'Accesorios', 'description': 'Peines, cepillos y capas'},
+                {'name': 'Higiene y Desinfección', 'description': 'Productos de limpieza y esterilización'},
+                {'name': 'Retail', 'description': 'Productos para venta al cliente'},
+            ]
+            for cat in default_product_categories:
+                ProductCategory.objects.get_or_create(
+                    name=cat['name'],
+                    tenant=tenant,
+                    defaults={'description': cat['description']}
+                )
+            logger.info("Default product categories created for tenant_id=%s", tenant.id)
+
             send_welcome_email(user, password, tenant)
-            
-            # Obtener datos para respuesta
+
             response_data = {
                 'success': True,
                 'message': 'Cuenta creada exitosamente',
@@ -197,100 +224,90 @@ def register_with_plan(request):
                 'credentials': {
                     'email': user.email,
                     'note': 'Credenciales enviadas por email'
+                },
+                'email_status': {
+                    'email_sent': True,
+                    'recipient': user.email,
+                    'status': 'queued'
                 }
             }
-            
-            # Simular resultado de email para respuesta inmediata
-            email_result = {
-                'email_sent': True,
-                'message_id': f'msg_{uuid.uuid4().hex[:16]}',
-                'recipient': user.email,
-                'status': 'scheduled'
-            }
-            
-            response_data['email_status'] = email_result
+
             return Response(response_data, status=status.HTTP_201_CREATED)
-            
+
     except Exception as e:
         logger.exception("Error in register_with_plan")
         return Response({
             'error': f'Error: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
 def generate_unique_subdomain(business_name, user_id):
-    """Generar subdomain único basado en el nombre del negocio"""
     from apps.tenants_api.models import Tenant
-    
-    # Limpiar nombre del negocio
+
     clean_name = re.sub(r'[^a-zA-Z0-9]', '', business_name.lower())
-    clean_name = clean_name[:15]  # Máximo 15 caracteres para dejar espacio al user_id
-    
-    # Generar subdomain base (máximo 50 caracteres total)
+    clean_name = clean_name[:15]
+
     base_subdomain = f"{clean_name}{user_id}"
-    
-    # Asegurar que no exceda 50 caracteres
     if len(base_subdomain) > 50:
         base_subdomain = base_subdomain[:50]
-    
-    # Verificar unicidad
+
     subdomain = base_subdomain
     counter = 1
     while Tenant.objects.filter(subdomain=subdomain).exists():
-        # Asegurar que con el counter tampoco exceda 50
         suffix = str(counter)
         max_base_len = 50 - len(suffix)
         subdomain = f"{base_subdomain[:max_base_len]}{suffix}"
         counter += 1
-    
+
     return subdomain
 
+
 def generate_random_password(length=12):
-    """Generar contraseña aleatoria segura"""
     characters = string.ascii_letters + string.digits + "!@#$%^&*"
     return ''.join(secrets.choice(characters) for _ in range(length))
 
+
 def send_welcome_email(user, password, tenant):
-    """Simula envío de email de bienvenida profesional"""
-    email_content = f"""
-    ╔══════════════════════════════════════════════════════════════╗
-    ║                🎉 ¡BIENVENIDO A BARBERSAAS! 🎉               ║
-    ╚══════════════════════════════════════════════════════════════╝
-    
-    Hola {user.full_name},
-    
-    ¡Tu cuenta ha sido creada exitosamente!
-    
-    📋 DATOS DE ACCESO:
-    ┌─────────────────────────────────────────────────────────────┐
-    │ Barbería: {tenant.name}
-    │ Plan: {tenant.plan_type.title()}
-    │ 
-    │ 🔐 CREDENCIALES:
-    │ Email: {user.email}
-    │ Contraseña: {password}
-    │ 
-    │ 🌐 Acceso: http://localhost:4200/auth/login
-    └─────────────────────────────────────────────────────────────┘
-    
-    🚀 PRIMEROS PASOS:
-    1. Inicia sesión con las credenciales de arriba
-    2. Cambia tu contraseña temporal
-    3. Configura tu barbería
-    4. Agrega empleados y servicios
-    
-    ¿Necesitas ayuda? Responde a este email.
-    
-    ¡Gracias por elegir BarberSaaS!
-    
-    El equipo de BarberSaaS
-    ═══════════════════════════════════════════════════════════════
+    """Envía email de bienvenida real con credenciales"""
+    from apps.auth_api.tasks import send_email_async
+    from django.conf import settings as django_settings
+
+    frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:4200')
+    login_url = f"{frontend_url}/auth/login"
+
+    subject = f"¡Bienvenido a BarberSaaS, {user.full_name}!"
+
+    text_body = (
+        f"Hola {user.full_name},\n\n"
+        f"Tu cuenta ha sido creada exitosamente.\n\n"
+        f"Barbería: {tenant.name}\n"
+        f"Email: {user.email}\n"
+        f"Contraseña temporal: {password}\n\n"
+        f"Inicia sesión en: {login_url}\n\n"
+        f"Por seguridad, cambia tu contraseña después de iniciar sesión.\n\n"
+        f"El equipo de BarberSaaS"
+    )
+
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
+      <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
+        <h2 style="color:#111827;">¡Bienvenido a BarberSaaS!</h2>
+        <p>Hola <strong>{user.full_name}</strong>,</p>
+        <p>Tu cuenta ha sido creada exitosamente.</p>
+        <div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:4px 0;"><strong>Barbería:</strong> {tenant.name}</p>
+          <p style="margin:4px 0;"><strong>Email:</strong> {user.email}</p>
+          <p style="margin:4px 0;"><strong>Contraseña temporal:</strong> <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px;">{password}</code></p>
+        </div>
+        <p style="margin:24px 0;">
+          <a href="{login_url}" style="background:#2563eb;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;display:inline-block;font-weight:600;">Iniciar Sesión</a>
+        </p>
+        <p style="color:#6b7280;font-size:13px;">Por seguridad, cambia tu contraseña después de iniciar sesión.</p>
+      </div>
+    </div>
     """
-    
-    logger.info("Welcome email prepared for user_id=%s tenant_id=%s", user.id, tenant.id)
-    
-    return {
-        'email_sent': True,
-        'message_id': f'msg_{uuid.uuid4().hex[:16]}',
-        'recipient': user.email,
-        'status': 'delivered'
-    }
+
+    logger.info("Sending welcome email to user_id=%s tenant_id=%s", user.id, tenant.id)
+    send_email_async.delay(subject, text_body, 'onboarding@resend.dev', [user.email], html_message=html_body)
+
+    return {'email_sent': True, 'recipient': user.email, 'status': 'queued'}

@@ -3,14 +3,20 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework.throttling import AnonRateThrottle
+from rest_framework.exceptions import ValidationError
 from django.utils.decorators import method_decorator
 from django_ratelimit.decorators import ratelimit
+from django_ratelimit.core import is_ratelimited
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import LoginSerializer
 from .models import ActiveSession, AccessLog, LoginAudit
 from .utils import get_client_ip, get_user_agent, get_client_jti
 from django.utils.timezone import now
+from django.contrib.auth import get_user_model
+from apps.tenants_api.models import Tenant
+
+User = get_user_model()
 
 
 class CookieLoginThrottle(AnonRateThrottle):
@@ -29,6 +35,21 @@ def _jwt_cookie_max_age(setting_name: str) -> int:
     return max(0, int(lifetime.total_seconds()))
 
 
+def _safe_user_agent(request) -> str:
+    return (get_user_agent(request) or '')[:255]
+
+
+def _create_login_audit(user, request, successful: bool, message: str) -> None:
+    LoginAudit.objects.create(
+        user=user,
+        ip_address=get_client_ip(request),
+        user_agent=_safe_user_agent(request),
+        successful=successful,
+        message=(message or '')[:255],
+        timestamp=now()
+    )
+
+
 class CookieLoginView(APIView):
     """
     Vista de login que establece JWT tokens en httpOnly cookies
@@ -40,10 +61,50 @@ class CookieLoginView(APIView):
     @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        if tenant_subdomain and is_ratelimited(request, group='tenant_login', key=lambda r: tenant_subdomain, rate='20/m', method='POST'):
+            return Response({"detail": "Demasiados intentos de login para este tenant."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError:
+            email = (request.data.get('email') or '').strip().lower()
+            user = None
+
+            if email:
+                try:
+                    if tenant_subdomain:
+                        tenant = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+                        if tenant:
+                            user = User.objects.filter(email=email, tenant=tenant).first()
+                    else:
+                        user = User.objects.filter(email=email).first()
+                except Exception:
+                    user = None
+
+            _create_login_audit(
+                user=user,
+                request=request,
+                successful=False,
+                message=f"Credenciales inválidas - Cookie login - Tenant: {tenant_subdomain or 'unknown'}"
+            )
+            raise
         
         user = serializer.validated_data['user']
         tenant = serializer.validated_data['tenant']
+
+        if user.mfa_enabled:
+            tenant_data = {
+                'id': tenant.id,
+                'subdomain': tenant.subdomain,
+            } if tenant else None
+
+            return Response({
+                'detail': 'Se requiere verificación MFA.',
+                'email': user.email,
+                'tenant': tenant_data,
+                'requires_mfa': True,
+            }, status=status.HTTP_200_OK)
         
         # Generar tokens
         refresh = RefreshToken.for_user(user)
@@ -59,7 +120,7 @@ class CookieLoginView(APIView):
         ActiveSession.objects.create(
             user=user,
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=_safe_user_agent(request),
             token_jti=jti,
             refresh_token=refresh_token,
             is_active=True,
@@ -71,17 +132,15 @@ class CookieLoginView(APIView):
             user=user,
             event_type='LOGIN',
             ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
+            user_agent=_safe_user_agent(request),
             timestamp=now()
         )
         
-        LoginAudit.objects.create(
+        _create_login_audit(
             user=user,
-            ip_address=get_client_ip(request),
-            user_agent=get_user_agent(request),
             successful=True,
-            message="Login con cookies exitoso",
-            timestamp=now()
+            request=request,
+            message="Login con cookies exitoso"
         )
         
         # Respuesta con datos del usuario

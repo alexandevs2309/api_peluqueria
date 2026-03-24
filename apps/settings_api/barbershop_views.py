@@ -132,6 +132,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
             serializer = BarbershopAdminSerializer(settings)
             data = serializer.data
+            data['pos_config'] = self._get_pos_config_data(request)
             data['currency_locked'] = self._is_currency_locked(request.user.tenant)
             data['currency_lock_reason'] = (
                 'No se puede cambiar la moneda porque existen transacciones registradas.'
@@ -159,6 +160,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'email': '',
                     'address': ''
                 },
+                'pos_config': self._get_pos_config_data(request),
                 'created_at': None,
                 'updated_at': None
             })

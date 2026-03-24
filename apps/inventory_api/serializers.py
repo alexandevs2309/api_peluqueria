@@ -1,23 +1,43 @@
 from rest_framework import serializers
 from django.utils.text import slugify
-from .models import Product, StockMovement, Supplier
+from .models import Product, StockMovement, Supplier, ProductCategory
+
 
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = '__all__'
 
+
+class ProductCategorySerializer(serializers.ModelSerializer):
+    product_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductCategory
+        fields = ['id', 'name', 'description', 'is_active', 'product_count']
+        read_only_fields = ['product_count']
+
+    def get_product_count(self, obj):
+        return obj.products.filter(is_active=True).count()
+
+
 class ProductSerializer(serializers.ModelSerializer):
     sku = serializers.CharField(required=False, allow_blank=True, max_length=100)
-    category = serializers.CharField(default='', allow_blank=True, required=False)
+    category = serializers.PrimaryKeyRelatedField(
+        queryset=ProductCategory.objects.all(), allow_null=True, required=False
+    )
+    category_name = serializers.SerializerMethodField()
     description = serializers.CharField(default='', allow_blank=True, required=False)
     image_url = serializers.SerializerMethodField()
-    
+
     class Meta:
         model = Product
         fields = '__all__'
         read_only_fields = ['tenant']
-        
+
+    def get_category_name(self, obj):
+        return obj.category.name if obj.category else None
+
     def get_image_url(self, obj):
         if obj.image:
             request = self.context.get('request')
@@ -38,7 +58,6 @@ class ProductSerializer(serializers.ModelSerializer):
         base = slugify(base_name).upper().replace('-', '')[:8] or 'PRODUCT'
         prefix = f"PRD-{base}"
 
-        # Generar consecutivo simple por tenant
         for i in range(1, 10000):
             candidate = f"{prefix}-{i:03d}"
             exists = Product.objects.filter(sku=candidate, tenant=tenant)
@@ -47,28 +66,24 @@ class ProductSerializer(serializers.ModelSerializer):
             if not exists.exists():
                 return candidate
 
-        # Fallback extremadamente improbable
         return f"{prefix}-X001"
 
     def validate(self, attrs):
         sku = attrs.get('sku', None)
 
-        # Crear: si SKU viene vacío o ausente, generar automáticamente.
         if not self.instance and (sku is None or str(sku).strip() == ''):
             attrs['sku'] = self._generate_sku(attrs)
             return super().validate(attrs)
 
-        # Update sin SKU en payload: conservar SKU actual.
         if self.instance and sku is None:
             return super().validate(attrs)
 
-        # Si SKU se envía explícitamente: normalizar o generar si quedó vacío.
         if str(sku).strip() == '':
             attrs['sku'] = self._generate_sku(attrs)
         else:
             attrs['sku'] = str(sku).strip()
         return super().validate(attrs)
-    
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         if instance.image:
@@ -80,6 +95,7 @@ class ProductSerializer(serializers.ModelSerializer):
         else:
             data['image'] = None
         return data
+
 
 class StockMovementSerializer(serializers.ModelSerializer):
     class Meta:

@@ -14,7 +14,7 @@ from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer, AttendanceRecordSerializer
 
 class EmployeeViewSet(TenantScopedViewSet):
-    queryset = Employee.objects.select_related('user', 'tenant').all()
+    queryset = Employee.objects.select_related('user', 'tenant').prefetch_related('services').all()
     serializer_class = EmployeeSerializer
     permission_classes = [TenantPermissionByAction]
     
@@ -22,6 +22,7 @@ class EmployeeViewSet(TenantScopedViewSet):
     permission_map = {
         'list': 'employees_api.view_employee',
         'retrieve': 'employees_api.view_employee',
+        'by_user': 'employees_api.view_employee',
         'create': 'employees_api.add_employee',
         'update': 'employees_api.change_employee',
         'partial_update': 'employees_api.change_employee',

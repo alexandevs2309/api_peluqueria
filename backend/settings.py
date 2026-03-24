@@ -399,17 +399,30 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Email configuration
 FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:4200')
 
+# En desarrollo, redirige todos los emails a esta dirección (limitación de Resend en modo test)
+DEV_EMAIL_OVERRIDE = env('DEV_EMAIL_OVERRIDE', default='') if DEBUG else ''
+
 if "pytest" in sys.modules:
     CELERY_TASK_ALWAYS_EAGER = True
     CELERY_TASK_EAGER_PROPAGATES = True
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
 else:
-    # SendGrid configuration
+    # Email configuration (Resend SMTP / SendGrid / fallback console)
     SENDGRID_API_KEY = env('SENDGRID_API_KEY', default='')
-    DEFAULT_FROM_EMAIL = env('SENDGRID_FROM_EMAIL', default='noreply@yourdomain.com')
-    
-    if SENDGRID_API_KEY and SENDGRID_API_KEY.startswith('SG.'):
-        # Use SMTP with SendGrid
+    DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default=env('SENDGRID_FROM_EMAIL', default='noreply@yourdomain.com'))
+
+    _smtp_host = env('EMAIL_HOST', default='')
+    _smtp_password = env('EMAIL_HOST_PASSWORD', default='')
+
+    if _smtp_host and _smtp_password:
+        EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+        EMAIL_HOST = _smtp_host
+        EMAIL_PORT = env.int('EMAIL_PORT', default=587)
+        EMAIL_HOST_USER = env('EMAIL_HOST_USER', default='')
+        EMAIL_HOST_PASSWORD = _smtp_password
+        EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
+        EMAIL_USE_SSL = env.bool('EMAIL_USE_SSL', default=False)
+    elif SENDGRID_API_KEY and SENDGRID_API_KEY.startswith('SG.'):
         EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
         EMAIL_HOST = 'smtp.sendgrid.net'
         EMAIL_PORT = 587
@@ -417,7 +430,6 @@ else:
         EMAIL_HOST_USER = 'apikey'
         EMAIL_HOST_PASSWORD = SENDGRID_API_KEY
     else:
-        # Fallback to console for development
         EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 # Security settings
