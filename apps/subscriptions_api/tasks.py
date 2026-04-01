@@ -60,10 +60,8 @@ def check_trial_expirations(self):
         
         suspended_count = 0
         for tenant in expired_trials:
-            # Suspender tenant
-            tenant.subscription_status = 'suspended'
-            tenant.is_active = False
-            tenant.save()
+            if not tenant.sync_subscription_state(save=True):
+                continue
             
             # Desactivar suscripción del usuario
             UserSubscription.objects.filter(
@@ -100,10 +98,8 @@ def cleanup_expired_trials(self):
         
         cleaned_count = 0
         for tenant in old_suspended:
-            # Marcar como inactivo permanentemente
-            tenant.is_active = False
-            tenant.save()
-            cleaned_count += 1
+            if tenant.sync_subscription_state(save=True):
+                cleaned_count += 1
             
             logger.info(f"Cleaned up old suspended tenant {tenant.name} (ID: {tenant.id})")
         

@@ -1,10 +1,9 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from apps.tenants_api.models import Tenant
-from apps.auth_api.models import User
 
 class Command(BaseCommand):
-    help = 'Desactivar cuentas con planes FREE expirados'
+    help = 'Normaliza tenants con trial expirado al estado suspendido/inactivo'
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -33,18 +32,11 @@ class Command(BaseCommand):
             for tenant in expired_tenants:
                 self.stdout.write(f'  - {tenant.name} (expiró: {tenant.trial_end_date})')
         else:
-            # Desactivar tenants expirados
-            expired_tenants.update(
-                is_active=False,
-                subscription_status='cancelled'
-            )
-            
-            # Desactivar usuarios de esos tenants
-            User.objects.filter(
-                tenant__in=expired_tenants,
-                is_active=True
-            ).update(is_active=False)
+            updated = 0
+            for tenant in expired_tenants:
+                if tenant.sync_subscription_state(save=True):
+                    updated += 1
             
             self.stdout.write(
-                self.style.SUCCESS(f'Desactivados {count} tenants expirados')
+                self.style.SUCCESS(f'Normalizados {updated} de {count} tenants expirados')
             )

@@ -16,6 +16,45 @@ class TenantMiddleware(MiddlewareMixin):
     """
     Middleware para manejar multitenancy basado en JWT claims o usuario autenticado
     """
+
+    @staticmethod
+    def _is_superadmin(user) -> bool:
+        if not getattr(user, 'is_authenticated', False):
+            return False
+        return bool(
+            getattr(user, 'is_superuser', False) or
+            getattr(user, 'role', '') == 'super_admin' or
+            getattr(user, 'role', '') == 'SuperAdmin'
+        )
+
+    @staticmethod
+    def _inactive_tenant_response(tenant=None):
+        message = 'Esta cuenta empresarial se encuentra desactivada o suspendida. Contacte al soporte o al administrador del SaaS.'
+        reason = 'tenant_inactive'
+
+        if tenant is not None:
+            if getattr(tenant, 'deleted_at', None) is not None:
+                reason = 'tenant_deleted'
+                message = 'Esta cuenta empresarial fue desactivada. Contacte al soporte o al administrador del SaaS.'
+            elif getattr(tenant, 'subscription_status', None) == 'suspended':
+                reason = 'tenant_suspended'
+                message = 'La cuenta de su empresa esta suspendida. Contacte al soporte o al administrador del SaaS.'
+            elif getattr(tenant, 'is_trial_expired', None) and tenant.is_trial_expired():
+                reason = 'trial_expired'
+                message = 'El periodo de prueba de su empresa ha expirado. Contacte al soporte o al administrador del SaaS.'
+            elif getattr(tenant, 'is_paid_access_expired', None) and tenant.is_paid_access_expired():
+                reason = 'paid_access_expired'
+                message = 'El acceso de pago de su empresa ha expirado. Contacte al soporte o al administrador del SaaS.'
+
+        return JsonResponse({
+            'error': 'TENANT_INACTIVE',
+            'code': 'TENANT_INACTIVE',
+            'reason': reason,
+            'message': message,
+            'tenant_id': getattr(tenant, 'id', None),
+            'tenant_subdomain': getattr(tenant, 'subdomain', None),
+            'support_email': 'support@barbershop.com'
+        }, status=403)
     
     def process_request(self, request):
         # Excluir admin de Django
@@ -29,6 +68,10 @@ class TenantMiddleware(MiddlewareMixin):
         # Rutas exentas (solo públicas)
         exempt_paths = [
             '/api/auth/login/',
+            '/api/auth/cookie-login/',
+            '/api/auth/cookie-logout/',
+            '/api/auth/cookie-refresh/',
+            '/api/auth/mfa/login-verify/',
             '/api/auth/register/',
             '/api/auth/password-reset/',
             '/api/healthz/',
@@ -66,6 +109,11 @@ class TenantMiddleware(MiddlewareMixin):
                         'error': 'Forbidden',
                         'code': 'SUPERUSER_REQUIRED'
                     }, status=403)
+
+        # El dueno del SaaS no debe depender de tenant ni de claims stale en tokens.
+        if self._is_superadmin(getattr(request, 'user', None)):
+            request.tenant = None
+            return None
         
         # Intentar obtener tenant desde JWT claims
         try:
@@ -95,12 +143,7 @@ class TenantMiddleware(MiddlewareMixin):
                                     'token_tenant': tenant_id
                                 }, status=403)
                     except Tenant.DoesNotExist:
-                        return JsonResponse({
-                            'error': 'TENANT_INACTIVE',
-                            'code': 'TENANT_INACTIVE',
-                            'message': 'This account has been deactivated. Please contact support for assistance.',
-                            'support_email': 'support@barbershop.com'
-                        }, status=403)
+                        return self._inactive_tenant_response()
         except (InvalidToken, TokenError, Tenant.DoesNotExist):
             # Si falla JWT, intentar desde usuario autenticado
             pass
@@ -119,20 +162,14 @@ class TenantMiddleware(MiddlewareMixin):
                     pass
                 
                 # Permitir acceso a super admins
-                if (request.user.is_superuser or 
-                    (hasattr(request.user, 'role') and request.user.role == 'super_admin')):
+                if self._is_superadmin(request.user):
                     request.tenant = None
                 elif hasattr(request.user, 'tenant') and request.user.tenant:
                     # Validar que el tenant del usuario esté activo
                     user_tenant = request.user.tenant
                     
                     if user_tenant.deleted_at is not None or not user_tenant.is_active:
-                        return JsonResponse({
-                            'error': 'TENANT_INACTIVE',
-                            'code': 'TENANT_INACTIVE',
-                            'message': 'This account has been deactivated. Please contact support for assistance.',
-                            'support_email': 'support@barbershop.com'
-                        }, status=403)
+                        return self._inactive_tenant_response(user_tenant)
                     request.tenant = user_tenant
                 else:
                     logger.warning('Authenticated user without tenant')

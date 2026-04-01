@@ -184,6 +184,39 @@ class Tenant(models.Model):
             self.save(update_fields=['subscription_status', 'is_active', 'updated_at'])
             return True
         return False
+
+    def sync_subscription_state(self, save=True):
+        """
+        Normaliza el estado persistido del tenant segun fechas y flags actuales.
+        Devuelve True si hubo cambios en memoria o en BD.
+        """
+        changed_fields = []
+
+        if self.deleted_at is not None:
+            if self.is_active:
+                self.is_active = False
+                changed_fields.append('is_active')
+            if self.subscription_status != 'cancelled':
+                self.subscription_status = 'cancelled'
+                changed_fields.append('subscription_status')
+        elif self.is_trial_expired():
+            if self.subscription_status != 'suspended':
+                self.subscription_status = 'suspended'
+                changed_fields.append('subscription_status')
+            if self.is_active:
+                self.is_active = False
+                changed_fields.append('is_active')
+        elif self.subscription_status == 'suspended' and self.is_active:
+            self.is_active = False
+            changed_fields.append('is_active')
+        elif self.subscription_status in {'trial', 'active'} and not self.is_active:
+            self.is_active = True
+            changed_fields.append('is_active')
+
+        if changed_fields and save:
+            self.save(update_fields=[*changed_fields, 'updated_at'])
+
+        return bool(changed_fields)
     
     def get_access_level(self):
         """Determinar nivel de acceso del tenant"""
