@@ -22,8 +22,8 @@ class TenantViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
 
     def get_permissions(self):
-        # Permitir acceso autenticado para subscription_status y locale
-        if self.action in ['subscription_status', 'locale']:
+        # Permitir acceso autenticado para endpoints del tenant actual.
+        if self.action in ['subscription_status', 'locale', 'current']:
             return [permissions.IsAuthenticated()]
         return super().get_permissions()
 

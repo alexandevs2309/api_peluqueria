@@ -6,6 +6,18 @@ from rest_framework.permissions import BasePermission
 from apps.roles_api.models import UserRole
 
 
+def resolve_request_tenant(request):
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None:
+        return tenant
+
+    user = getattr(request, 'user', None)
+    if user and getattr(user, 'is_authenticated', False):
+        return getattr(user, 'tenant', None)
+
+    return None
+
+
 class HasTenantPermission(BasePermission):
     """
     Verifica permisos basados en UserRole filtrado por request.tenant
@@ -26,7 +38,8 @@ class HasTenantPermission(BasePermission):
             return True
         
         # Usuarios normales requieren tenant
-        if not hasattr(request, 'tenant') or not request.tenant:
+        tenant = resolve_request_tenant(request)
+        if not tenant:
             return False
         
         # Si no se especificó permiso, solo validar autenticación + tenant
@@ -42,7 +55,7 @@ class HasTenantPermission(BasePermission):
         # Consultar UserRole filtrado por tenant
         user_roles = UserRole.objects.filter(
             user=request.user,
-            tenant=request.tenant
+            tenant=tenant
         ).select_related('role').prefetch_related('role__permissions__content_type')
         
         # Verificar si algún rol tiene el permiso
@@ -65,8 +78,9 @@ class HasTenantPermission(BasePermission):
             return False
         
         # Validar que objeto pertenece al tenant
+        tenant = resolve_request_tenant(request)
         if hasattr(obj, 'tenant'):
-            return obj.tenant == request.tenant
+            return obj.tenant == tenant
         
         return True
 
@@ -131,7 +145,8 @@ class TenantPermissionByAction(BasePermission):
             return True
         
         # Usuarios normales requieren tenant
-        if not hasattr(request, 'tenant') or not request.tenant:
+        tenant = resolve_request_tenant(request)
+        if not tenant:
             return False
         
         # Obtener permiso requerido según acción
@@ -150,7 +165,7 @@ class TenantPermissionByAction(BasePermission):
         
         user_roles = UserRole.objects.filter(
             user=request.user,
-            tenant=request.tenant
+            tenant=tenant
         ).select_related('role').prefetch_related('role__permissions__content_type')
         
         for user_role in user_roles:
