@@ -34,8 +34,12 @@ from apps.subscriptions_api.models import SubscriptionPlan
 from apps.roles_api.models import Role, UserRole
 import re
 from html import escape
+from datetime import timedelta
 from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
+from .settings_policy import is_mfa_globally_enabled, get_jwt_expiry_minutes
+from .login_policy import is_login_locked_out, get_login_lockout_message
+from apps.settings_api.utils import maybe_auto_upgrade_user_limit
 
 from django.utils.timezone import now
 import pyotp
@@ -73,6 +77,18 @@ def safe_create_access_log(user, event_type, request):
         user_agent=get_user_agent(request)[:255] if get_user_agent(request) else '',
         timestamp=now()
     )
+
+
+def issue_refresh_for_user(user, tenant=None):
+    refresh = RefreshToken.for_user(user)
+    access_token = refresh.access_token
+    access_token.set_exp(lifetime=timedelta(minutes=get_jwt_expiry_minutes()))
+
+    if tenant:
+        refresh['tenant_id'] = tenant.id
+        refresh['tenant_subdomain'] = tenant.subdomain
+
+    return refresh, access_token
 
 def _resolve_business_branding(user, request=None):
     business_name = 'Auron Suite'
@@ -234,6 +250,21 @@ class LoginView(generics.GenericAPIView):
     def post(self, request, *args, **kwargs):
         # Rate limit por tenant
         tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        email = (request.data.get('email') or '').strip().lower()
+        ip_address = get_client_ip(request)
+        user_for_lockout = None
+
+        if email:
+            if tenant_subdomain:
+                tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+                if tenant_for_lockout:
+                    user_for_lockout = User.objects.filter(email=email, tenant=tenant_for_lockout).first()
+            else:
+                user_for_lockout = User.objects.filter(email=email).first()
+
+        if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
+            return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         if tenant_subdomain:
             from django_ratelimit.core import is_ratelimited
             if is_ratelimited(request, group='tenant_login', key=lambda r: tenant_subdomain, rate='20/m', method='POST'):
@@ -242,8 +273,6 @@ class LoginView(generics.GenericAPIView):
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
-            email = request.data.get('email')
-
             tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else None
             if tenant_subdomain:
                 try:
@@ -280,7 +309,7 @@ class LoginView(generics.GenericAPIView):
             )
             return Response({"detail": "Cuenta inactiva. Contacte al administrador."}, status=status.HTTP_403_FORBIDDEN)
 
-        if user.mfa_enabled:
+        if is_mfa_globally_enabled() and user.mfa_enabled:
             tenant_data = {"id": tenant.id, "subdomain": tenant.subdomain} if tenant else None
             return Response({
                 "detail": "Se requiere verificación MFA.",
@@ -288,11 +317,8 @@ class LoginView(generics.GenericAPIView):
                 "tenant": tenant_data
             }, status=status.HTTP_200_OK)
 
-        refresh = RefreshToken.for_user(user)
-        if tenant:
-            refresh['tenant_id'] = tenant.id
-            refresh['tenant_subdomain'] = tenant.subdomain
-        access_token = str(refresh.access_token)
+        refresh, access = issue_refresh_for_user(user, tenant)
+        access_token = str(access)
         refresh_token = str(refresh)
         jti = get_client_jti(access_token)
 
@@ -643,12 +669,15 @@ class MFASetupView(APIView):
 
     def post(self, request):
         user = request.user
+        if not is_mfa_globally_enabled():
+            return Response({"error": "MFA está deshabilitado por configuración del sistema."}, status=status.HTTP_400_BAD_REQUEST)
         if user.mfa_enabled:
             return Response({"error": "MFA ya está habilitado."}, status=status.HTTP_400_BAD_REQUEST)
 
-        secret = pyotp.random_base32()
-        user.mfa_secret = secret
-        user.save()
+        secret = user.mfa_secret or pyotp.random_base32()
+        if user.mfa_secret != secret:
+            user.mfa_secret = secret
+            user.save(update_fields=['mfa_secret'])
 
         totp = pyotp.TOTP(secret)
         qr_uri = totp.provisioning_uri(user.email, issuer_name="HairSalon")
@@ -670,11 +699,13 @@ class MFAVerifyView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        if not is_mfa_globally_enabled():
+            return Response({"error": "MFA está deshabilitado por configuración del sistema."}, status=status.HTTP_400_BAD_REQUEST)
         serializer = MFAVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         user = request.user
         totp = pyotp.TOTP(user.mfa_secret)
-        if totp.verify(serializer.validated_data['code']):
+        if totp.verify(serializer.validated_data['code'], valid_window=2):
             user.mfa_enabled = True
             user.save()
             AccessLog.objects.create(
@@ -687,10 +718,41 @@ class MFAVerifyView(APIView):
             return Response({"detail": "MFA verificado y habilitado."})
         return Response({"error": "Código inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
+
+class MFADisableView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        if not user.mfa_enabled or not user.mfa_secret:
+            return Response({"error": "MFA no está habilitado."}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = MFAVerifySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        totp = pyotp.TOTP(user.mfa_secret)
+
+        if not totp.verify(serializer.validated_data['code'], valid_window=2):
+            return Response({"error": "Código inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user.mfa_enabled = False
+        user.mfa_secret = None
+        user.save(update_fields=['mfa_enabled', 'mfa_secret'])
+
+        AccessLog.objects.create(
+            user=user,
+            event_type='MFA_DISABLED',
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)[:255],
+            timestamp=now()
+        )
+        return Response({"detail": "MFA deshabilitado correctamente."})
+
 class MFALoginVerifyView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
+        if not is_mfa_globally_enabled():
+            return Response({"error": "MFA está deshabilitado por configuración del sistema."}, status=status.HTTP_400_BAD_REQUEST)
         serializer = MFAVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = request.data.get('email')
@@ -706,7 +768,7 @@ class MFALoginVerifyView(APIView):
             return Response({"error": "Usuario o tenant no encontrado."}, status=status.HTTP_400_BAD_REQUEST)
 
         totp = pyotp.TOTP(user.mfa_secret)
-        if not totp.verify(serializer.validated_data['code']):
+        if not totp.verify(serializer.validated_data['code'], valid_window=2):
             LoginAudit.objects.create(
                 user=user,
                 ip_address=get_client_ip(request),
@@ -717,8 +779,11 @@ class MFALoginVerifyView(APIView):
             )
             return Response({"error": "Código MFA inválido."}, status=status.HTTP_400_BAD_REQUEST)
 
-        refresh = RefreshToken.for_user(user)
-        access_token = str(refresh.access_token)
+        if is_login_locked_out(user=user, ip_address=get_client_ip(request)):
+            return Response({"error": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        refresh, access = issue_refresh_for_user(user, tenant)
+        access_token = str(access)
         refresh_token = str(refresh)
         jti = get_client_jti(access_token)
 
@@ -779,7 +844,7 @@ class MFALoginVerifyView(APIView):
             httponly=True,
             secure=not settings.DEBUG,
             samesite='Strict',
-            max_age=15 * 60,
+            max_age=get_jwt_expiry_minutes() * 60,
             path='/'
         )
         response.set_cookie(
@@ -920,11 +985,18 @@ class UserViewSet(viewsets.ModelViewSet):
 
         # Check user limits for non-superadmin
         if not request.user.is_superuser and request.user.tenant:
-            if not request.user.tenant.can_add_user():
+            tenant = request.user.tenant
+            if not tenant.can_add_user():
+                upgrade_result = maybe_auto_upgrade_user_limit(tenant, changed_by=request.user)
+                tenant.refresh_from_db(fields=['plan_type', 'subscription_plan', 'max_employees', 'max_users', 'settings', 'updated_at'])
+            if not tenant.can_add_user():
+                error_message = 'User limit reached for your plan'
+                if upgrade_result.get('reason') == 'no_higher_plan':
+                    error_message = 'User limit reached and there is no higher plan available for automatic upgrade'
                 return Response({
-                    'error': 'User limit reached for your plan',
-                    'current': request.user.tenant.get_user_usage()['current'],
-                    'limit': request.user.tenant.max_users
+                    'error': error_message,
+                    'current': tenant.get_user_usage()['current'],
+                    'limit': tenant.max_users
                 }, status=status.HTTP_403_FORBIDDEN)
         
         # ✅ VALIDACIÓN DE JERARQUÍA DE ROLES

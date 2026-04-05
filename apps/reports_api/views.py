@@ -11,6 +11,11 @@ from apps.billing_api.models import Invoice
 from apps.auth_api.models import User
 from apps.subscriptions_api.permissions import requires_feature
 from .pagination import ReportsPagination
+from apps.settings_api.policy_utils import (
+    get_platform_commission_rate,
+    calculate_platform_commission,
+    calculate_platform_net_revenue,
+)
 
 @api_view(['GET'])
 @permission_classes([TenantPermissionByAction])
@@ -225,6 +230,7 @@ class AdminReportsView(views.APIView):
         try:
             period = request.GET.get('period', 'last_30_days')
             end_date = timezone.now()
+            commission_rate = get_platform_commission_rate()
 
             # Calcular fechas según período (incluye rango custom real)
             if period == 'custom':
@@ -271,6 +277,8 @@ class AdminReportsView(views.APIView):
             
             # Métricas principales
             total_revenue = invoices.filter(is_paid=True).aggregate(Sum('amount'))['amount__sum'] or 0
+            platform_commission_amount = calculate_platform_commission(total_revenue)
+            net_revenue = calculate_platform_net_revenue(total_revenue)
             pending_payments = invoices.filter(is_paid=False).aggregate(Sum('amount'))['amount__sum'] or 0
             overdue_invoices = invoices.filter(
                 is_paid=False,
@@ -289,9 +297,13 @@ class AdminReportsView(views.APIView):
                         issued_at__lt=day_end,
                         is_paid=True
                     ).aggregate(Sum('amount'))['amount__sum'] or 0
+                    day_commission = calculate_platform_commission(day_revenue)
+                    day_net_revenue = calculate_platform_net_revenue(day_revenue)
                     revenue_trend.append({
                         'label': cursor.strftime('%d %b'),
-                        'revenue': float(day_revenue)
+                        'revenue': float(day_revenue),
+                        'commission_amount': float(day_commission),
+                        'net_revenue': float(day_net_revenue)
                     })
                     cursor = day_end
             else:
@@ -304,9 +316,13 @@ class AdminReportsView(views.APIView):
                         issued_at__lte=end_date,
                         is_paid=True
                     ).aggregate(Sum('amount'))['amount__sum'] or 0
+                    month_commission = calculate_platform_commission(month_revenue)
+                    month_net_revenue = calculate_platform_net_revenue(month_revenue)
                     revenue_trend.append({
                         'label': cursor.strftime('%b %Y'),
-                        'revenue': float(month_revenue)
+                        'revenue': float(month_revenue),
+                        'commission_amount': float(month_commission),
+                        'net_revenue': float(month_net_revenue)
                     })
                     cursor = next_month
             
@@ -325,12 +341,17 @@ class AdminReportsView(views.APIView):
             top_tenants = [{
                 'tenant_name': item['user__tenant__name'],
                 'revenue': float(item['total_revenue']),
+                'commission_amount': float(calculate_platform_commission(item['total_revenue'])),
+                'net_revenue': float(calculate_platform_net_revenue(item['total_revenue'])),
                 'plan': item['user__tenant__subscription_plan__name'] or 'FREE'
             } for item in top_tenants_data]
             
             return Response({
                 'period': period,
                 'total_revenue': float(total_revenue),
+                'commission_rate': float(commission_rate),
+                'platform_commission_amount': float(platform_commission_amount),
+                'net_revenue': float(net_revenue),
                 'pending_payments': float(pending_payments),
                 'overdue_invoices': overdue_invoices,
                 'revenue_trend': revenue_trend,

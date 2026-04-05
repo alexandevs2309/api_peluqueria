@@ -27,7 +27,7 @@ class SystemSettingsAdmin(admin.ModelAdmin):
             'fields': ('maintenance_mode', 'email_notifications', 'auto_suspend_expired', 'auto_upgrade_limits')
         }),
         ('Security', {
-            'fields': ('jwt_expiry_minutes', 'max_login_attempts', 'password_min_length', 'require_email_verification', 'enable_mfa')
+            'fields': ('jwt_expiry_minutes', 'max_login_attempts', 'login_lockout_minutes', 'password_min_length', 'require_email_verification', 'enable_mfa')
         })
     )
 

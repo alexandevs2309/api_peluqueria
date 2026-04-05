@@ -12,9 +12,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import LoginSerializer
 from .models import ActiveSession, AccessLog, LoginAudit
 from .utils import get_client_ip, get_user_agent, get_client_jti
+from .settings_policy import is_mfa_globally_enabled, get_jwt_expiry_minutes
+from .login_policy import is_login_locked_out, get_login_lockout_message
 from django.utils.timezone import now
 from django.contrib.auth import get_user_model
 from apps.tenants_api.models import Tenant
+from datetime import timedelta
 
 User = get_user_model()
 
@@ -28,6 +31,9 @@ class CookieRefreshThrottle(AnonRateThrottle):
 
 
 def _jwt_cookie_max_age(setting_name: str) -> int:
+    if setting_name == 'ACCESS_TOKEN_LIFETIME':
+        return get_jwt_expiry_minutes() * 60
+
     lifetime = settings.SIMPLE_JWT.get(setting_name)
     if lifetime is None:
         return 0
@@ -60,8 +66,23 @@ class CookieLoginView(APIView):
     
     @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
-        serializer = LoginSerializer(data=request.data)
+        serializer = LoginSerializer(data=request.data, context={'request': request})
         tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        email = (request.data.get('email') or '').strip().lower()
+        ip_address = get_client_ip(request)
+        user_for_lockout = None
+
+        if email:
+            if tenant_subdomain:
+                tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+                if tenant_for_lockout:
+                    user_for_lockout = User.objects.filter(email=email, tenant=tenant_for_lockout).first()
+            else:
+                user_for_lockout = User.objects.filter(email=email).first()
+
+        if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
+            return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
         if tenant_subdomain and is_ratelimited(request, group='tenant_login', key=lambda r: tenant_subdomain, rate='20/m', method='POST'):
             return Response({"detail": "Demasiados intentos de login para este tenant."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
@@ -93,7 +114,7 @@ class CookieLoginView(APIView):
         user = serializer.validated_data['user']
         tenant = serializer.validated_data['tenant']
 
-        if user.mfa_enabled:
+        if is_mfa_globally_enabled() and user.mfa_enabled:
             tenant_data = {
                 'id': tenant.id,
                 'subdomain': tenant.subdomain,
@@ -108,11 +129,13 @@ class CookieLoginView(APIView):
         
         # Generar tokens
         refresh = RefreshToken.for_user(user)
+        access = refresh.access_token
+        access.set_exp(lifetime=timedelta(minutes=get_jwt_expiry_minutes()))
         if tenant:
             refresh['tenant_id'] = tenant.id
             refresh['tenant_subdomain'] = tenant.subdomain
             
-        access_token = str(refresh.access_token)
+        access_token = str(access)
         refresh_token = str(refresh)
         jti = get_client_jti(access_token)
         
@@ -267,7 +290,9 @@ class CookieRefreshView(APIView):
         
         try:
             token = RefreshToken(refresh_token)
-            new_access_token = str(token.access_token)
+            access = token.access_token
+            access.set_exp(lifetime=timedelta(minutes=get_jwt_expiry_minutes()))
+            new_access_token = str(access)
             
             response = Response({
                 'message': 'Token refreshed successfully'

@@ -4,6 +4,7 @@ from django.core.mail import send_mail
 from django.conf import settings
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import UserSubscription
+from apps.settings_api.policy_utils import should_auto_suspend_expired
 import logging
 from html import escape
 
@@ -49,6 +50,10 @@ def check_trial_expirations(self):
     Ejecutar diariamente a las 9:00 AM
     """
     try:
+        if not should_auto_suspend_expired():
+            logger.info("Auto suspension is disabled in system settings; skipping trial expiration check")
+            return "Auto suspension disabled; skipped trial expiration check"
+
         today = timezone.now().date()
         
         # Buscar tenants con trial expirado
@@ -145,6 +150,10 @@ def send_trial_expiration_warnings(self):
 def check_expired_subscriptions(self):
     """Verificar y desactivar suscripciones expiradas"""
     try:
+        if not should_auto_suspend_expired():
+            logger.info("Auto suspension is disabled in system settings; skipping expired subscriptions check")
+            return "Auto suspension disabled; skipped expired subscriptions check"
+
         expired_subs = UserSubscription.objects.filter(
             is_active=True,
             end_date__lt=timezone.now()

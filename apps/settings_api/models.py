@@ -128,6 +128,7 @@ class SystemSettings(models.Model):
     # Seguridad
     jwt_expiry_minutes = models.PositiveIntegerField(_("JWT expiry minutes"), default=60)
     max_login_attempts = models.PositiveIntegerField(_("Max login attempts"), default=5)
+    login_lockout_minutes = models.PositiveIntegerField(_("Login lockout minutes"), default=5)
     password_min_length = models.PositiveIntegerField(_("Password min length"), default=8)
     require_email_verification = models.BooleanField(_("Require email verification"), default=True)
     enable_mfa = models.BooleanField(_("Enable MFA"), default=False)
@@ -191,6 +192,7 @@ class SystemSettings(models.Model):
                 'auto_upgrade_limits': False,
                 'jwt_expiry_minutes': 60,
                 'max_login_attempts': 5,
+                'login_lockout_minutes': 5,
                 'password_min_length': 8,
                 'require_email_verification': True,
                 'enable_mfa': False

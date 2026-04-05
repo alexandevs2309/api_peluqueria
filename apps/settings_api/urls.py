@@ -4,12 +4,14 @@ from .integration_views import IntegrationStatusView, IntegrationTestView
 from .admin_views import SaasMetricsView, SystemMonitorView, test_integration_service
 from .contact_views import demo_request, newsletter_signup
 from .barbershop_views import BarbershopSettingsViewSet
+from .views import PublicBrandingSettingsView
 
 router = DefaultRouter()
 router.register(r'barbershop', BarbershopSettingsViewSet, basename='barbershop-settings')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('public-branding/', PublicBrandingSettingsView.as_view(), name='public-branding'),
     path('integrations/status/', IntegrationStatusView.as_view(), name='integration-status'),
     path('integrations/test/', IntegrationTestView.as_view(), name='integration-test'),
     

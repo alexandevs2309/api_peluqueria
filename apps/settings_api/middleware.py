@@ -11,6 +11,7 @@ class MaintenanceModeMiddleware(MiddlewareMixin):
         if (request.path.startswith('/admin/') or 
             request.path.startswith('/api/healthz/') or
             request.path.startswith('/api/system-settings/') or
+            request.path.startswith('/api/settings/public-branding/') or
             request.path.startswith('/landing') or
             request.path.startswith('/pages/landing') or
             request.path.startswith('/api/auth/register')):

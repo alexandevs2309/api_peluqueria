@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     RegisterView, LoginView, LogoutView,
-    ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView, UserViewSet, VerifyAuthView
+    ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView, MFADisableView, UserViewSet, VerifyAuthView
 )
 from .cookie_views import CookieLoginView, CookieLogoutView, CookieRefreshView
 from .permissions_check import UserPermissionsView
@@ -27,6 +27,7 @@ urlpatterns = [
     path('verify-email/<str:token>/', VerifyEmailView.as_view(), name='verify-email'),
     path('mfa/setup/', MFASetupView.as_view(), name='mfa-setup'),
     path('mfa/verify/', MFAVerifyView.as_view(), name='mfa-verify'),
+    path('mfa/disable/', MFADisableView.as_view(), name='mfa-disable'),
     path('mfa/login-verify/', MFALoginVerifyView.as_view(), name='mfa-login-verify'),
     path('permissions/', UserPermissionsView.as_view(), name='user-permissions'),
     path('', include(router.urls)),

@@ -119,6 +119,7 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             # Seguridad
             "jwt_expiry_minutes",
             "max_login_attempts",
+            "login_lockout_minutes",
             "password_min_length",
             "require_email_verification",
             "enable_mfa",

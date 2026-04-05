@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q
+from django.db.models import Count
 from django.utils import timezone
 from .models import AuditLog
 from .serializers import AuditLogSerializer, AuditLogCreateSerializer
@@ -82,6 +83,16 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
         error_logs = queryset.filter(action__icontains='ERROR').count()
         warning_logs = queryset.filter(action='PERFORMANCE_ALERT').count()
         last_24h = queryset.filter(timestamp__gte=timezone.now() - timezone.timedelta(hours=24)).count()
+        actions_breakdown = list(
+            queryset.values('action')
+            .annotate(count=Count('id'))
+            .order_by('-count', 'action')[:8]
+        )
+        sources_breakdown = list(
+            queryset.values('source')
+            .annotate(count=Count('id'))
+            .order_by('-count', 'source')[:8]
+        )
 
         return Response({
             'recent_activity': serializer.data,
@@ -89,7 +100,8 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
             'error_logs': error_logs,
             'warning_logs': warning_logs,
             'last_24h': last_24h,
-            'actions_breakdown': []
+            'actions_breakdown': actions_breakdown,
+            'sources_breakdown': sources_breakdown
         })
     
     @action(detail=False, methods=['get'])

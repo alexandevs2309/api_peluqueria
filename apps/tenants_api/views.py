@@ -160,13 +160,18 @@ class TenantViewSet(viewsets.ModelViewSet):
     def stats(self, request, pk=None):
         tenant = self.get_object()
         current_users = User.objects.filter(tenant=tenant).count()
-        # current_employees = Employee.objects.filter(tenant=tenant).count()  # si tienes Employee
+        current_employees = 0
+        try:
+            from apps.employees_api.models import Employee
+            current_employees = Employee.objects.filter(tenant=tenant).count()
+        except Exception:
+            current_employees = 0
 
         return response.Response({
             "max_users": tenant.max_users,
             "max_employees": tenant.max_employees,
             "current_users": current_users,
-            # "current_employees": current_employees,
+            "current_employees": current_employees,
         }, status=status.HTTP_200_OK)
     
     @decorators.action(detail=False, methods=["get"])

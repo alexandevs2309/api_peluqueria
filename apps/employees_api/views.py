@@ -8,7 +8,7 @@ from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.subscriptions_api.utils import get_user_active_subscription
-from apps.settings_api.utils import validate_employee_limit
+from apps.settings_api.utils import validate_employee_limit, maybe_auto_upgrade_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer, AttendanceRecordSerializer
@@ -63,10 +63,20 @@ class EmployeeViewSet(TenantScopedViewSet):
         # Validar límite de empleados según el plan
         plan_type = getattr(tenant, 'plan_type', 'basic')
         if not validate_employee_limit(tenant, plan_type):
-            raise ValidationError({
-                'error': 'Límite de empleados alcanzado',
-                'message': f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
-            })
+            upgrade_result = maybe_auto_upgrade_employee_limit(tenant, changed_by=user)
+            tenant.refresh_from_db(fields=['plan_type', 'subscription_plan', 'max_employees', 'max_users', 'settings', 'updated_at'])
+            if upgrade_result.get('upgraded'):
+                plan_type = getattr(tenant, 'plan_type', plan_type)
+            if not validate_employee_limit(tenant, plan_type):
+                error_message = f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
+                if upgrade_result.get('reason') == 'no_higher_plan':
+                    error_message = 'Ya se alcanzó el plan más alto disponible y no hay más capacidad automática para empleados.'
+                elif upgrade_result.get('reason') == 'disabled':
+                    error_message = f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
+                raise ValidationError({
+                    'error': 'Límite de empleados alcanzado',
+                    'message': error_message
+                })
             
         serializer.save(tenant=tenant)
 

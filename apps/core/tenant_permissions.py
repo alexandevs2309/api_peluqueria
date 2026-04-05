@@ -117,7 +117,15 @@ class TenantPermissionByAction(BasePermission):
     # Permisos implícitos por nombre de rol (cuando no hay permisos asignados en BD)
     ROLE_IMPLICIT_PERMISSIONS = {
         'Client-Admin': '*',  # Acceso total al tenant
-        'Manager': '*',
+        # Manager mantiene operación diaria, pero no hereda poder de admin total.
+        'Manager': [
+            'view_appointment', 'add_appointment', 'change_appointment',
+            'cancel_appointment', 'complete_appointment',
+            'view_client', 'add_client', 'change_client',
+            'view_employee',
+            'view_service',
+            'view_employee_reports', 'view_sales_reports', 'view_kpi_dashboard',
+        ],
         'Client-Staff': [
             'view_employee', 'view_appointment', 'view_client',
             'view_service', 'view_sale', 'view_attendancerecord',

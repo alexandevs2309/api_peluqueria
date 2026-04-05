@@ -1,6 +1,7 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from apps.tenants_api.models import Tenant
+from apps.settings_api.policy_utils import should_auto_suspend_expired
 
 class Command(BaseCommand):
     help = 'Normaliza tenants con trial expirado al estado suspendido/inactivo'
@@ -14,6 +15,13 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options['dry_run']
+
+        if not should_auto_suspend_expired():
+            self.stdout.write(
+                self.style.WARNING('Auto suspension disabled in system settings; skipping expired trials cleanup')
+            )
+            return
+
         today = timezone.now().date()
         
         # Encontrar tenants con trial expirado

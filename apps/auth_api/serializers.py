@@ -8,10 +8,25 @@ from django.utils.encoding import force_str
 from django.core.exceptions import MultipleObjectsReturned
 from .models import ActiveSession
 from .role_utils import normalize_role_for_api
+from .settings_policy import (
+    get_password_min_length,
+    is_email_verification_required,
+    is_mfa_globally_enabled,
+)
 from apps.tenants_api.models import Tenant
+from apps.settings_api.utils import validate_employee_limit, maybe_auto_upgrade_employee_limit
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+def validate_password_policy(password: str) -> str:
+    min_length = get_password_min_length()
+    if len(password or '') < min_length:
+        raise serializers.ValidationError(
+            f"La contraseña debe tener al menos {min_length} caracteres."
+        )
+    return password
 
 class ActiveSessionSerializer(serializers.ModelSerializer):
     class Meta:
@@ -19,12 +34,15 @@ class ActiveSessionSerializer(serializers.ModelSerializer):
         fields = ['id', 'ip_address', 'user_agent', 'created_at', 'last_seen', 'is_active']
 
 class RegisterSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8)
+    password = serializers.CharField(write_only=True)
     tenant_subdomain = serializers.CharField(required=False)
 
     class Meta:
         model = User
         fields = ['email', 'full_name', 'phone', 'password', 'tenant_subdomain']
+
+    def validate_password(self, value):
+        return validate_password_policy(value)
 
     def create(self, validated_data):
         tenant_subdomain = validated_data.pop('tenant_subdomain', None)
@@ -131,13 +149,19 @@ class LoginSerializer(serializers.Serializer):
         if not user.is_active:
             raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
 
+        if is_email_verification_required() and not getattr(user, 'is_email_verified', False):
+            raise serializers.ValidationError("Debe verificar su correo antes de iniciar sesión.")
+
         data['user'] = user
         data['tenant'] = tenant
         return data
 
 class PasswordChangeSerializer(serializers.Serializer):
     old_password = serializers.CharField()
-    new_password = serializers.CharField(min_length=8)
+    new_password = serializers.CharField()
+
+    def validate_new_password(self, value):
+        return validate_password_policy(value)
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -146,7 +170,10 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()
     token = serializers.CharField()
-    new_password = serializers.CharField(min_length=8)
+    new_password = serializers.CharField()
+
+    def validate_new_password(self, value):
+        return validate_password_policy(value)
 
     def validate(self, data):
         try:
@@ -173,13 +200,22 @@ class MFASetupSerializer(serializers.Serializer):
 class MFAVerifySerializer(serializers.Serializer):
     code = serializers.CharField(min_length=6, max_length=6)
 
+    def validate_code(self, value):
+        normalized = ''.join(str(value or '').split())
+        if not normalized.isdigit() or len(normalized) != 6:
+            raise serializers.ValidationError("Código inválido.")
+        return normalized
+
 class EmployeeUserSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, min_length=8, required=False)
+    password = serializers.CharField(write_only=True, required=False)
     tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = User
         fields = ['email', 'full_name', 'phone', 'password', 'tenant', 'role', 'is_active']
+
+    def validate_password(self, value):
+        return validate_password_policy(value)
 
     def create(self, validated_data):
         # Asegurar que is_active sea True por defecto
@@ -193,6 +229,30 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
             if request and hasattr(request, 'user') and request.user.tenant:
                 validated_data['tenant'] = request.user.tenant
                 logger.debug('Tenant auto-assigned tenant_id=%s', request.user.tenant.id)
+
+        tenant = validated_data.get('tenant')
+        requested_role = validated_data.get('role')
+        employee_roles = {'Cajera', 'Estilista', 'Manager', 'Client-Staff', 'Utility'}
+
+        # Si el usuario que se crea será también empleado, validar el límite aquí
+        # porque el Employee se genera por signal después del alta del User.
+        if tenant and requested_role in employee_roles:
+            plan_type = getattr(tenant, 'plan_type', 'basic')
+            if not validate_employee_limit(tenant, plan_type):
+                upgrade_result = maybe_auto_upgrade_employee_limit(tenant, changed_by=getattr(request, 'user', None))
+                tenant.refresh_from_db(fields=['plan_type', 'subscription_plan', 'max_employees', 'max_users', 'settings', 'updated_at'])
+                plan_type = getattr(tenant, 'plan_type', plan_type)
+
+                if not validate_employee_limit(tenant, plan_type):
+                    error_message = f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
+                    if upgrade_result.get('reason') == 'no_higher_plan':
+                        error_message = 'Ya se alcanzó el plan más alto disponible y no hay más capacidad automática para empleados.'
+                    raise serializers.ValidationError({
+                        'error': 'Límite de empleados alcanzado',
+                        'message': error_message,
+                        'limit': tenant.max_employees,
+                        'current': tenant.employees.filter(is_active=True).count() if hasattr(tenant, 'employees') else None,
+                    })
         
         user = User.objects.create_user(**validated_data)
         logger.info('Employee user created user_id=%s tenant_id=%s', user.id, user.tenant_id)
@@ -222,7 +282,7 @@ class UserListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant', 'tenant_name', 'is_active', 'date_joined', 'last_login', 'avatar_url']
+        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant', 'tenant_name', 'is_active', 'mfa_enabled', 'date_joined', 'last_login', 'avatar_url']
 
     def get_avatar_url(self, obj):
         return obj.avatar.url if obj.avatar else None

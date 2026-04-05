@@ -74,6 +74,8 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
             'inventory': 'Inventario',
             'advanced_reports': 'Reportes avanzados',
             'multi_location': 'Multiples sucursales',
+            'role_permissions': 'Permisos de rol avanzados',
+            'api_access': 'Acceso a API',
             'custom_branding': 'Branding basico con logo personalizado',
         }
         if not isinstance(obj.features, dict):

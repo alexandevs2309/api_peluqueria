@@ -62,8 +62,8 @@ class Command(BaseCommand):
                     'inventory': True,
                     'advanced_reports': True,
                     'multi_location': True,
-                    'role_permissions': False,
-                    'api_access': False,
+                    'role_permissions': True,
+                    'api_access': True,
                     'custom_branding': True
                 },
                 'commercial_benefits': [
