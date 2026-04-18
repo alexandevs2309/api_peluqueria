@@ -1,4 +1,4 @@
-from rest_framework.viewsets import ModelViewSet
+﻿from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status, serializers
@@ -201,7 +201,13 @@ def calendar_events(request):
         date_time__gte=start_date,
         date_time__lte=end_date
     )
-    
+
+    # Filtro de tenant obligatorio - previene fuga cross-tenant
+    if not request.user.is_superuser:
+        if not hasattr(request, 'tenant') or not request.tenant:
+            return Response([], status=200)
+        appointments = appointments.filter(client__tenant=request.tenant)
+
     events = []
     for apt in appointments:
         duration = apt.service.duration if apt.service else 30

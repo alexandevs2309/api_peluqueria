@@ -1,12 +1,17 @@
 from celery import shared_task
+from datetime import timedelta
 from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
 from apps.tenants_api.models import Tenant
-from apps.subscriptions_api.models import UserSubscription
+from apps.subscriptions_api.models import UserSubscription, Subscription
 from apps.settings_api.policy_utils import should_auto_suspend_expired
 import logging
+import stripe
+from stripe.error import StripeError
 from html import escape
+
+stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +103,7 @@ def cleanup_expired_trials(self):
         # Limpiar tenants suspendidos por más de 30 días
         old_suspended = Tenant.objects.filter(
             subscription_status='suspended',
-            updated_at__lt=today - timezone.timedelta(days=30)
+            updated_at__lt=today - timedelta(days=30)
         )
         
         cleaned_count = 0
@@ -122,8 +127,8 @@ def send_trial_expiration_warnings(self):
     try:
         today = timezone.now().date()
         warning_dates = [
-            today + timezone.timedelta(days=1),  # 1 día antes
-            today + timezone.timedelta(days=3),  # 3 días antes
+            today + timedelta(days=1),  # 1 día antes
+            today + timedelta(days=3),  # 3 días antes
         ]
         
         warned_count = 0

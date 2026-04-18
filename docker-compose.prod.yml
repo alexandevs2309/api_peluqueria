@@ -44,10 +44,29 @@ services:
     networks:
       - backend
 
+  # Servicio de inicializacion: corre migraciones y collectstatic antes del web.
+  # Se ejecuta una vez y termina. El web arranca solo cuando este completa.
+  init:
+    build: .
+    user: "1000:1000"
+    command: sh -c "python manage.py migrate --noinput && python manage.py collectstatic --noinput"
+    volumes:
+      - static_volume:/code/staticfiles
+    env_file:
+      - .env.prod
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: "no"
+
   web:
     build: .
     user: "1000:1000"
-    command: sh -c "python manage.py collectstatic --noinput && gunicorn backend.wsgi:application --bind 0.0.0.0:8000 --workers=4 --threads=4 --worker-class=gthread --max-requests=1000 --timeout=120 --keep-alive=5 --access-logfile - --error-logfile -"
+    command: gunicorn backend.wsgi:application --bind 0.0.0.0:8000 --workers=4 --threads=4 --worker-class=gthread --max-requests=1000 --timeout=120 --keep-alive=5 --access-logfile - --error-logfile -
     volumes:
       - static_volume:/code/staticfiles
       - media_volume:/code/media
@@ -66,6 +85,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      init:
+        condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthz/"]
@@ -80,8 +101,6 @@ services:
     build: .
     user: "1000:1000"
     command: celery -A backend worker --loglevel=info --concurrency=2 --max-tasks-per-child=100 --time-limit=300 --soft-time-limit=240
-    volumes:
-      - .:/code
     env_file:
       - .env.prod
     deploy:
@@ -105,8 +124,6 @@ services:
     build: .
     user: "1000:1000"
     command: celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
-    volumes:
-      - .:/code
     env_file:
       - .env.prod
     deploy:

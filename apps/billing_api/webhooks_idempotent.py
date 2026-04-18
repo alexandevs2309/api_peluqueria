@@ -212,8 +212,14 @@ def handle_payment_failed(invoice_data):
                 return
         
         # Registrar intento fallido
+        # Buscar la factura local por stripe_payment_intent_id o por user
+        local_invoice = Invoice.objects.filter(
+            user=user,
+            is_paid=False,
+        ).order_by('-id').first()
+
         PaymentAttempt.objects.create(
-            invoice_id=invoice_data.get('id'),
+            invoice=local_invoice,
             success=False,
             status='failed',
             message=f"Payment failed: {invoice_data.get('failure_reason', 'Unknown')}"

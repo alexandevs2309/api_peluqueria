@@ -2,6 +2,7 @@ from datetime import timedelta
 import os
 import sys
 import environ
+import dj_database_url
 from pathlib import Path
 import sentry_sdk
 from sentry_sdk.integrations.django import DjangoIntegration
@@ -51,10 +52,9 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost', 'web', "api_peluqueria-web-1",
-])
+ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost'])
 if DEBUG:
-    ALLOWED_HOSTS.append('testserver')
+    ALLOWED_HOSTS.extend(['web', 'api_peluqueria-web-1', 'testserver'])
 
 # Application definition
 
@@ -152,6 +152,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 100,
+    'MAX_PAGE_SIZE': 500,
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.UserRateThrottle',
@@ -162,9 +163,9 @@ REST_FRAMEWORK = {
 
 # Stripe configuration
 STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY')
-STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='pk_test_1234567890abcdef')
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY')
 
-GEO_LOCK_ENABLED = True
+GEO_LOCK_ENABLED = env.bool('GEO_LOCK_ENABLED', default=False)
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -179,20 +180,8 @@ SIMPLE_JWT = {
     'TOKEN_OBTAIN_SERIALIZER': 'apps.auth_api.serializers.CustomTokenObtainPairSerializer',
 }
 
-if DEBUG:
-    CORS_ALLOWED_ORIGINS = env.list(
-        'CORS_ALLOWED_ORIGINS',
-        default=['http://localhost:4200']
-    )
-else:
-    CORS_ALLOWED_ORIGIN_REGEXES = [
-        r"^https://[\w-]+\.tuapp\.com$",
-    ]
-    # CSRF protection para requests POST desde frontend
-    CSRF_TRUSTED_ORIGINS = env.list(
-        'CSRF_TRUSTED_ORIGINS',
-        default=['https://app.tudominio.com', 'https://www.tudominio.com']
-    )
+CORS_ALLOWED_ORIGINS = env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:4200'])
+CSRF_TRUSTED_ORIGINS = env.list('CSRF_TRUSTED_ORIGINS', default=['http://localhost:4200'])
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -226,34 +215,47 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 
 
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
-
-DATABASES = {
-    'default': {
-        'ENGINE': 'django_prometheus.db.backends.postgresql',
-        'NAME': env('DB_NAME', default='barbershop_db'),
-        'USER': env('DB_USER', default='postgres'),
-        'PASSWORD': env('DB_PASSWORD', default='postgres'),
-        'HOST': env('DB_HOST', default='db'),
-        'PORT': env('DB_PORT', default='5432'),
-        'CONN_MAX_AGE': env.int('CONN_MAX_AGE', default=600),  # 10 min en producción
-        'OPTIONS': {
-            'connect_timeout': 10,
-            'options': '-c statement_timeout=30000'  # 30s max por query
+# Database — soporta DATABASE_URL (Render) y variables individuales (Docker local)
+_database_url = env('DATABASE_URL', default=None)
+if _database_url:
+    _db_config = dj_database_url.parse(
+        _database_url,
+        conn_max_age=env.int('CONN_MAX_AGE', default=600),
+        engine='django_prometheus.db.backends.postgresql',
+    )
+    _db_config.setdefault('OPTIONS', {})
+    _db_config['OPTIONS'].update({
+        'connect_timeout': 10,
+        'options': '-c statement_timeout=30000',
+    })
+    DATABASES = {'default': _db_config}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django_prometheus.db.backends.postgresql',
+            'NAME': env('DB_NAME', default='barbershop_db'),
+            'USER': env('DB_USER', default='postgres'),
+            'PASSWORD': env('DB_PASSWORD', default='postgres'),
+            'HOST': env('DB_HOST', default='db'),
+            'PORT': env('DB_PORT', default='5432'),
+            'CONN_MAX_AGE': env.int('CONN_MAX_AGE', default=600),
+            'OPTIONS': {
+                'connect_timeout': 10,
+                'options': '-c statement_timeout=30000',
+            },
         }
     }
-}
 
 # Cache configuration using Redis
+# PASSWORD no se pasa en OPTIONS cuando ya viene en la URL (evita doble auth)
+_redis_url = env('REDIS_URL', default='redis://localhost:6379/0')
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': env('REDIS_URL', default='redis://localhost:6379/0'),
+        'LOCATION': _redis_url,
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'PASSWORD': env('REDIS_PASSWORD', default=''),
-        }
+        },
     }
 }
 
@@ -261,10 +263,10 @@ CACHES = {
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
 
-# Celery configuration for production
+# Celery — usa REDIS_URL como fuente única si no se definen explícitamente
 CELERY_TASK_ALWAYS_EAGER = env.bool('CELERY_TASK_ALWAYS_EAGER', default=False)
-CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+CELERY_BROKER_URL = env('CELERY_BROKER_URL', default=_redis_url)
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default=_redis_url)
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -501,3 +503,49 @@ LOGGING = {
 
 
 
+
+# ---------------------------------------------------------------------------
+# Validacion de startup: falla antes de recibir trafico si faltan vars criticas
+# ---------------------------------------------------------------------------
+if not DEBUG:
+    _PLACEHOLDER_PREFIXES = (
+        'GENERAR-', 'change-me', 'PENDIENTE', 'REEMPLAZAR',
+        'sk_live_PENDIENTE', 'pk_live_PENDIENTE', 'whsec_PENDIENTE',
+    )
+
+    def _is_placeholder(value):
+        v = (value or '').strip()
+        if not v:
+            return True
+        return any(v.startswith(p) or v == p for p in _PLACEHOLDER_PREFIXES)
+
+    _required_prod_vars = [
+        'SECRET_KEY',
+        'STRIPE_SECRET_KEY',
+        'STRIPE_PUBLISHABLE_KEY',
+        'STRIPE_WEBHOOK_SECRET',
+    ]
+    for _var in _required_prod_vars:
+        if _is_placeholder(env(_var, default='')):
+            raise RuntimeError(
+                'Variable requerida en produccion no definida o con placeholder: ' + _var
+            )
+
+    # Stripe test mode en produccion: warning, no error
+    if env('STRIPE_SECRET_KEY', default='').startswith('sk_test_'):
+        import warnings
+        warnings.warn(
+            'STRIPE_SECRET_KEY es clave de test (sk_test_). '
+            'Reemplazar con clave live antes de aceptar pagos reales.',
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+    # ALLOWED_HOSTS no puede contener solo hosts locales en produccion
+    _unsafe_hosts = {'localhost', '127.0.0.1', 'testserver', ''}
+    _prod_hosts = [h for h in ALLOWED_HOSTS if h not in _unsafe_hosts]
+    if not _prod_hosts:
+        raise RuntimeError(
+            'ALLOWED_HOSTS no contiene ningun dominio de produccion. '
+            'Define tu dominio real en la variable de entorno ALLOWED_HOSTS.'
+        )
