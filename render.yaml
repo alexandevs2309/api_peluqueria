@@ -8,7 +8,7 @@ services:
     healthCheckPath: /api/healthz/
     envVars:
       - key: PYTHON_VERSION
-        value: "3.13"
+        value: "3.12"
       - key: DEBUG
         value: "False"
       - key: DJANGO_SETTINGS_MODULE
@@ -29,7 +29,7 @@ services:
     startCommand: "celery -A backend worker --loglevel=info --concurrency=2 --max-tasks-per-child=100 --time-limit=300 --soft-time-limit=240"
     envVars:
       - key: PYTHON_VERSION
-        value: "3.13"
+        value: "3.12"
       - key: DEBUG
         value: "False"
       - key: DJANGO_SETTINGS_MODULE
@@ -44,7 +44,7 @@ services:
     startCommand: "celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler"
     envVars:
       - key: PYTHON_VERSION
-        value: "3.13"
+        value: "3.12"
       - key: DEBUG
         value: "False"
       - key: DJANGO_SETTINGS_MODULE
