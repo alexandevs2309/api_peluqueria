@@ -69,8 +69,12 @@ def register_with_plan(request):
 
         with transaction.atomic():
             from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
+            # 'trial' no es un plan real — mapear a 'basic' para onboarding
+            plan_name = data['planType']
+            if plan_name == 'trial':
+                plan_name = 'basic'
             try:
-                subscription_plan = SubscriptionPlan.objects.get(name=data['planType'], is_active=True)
+                subscription_plan = SubscriptionPlan.objects.get(name=plan_name, is_active=True)
                 logger.info("Subscription plan selected plan_id=%s", subscription_plan.id)
             except SubscriptionPlan.DoesNotExist:
                 return Response({

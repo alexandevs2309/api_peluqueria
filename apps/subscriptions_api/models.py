@@ -10,7 +10,6 @@ from django.core.exceptions import ValidationError
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
-        ('trial', 'Trial'),
         ('basic', 'Professional'),
         ('standard', 'Business'),
         ('premium', 'Premium'),
