@@ -267,7 +267,7 @@ class LoginView(generics.GenericAPIView):
 
         if tenant_subdomain:
             from django_ratelimit.core import is_ratelimited
-            if is_ratelimited(request, group='tenant_login', key=lambda r: tenant_subdomain, rate='20/m', method='POST'):
+            if is_ratelimited(request, group='tenant_login', key=lambda r, g: tenant_subdomain, rate='20/m', method='POST'):
                 return Response({"detail": "Demasiados intentos de login para este tenant."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
         serializer = self.get_serializer(data=request.data)
         try:
