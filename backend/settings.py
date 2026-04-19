@@ -264,6 +264,10 @@ SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
 
 # Celery — usa REDIS_URL como fuente única si no se definen explícitamente
+# ⚠️  RENDER FREE PLAN: CELERY_TASK_ALWAYS_EAGER=True en env vars de Render.
+# Las tareas corren síncronas dentro del web service (sin workers separados).
+# Para producción real: crear Background Workers en Render ($7/mes c/u) y
+# setear CELERY_TASK_ALWAYS_EAGER=False.
 CELERY_TASK_ALWAYS_EAGER = env.bool('CELERY_TASK_ALWAYS_EAGER', default=False)
 CELERY_BROKER_URL = env('CELERY_BROKER_URL', default=_redis_url)
 CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default=_redis_url)
