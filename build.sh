@@ -13,7 +13,7 @@ python manage.py collectstatic --noinput
 echo "[build] Aplicando migraciones..."
 python manage.py migrate --noinput
 
-echo "[build] Creando planes por defecto..."
-python manage.py create_default_plans
+echo "[build] Creando datos iniciales (roles, planes, superadmin)..."
+python manage.py setup_saas
 
 echo "[build] Listo."
