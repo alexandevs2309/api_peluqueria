@@ -12,6 +12,7 @@ python manage.py collectstatic --noinput
 
 echo "[build] Aplicando migraciones..."
 python manage.py migrate --noinput
+python manage.py showmigrations tenants_api
 
 echo "[build] Creando datos iniciales (roles, planes, superadmin)..."
 python manage.py setup_saas
