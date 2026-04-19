@@ -31,7 +31,7 @@ class CustomUserAdmin(BaseUserAdmin):
 
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
-        ('Personal info', {'fields': ('full_name', 'phone', 'is_email_verified', 'mfa_enabled')}),
+        ('Personal info', {'fields': ('full_name', 'phone', 'tenant', 'role', 'is_email_verified', 'mfa_enabled')}),
         ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
         ('Important dates', {'fields': ('last_login', 'date_joined')}),
         ('Security Logs', {'fields': ('last_login_ip_address',)}),
