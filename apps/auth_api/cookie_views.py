@@ -83,9 +83,12 @@ class CookieLoginView(APIView):
         if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
             return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-        if tenant_subdomain and is_ratelimited(request, group='tenant_login', key=lambda r: tenant_subdomain, rate='20/m', method='POST'):
-            return Response({"detail": "Demasiados intentos de login para este tenant."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        def tenant_rate_key(group, request):
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                return f"tenant:{tenant.id}"
 
+            return request.META.get('REMOTE_ADDR', 'unknown')
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError:
@@ -231,10 +234,28 @@ class CookieLogoutView(APIView):
     Ruta: /api/auth/cookie-logout/
     """
     permission_classes = [AllowAny]
-    
+    throttle_classes = [CookieLoginThrottle]
+
     def post(self, request):
         refresh_token = request.COOKIES.get('refresh_token')
         
+
+        def tenant_rate_key(group, request):
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                return f"tenant:{tenant.id}"
+            return request.META.get('REMOTE_ADDR', 'unknown')
+        
+        if is_ratelimited(
+            request,
+            group='tenant_login',
+            key=tenant_rate_key,
+            rate='20/m',
+            method='POST'
+        ):
+            return Response({"detail": "Demasiados intentos de login. Intenta más tarde."}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        
+
         if refresh_token:
             try:
                 token = RefreshToken(refresh_token)
