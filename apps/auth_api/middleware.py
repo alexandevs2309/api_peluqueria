@@ -9,12 +9,8 @@ class TenantValidationMiddleware(MiddlewareMixin):
         if not request.user.is_authenticated:
             return None
 
-        # Extrae tenant de request (subdominio)
-        host = request.META.get('HTTP_HOST', '').split(':')[0]
-        request_tenant_subdomain = host.split('.')[0] if '.' in host else None
-
-        if not request_tenant_subdomain:
-            return HttpResponseForbidden("Tenant no detectado en subdominio.")
+        if getattr(request.user, 'is_superuser', False):
+            return None
 
         try:
             # Valida token
@@ -22,9 +18,8 @@ class TenantValidationMiddleware(MiddlewareMixin):
             if auth_header and auth_header.startswith('Bearer '):
                 token = AccessToken(auth_header.split(' ')[1])
                 token_tenant_id = token.get('tenant_id')
-                token_tenant_subdomain = token.get('tenant_subdomain')
 
-                if not token_tenant_subdomain or token_tenant_subdomain != request_tenant_subdomain:
+                if not token_tenant_id or token_tenant_id != getattr(request.user, 'tenant_id', None):
                     return HttpResponseForbidden("Token no autorizado para este tenant.")
 
                 # Opcional: Recarga tenant en request para views

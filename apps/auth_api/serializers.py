@@ -20,6 +20,29 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+def get_explicit_tenant_input(data) -> str | None:
+    tenant_input = data.get('tenant') or data.get('tenant_subdomain')
+    return (tenant_input or '').strip().lower() or None
+
+
+def extract_tenant_from_host(host: str) -> str | None:
+    # FUTURE: Multi-tenant por subdominio
+    # Cuando el sistema use dominios como:
+    # cliente1.auron.com
+    # cliente2.auron.com
+    #
+    # Se puede reintroducir la inferencia por host:
+    # tenant_subdomain = extract_subdomain(request.get_host())
+    #
+    # PERO solo cuando:
+    # - exista dominio propio
+    # - DNS configurado
+    # - wildcard SSL activo
+    #
+    # No usar HTTP_HOST directamente en entornos como Render/Netlify.
+    return None
+
+
 def validate_password_policy(password: str) -> str:
     min_length = get_password_min_length()
     if len(password or '') < min_length:
@@ -61,77 +84,45 @@ class RegisterSerializer(serializers.ModelSerializer):
 class LoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField()
-    tenant_subdomain = serializers.CharField(required=False)  # Opcional, se detecta del request
+    tenant = serializers.CharField(required=False, allow_blank=True)
+    tenant_subdomain = serializers.CharField(required=False, allow_blank=True)  # Alias legacy
 
     def validate(self, data):
         email = (data.get('email') or '').strip().lower()
         password = data.get('password')
-        tenant_subdomain = (data.get('tenant_subdomain') or '').strip().lower() or None
+        tenant_input = get_explicit_tenant_input(data)
 
         if not email:
             raise serializers.ValidationError({'email': 'El correo es requerido.'})
 
         # Persist normalized values for downstream consumers
         data['email'] = email
-        if tenant_subdomain:
-            data['tenant_subdomain'] = tenant_subdomain
-        
-        # ✅ CASO ESPECIAL: Verificar si es super-admin sin tenant
-        try:
-            superadmin = User.objects.get(email=email, is_superuser=True, tenant__isnull=True)
-            if superadmin.check_password(password):
+        if tenant_input:
+            data['tenant'] = tenant_input
+            data['tenant_subdomain'] = tenant_input
+
+        # Login sin tenant es intencional y exclusivo para usuarios globales.
+        if not tenant_input:
+            try:
+                superadmin = User.objects.get(email=email, is_superuser=True, tenant__isnull=True)
+            except (User.DoesNotExist, MultipleObjectsReturned):
+                pass
+            else:
+                if not superadmin.check_password(password):
+                    raise serializers.ValidationError("Credenciales inválidas.")
                 if not superadmin.is_active:
                     raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
                 data['user'] = superadmin
                 data['tenant'] = None
                 return data
-        except (User.DoesNotExist, MultipleObjectsReturned):
-            pass
-        
-        # ✅ DETECCIÓN AUTOMÁTICA: Obtener tenant del request context
-        request = self.context.get('request')
-        if not tenant_subdomain and request:
-            # Extraer de header Host: tenant.domain.com
-            host = request.META.get('HTTP_HOST', '')
-            if '.' in host and not host.startswith('localhost'):
-                tenant_subdomain = host.split('.')[0]
-            # Fallback: extraer de header X-Tenant-Subdomain
-            if not tenant_subdomain:
-                tenant_subdomain = request.META.get('HTTP_X_TENANT_SUBDOMAIN')
-        
-        # ✅ NUEVO: Si no hay tenant_subdomain, intentar resolver por email + password
-        if not tenant_subdomain:
-            try:
-                candidates = list(User.objects.filter(email=email).select_related('tenant'))
-                if candidates:
-                    matching_users = [u for u in candidates if u.check_password(password)]
 
-                    if len(matching_users) == 1:
-                        matched_user = matching_users[0]
-                        if not matched_user.is_active:
-                            raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
-                        data['user'] = matched_user
-                        data['tenant'] = matched_user.tenant
-                        return data
-
-                    if len(matching_users) > 1:
-                        raise serializers.ValidationError({
-                            'tenant_subdomain': 'Múltiples cuentas con este correo. Indique el tenant.'
-                        })
-            except serializers.ValidationError:
-                raise
-            except Exception:
-                pass
-        
-        # ✅ VALIDACIÓN: tenant es obligatorio para usuarios normales
-        if not tenant_subdomain:
             raise serializers.ValidationError({
-                'tenant_subdomain': 'No se pudo detectar el tenant. Usuario no encontrado o sin tenant asignado.'
+                'tenant': 'Tenant requerido para usuarios de cliente.'
             })
 
-        # ✅ BUSCAR TENANT
+        # ✅ BUSCAR TENANT EXPLÍCITO
         try:
-            tenant = Tenant.objects.get(subdomain=tenant_subdomain, is_active=True, deleted_at__isnull=True)
+            tenant = Tenant.objects.get(subdomain=tenant_input, is_active=True, deleted_at__isnull=True)
         except Tenant.DoesNotExist:
             raise serializers.ValidationError("Credenciales inválidas.")
 
@@ -165,7 +156,8 @@ class PasswordChangeSerializer(serializers.Serializer):
 
 class PasswordResetRequestSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    tenant_subdomain = serializers.CharField(required=False)
+    tenant = serializers.CharField(required=False, allow_blank=True)
+    tenant_subdomain = serializers.CharField(required=False, allow_blank=True)
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     uid = serializers.CharField()

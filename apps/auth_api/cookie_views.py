@@ -9,7 +9,7 @@ from django_ratelimit.decorators import ratelimit
 from django_ratelimit.core import is_ratelimited
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
-from .serializers import LoginSerializer
+from .serializers import LoginSerializer, get_explicit_tenant_input
 from .models import ActiveSession, AccessLog, LoginAudit
 from .utils import get_client_ip, get_user_agent, get_client_jti
 from .settings_policy import is_mfa_globally_enabled, get_jwt_expiry_minutes
@@ -67,7 +67,7 @@ class CookieLoginView(APIView):
     @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={'request': request})
-        tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        tenant_subdomain = get_explicit_tenant_input(request.data)
         email = (request.data.get('email') or '').strip().lower()
         ip_address = get_client_ip(request)
         user_for_lockout = None
@@ -78,7 +78,11 @@ class CookieLoginView(APIView):
                 if tenant_for_lockout:
                     user_for_lockout = User.objects.filter(email=email, tenant=tenant_for_lockout).first()
             else:
-                user_for_lockout = User.objects.filter(email=email).first()
+                user_for_lockout = User.objects.filter(
+                    email=email,
+                    is_superuser=True,
+                    tenant__isnull=True
+                ).first()
 
         if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
             return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -102,7 +106,11 @@ class CookieLoginView(APIView):
                         if tenant:
                             user = User.objects.filter(email=email, tenant=tenant).first()
                     else:
-                        user = User.objects.filter(email=email).first()
+                        user = User.objects.filter(
+                            email=email,
+                            is_superuser=True,
+                            tenant__isnull=True
+                        ).first()
                 except Exception:
                     user = None
 

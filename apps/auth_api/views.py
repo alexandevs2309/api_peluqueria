@@ -23,7 +23,7 @@ from .serializers import (
     ActiveSessionSerializer, RegisterSerializer, LoginSerializer,
     PasswordChangeSerializer, PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
-    EmployeeUserSerializer, UserListSerializer
+    EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input
 )
 from .role_utils import normalize_role_for_api
 from rest_framework_simplejwt.tokens import AccessToken
@@ -249,7 +249,7 @@ class LoginView(generics.GenericAPIView):
     @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request, *args, **kwargs):
         # Rate limit por tenant
-        tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        tenant_subdomain = get_explicit_tenant_input(request.data)
         email = (request.data.get('email') or '').strip().lower()
         ip_address = get_client_ip(request)
         user_for_lockout = None
@@ -260,7 +260,11 @@ class LoginView(generics.GenericAPIView):
                 if tenant_for_lockout:
                     user_for_lockout = User.objects.filter(email=email, tenant=tenant_for_lockout).first()
             else:
-                user_for_lockout = User.objects.filter(email=email).first()
+                user_for_lockout = User.objects.filter(
+                    email=email,
+                    is_superuser=True,
+                    tenant__isnull=True
+                ).first()
 
         if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
             return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -273,7 +277,6 @@ class LoginView(generics.GenericAPIView):
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
-            tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else None
             if tenant_subdomain:
                 try:
                     tenant = Tenant.objects.get(subdomain=tenant_subdomain)
@@ -281,7 +284,11 @@ class LoginView(generics.GenericAPIView):
                 except (Tenant.DoesNotExist, User.DoesNotExist):
                     user = None
             else:
-                user = User.objects.filter(email=email).first()
+                user = User.objects.filter(
+                    email=email,
+                    is_superuser=True,
+                    tenant__isnull=True
+                ).first()
             
             safe_create_login_audit(
                 user=user,
@@ -484,13 +491,7 @@ class PasswordResetRequestView(APIView):
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = (serializer.validated_data.get('email') or '').strip().lower()
-        tenant_subdomain = (serializer.validated_data.get('tenant_subdomain') or '').strip().lower() or None
-        if not tenant_subdomain:
-            host = request.META.get('HTTP_HOST', '')
-            if '.' in host and not host.startswith('localhost'):
-                tenant_subdomain = host.split('.')[0]
-            if not tenant_subdomain:
-                tenant_subdomain = request.META.get('HTTP_X_TENANT_SUBDOMAIN')
+        tenant_subdomain = get_explicit_tenant_input(serializer.validated_data)
         try:
             user = None
             if tenant_subdomain:
@@ -756,7 +757,7 @@ class MFALoginVerifyView(APIView):
         serializer = MFAVerifySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         email = request.data.get('email')
-        tenant_subdomain = request.META.get('HTTP_HOST', '').split('.')[0] if '.' in request.META.get('HTTP_HOST', '') else request.data.get('tenant_subdomain')
+        tenant_subdomain = get_explicit_tenant_input(request.data)
         
 
         if not tenant_subdomain:

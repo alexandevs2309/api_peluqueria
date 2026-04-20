@@ -41,6 +41,15 @@ services:
       - media_volume:/code/media
     env_file:
       - .env
+    environment:
+      DEBUG: "true"
+      DATABASE_URL: ""
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200
+      CSRF_TRUSTED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200
+      FRONTEND_URL: http://localhost:4200
     expose:
       - "8000"
     deploy:
@@ -71,6 +80,11 @@ services:
       - .:/code
     env_file:
       - .env
+    environment:
+      DATABASE_URL: ""
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
     depends_on:
       db:
         condition: service_healthy
@@ -89,6 +103,11 @@ services:
       - .:/code
     env_file:
       - .env
+    environment:
+      DATABASE_URL: ""
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
     depends_on:
       db:
         condition: service_healthy
