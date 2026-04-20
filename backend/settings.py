@@ -180,8 +180,14 @@ SIMPLE_JWT = {
     'TOKEN_OBTAIN_SERIALIZER': 'apps.auth_api.serializers.CustomTokenObtainPairSerializer',
 }
 
-CORS_ALLOWED_ORIGINS = os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
-CSRF_TRUSTED_ORIGINS = os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+CORS_ALLOWED_ORIGINS = env.list(
+    'CORS_ALLOWED_ORIGINS',
+    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else []
+)
+CSRF_TRUSTED_ORIGINS = env.list(
+    'CSRF_TRUSTED_ORIGINS',
+    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else []
+)
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -448,7 +454,8 @@ SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
 
-# CRÍTICO: SameSite cookies para prevenir CSRF
+# Sesiones Django y CSRF pueden seguir estrictas; los JWT cross-origin usan
+# configuración específica en auth_api.cookie_utils.
 SESSION_COOKIE_SAMESITE = 'Strict' if not DEBUG else 'Lax'
 CSRF_COOKIE_SAMESITE = 'Strict' if not DEBUG else 'Lax'
 SESSION_COOKIE_HTTPONLY = True

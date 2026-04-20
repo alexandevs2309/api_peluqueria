@@ -14,6 +14,7 @@ from .models import ActiveSession, AccessLog, LoginAudit
 from .utils import get_client_ip, get_user_agent, get_client_jti
 from .settings_policy import is_mfa_globally_enabled, get_jwt_expiry_minutes
 from .login_policy import is_login_locked_out, get_login_lockout_message
+from .cookie_utils import clear_auth_cookies, set_auth_cookies
 from django.utils.timezone import now
 from django.contrib.auth import get_user_model
 from apps.tenants_api.models import Tenant
@@ -203,37 +204,14 @@ class CookieLoginView(APIView):
         
         response = Response(response_data, status=status.HTTP_200_OK)
         
-        # Establecer cookies httpOnly
-        response.set_cookie(
-            'access_token',
-            value=access_token,
-            httponly=True,
-            secure=not settings.DEBUG,
-            samesite='Strict',
-            max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
-            path='/'
+        return set_auth_cookies(
+            response,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            access_max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
+            refresh_max_age=_jwt_cookie_max_age('REFRESH_TOKEN_LIFETIME'),
+            tenant_id=tenant.id if tenant else None,
         )
-        
-        response.set_cookie(
-            'refresh_token',
-            value=refresh_token,
-            httponly=True,
-            secure=not settings.DEBUG,
-            samesite='Strict',
-            max_age=_jwt_cookie_max_age('REFRESH_TOKEN_LIFETIME'),
-            path='/'
-        )
-        
-        if tenant:
-            response.set_cookie(
-                'tenant_id', 
-                str(tenant.id), 
-                httponly=False,  # Frontend necesita leer esto
-                secure=not settings.DEBUG, 
-                samesite='Strict'
-            )
-        
-        return response
 
 
 class CookieLogoutView(APIView):
@@ -293,12 +271,7 @@ class CookieLogoutView(APIView):
             "detail": "Logout exitoso con cookies"
         }, status=status.HTTP_200_OK)
         
-        # Limpiar todas las cookies
-        response.delete_cookie('access_token', path='/')
-        response.delete_cookie('refresh_token', path='/')
-        response.delete_cookie('tenant_id', path='/')
-        
-        return response
+        return clear_auth_cookies(response)
 
 
 class CookieRefreshView(APIView):
@@ -327,18 +300,11 @@ class CookieRefreshView(APIView):
                 'message': 'Token refreshed successfully'
             }, status=status.HTTP_200_OK)
             
-            # Establecer nuevo access token
-            response.set_cookie(
-                'access_token',
-                value=new_access_token,
-                httponly=True,
-                secure=not settings.DEBUG,
-                samesite='Strict',
-                max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
-                path='/'
+            return set_auth_cookies(
+                response,
+                access_token=new_access_token,
+                access_max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
             )
-            
-            return response
             
         except Exception as e:
             return Response({
