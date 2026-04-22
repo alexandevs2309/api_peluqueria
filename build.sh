@@ -1,20 +1,21 @@
 #!/usr/bin/env bash
-# build.sh — Render Build Command
-# Se ejecuta una vez antes de arrancar el web service.
 set -euo pipefail
+
+echo "[build] Python version:"
+python --version
+pip --version
 
 echo "[build] Instalando dependencias..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-echo "[build] Recolectando archivos estáticos..."
+echo "[build] Static files..."
 python manage.py collectstatic --noinput
 
-echo "[build] Aplicando migraciones..."
+echo "[build] Migrations..."
 python manage.py migrate --noinput
-python manage.py showmigrations tenants_api
 
-echo "[build] Creando datos iniciales (roles, planes, superadmin)..."
-python manage.py setup_saas
+echo "[build] Seed SaaS..."
+python manage.py setup_saas || true
 
-echo "[build] Listo."
+echo "[build] Done."
