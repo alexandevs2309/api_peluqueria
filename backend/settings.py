@@ -271,15 +271,6 @@ CACHES = {
 }
 
 
-import os
-
-CLOUDINARY_STORAGE = {
-    "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
-    "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
-    "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
-}
-
-DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 # Session engine using Redis cache
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
@@ -411,16 +402,45 @@ if (BASE_DIR / 'static').exists():
     STATICFILES_DIRS.append(BASE_DIR / 'static')
 
 MEDIA_URL = '/media/'
-_is_render = env.bool('RENDER', default=bool(os.getenv('RENDER')))
-_default_media_root = '/var/data/media' if _is_render else str(BASE_DIR / 'media')
-MEDIA_ROOT = Path(env('MEDIA_ROOT', default=_default_media_root))
+_cloudinary_cloud_name = env('CLOUDINARY_CLOUD_NAME', default='')
+_cloudinary_api_key = env('CLOUDINARY_API_KEY', default='')
+_cloudinary_api_secret = env('CLOUDINARY_API_SECRET', default='')
+USE_CLOUDINARY = env.bool(
+    'USE_CLOUDINARY',
+    default=all([
+        _cloudinary_cloud_name,
+        _cloudinary_api_key,
+        _cloudinary_api_secret,
+    ])
+)
 
-# En entornos tipo Render el path por defecto del código es efímero.
-# Si no hay S3, al menos garantizamos que el directorio local exista.
-USE_CLOUDINARY = env.bool("USE_CLOUDINARY", default=False)
+STORAGES = {
+    'staticfiles': {
+        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+    },
+}
 
-if not USE_CLOUDINARY:
+if USE_CLOUDINARY:
+    CLOUDINARY_STORAGE = {
+        'CLOUD_NAME': _cloudinary_cloud_name,
+        'API_KEY': _cloudinary_api_key,
+        'API_SECRET': _cloudinary_api_secret,
+    }
+    STORAGES['default'] = {
+        'BACKEND': 'cloudinary_storage.storage.MediaCloudinaryStorage',
+    }
+    MEDIA_ROOT = BASE_DIR / 'media'
+elif DEBUG:
+    MEDIA_ROOT = Path(env('MEDIA_ROOT', default=str(BASE_DIR / 'media')))
+    STORAGES['default'] = {
+        'BACKEND': 'django.core.files.storage.FileSystemStorage',
+    }
     os.makedirs(MEDIA_ROOT, exist_ok=True)
+else:
+    raise RuntimeError(
+        'Media storage de produccion no configurado. '
+        'Define USE_CLOUDINARY=True y las credenciales CLOUDINARY_*.'
+    )
 
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
