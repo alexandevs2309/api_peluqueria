@@ -2,6 +2,7 @@ from django.http import JsonResponse, HttpResponseForbidden
 from django.utils.deprecation import MiddlewareMixin
 from django.utils import timezone
 from .models import Tenant
+from .subscription_lifecycle import sync_subscription_state
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.conf import settings
@@ -39,6 +40,12 @@ class TenantMiddleware(MiddlewareMixin):
             elif getattr(tenant, 'subscription_status', None) == 'suspended':
                 reason = 'tenant_suspended'
                 message = 'La cuenta de su empresa esta suspendida. Contacte al soporte o al administrador del SaaS.'
+            elif getattr(tenant, 'subscription_status', None) == 'archived':
+                reason = 'tenant_archived'
+                message = 'La cuenta de su empresa fue archivada por falta prolongada de pago. Contacte al soporte.'
+            elif getattr(tenant, 'subscription_status', None) == 'past_due':
+                reason = 'tenant_past_due'
+                message = 'La cuenta de su empresa tiene pagos pendientes. Regularice su suscripcion.'
             elif getattr(tenant, 'is_trial_expired', None) and tenant.is_trial_expired():
                 reason = 'trial_expired'
                 message = 'El periodo de prueba de su empresa ha expirado. Contacte al soporte o al administrador del SaaS.'
@@ -197,9 +204,15 @@ class TenantMiddleware(MiddlewareMixin):
             )
             
             if not is_subscription_exempt:
-                request.tenant.check_and_suspend_expired_trial()
+                sync_subscription_state(request.tenant, save=True)
                 access_level = request.tenant.get_access_level()
                 
+                if access_level == 'hidden':
+                    return JsonResponse({
+                        'error': 'Tenant archived',
+                        'code': 'TENANT_ARCHIVED',
+                        'message': 'This tenant is archived and unavailable.',
+                    }, status=403)
                 if access_level == 'blocked':
                     is_paid_expired = request.tenant.is_paid_access_expired() if hasattr(request.tenant, 'is_paid_access_expired') else False
                     if is_paid_expired:
@@ -216,10 +229,9 @@ class TenantMiddleware(MiddlewareMixin):
                         'message': 'Your trial has expired. Please subscribe to continue using the service.',
                         'upgrade_url': '/subscriptions/upgrade/'
                     }, status=402)
-                elif access_level == 'grace':
-                    # Permitir acceso pero agregar header de advertencia
-                    response = None
+                elif access_level == 'limited':
                     request.grace_period = True
+                    request.subscription_limited = True
             
             # Enviar notificaciones de trial
             self.check_trial_notifications(request.tenant)

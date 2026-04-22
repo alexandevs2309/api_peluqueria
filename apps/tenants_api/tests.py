@@ -3,7 +3,18 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from apps.tenants_api.models import Tenant
+from apps.tenants_api.subscription_lifecycle import (
+    activate_subscription,
+    archive_tenant,
+    extend_subscription,
+    get_access_level,
+    is_subscription_active,
+    mark_past_due,
+    suspend_subscription,
+    sync_subscription_state,
+)
 
 User = get_user_model()
 
@@ -198,3 +209,104 @@ class TestTenantModel:
                 subdomain="unique-subdomain",  # Same subdomain
                 owner=admin_user
             )
+
+
+@pytest.mark.django_db
+class TestTenantSubscriptionLifecycle:
+
+    def test_sync_subscription_state_moves_active_to_past_due_within_grace(self, admin_user):
+        tenant = Tenant.objects.create(
+            name="Past Due Tenant",
+            subdomain="past-due-tenant",
+            owner=admin_user,
+            subscription_status="active",
+            access_until=timezone.now() - timezone.timedelta(days=2),
+            is_active=True,
+        )
+
+        result = sync_subscription_state(tenant, save=False)
+
+        assert result.changed is True
+        assert tenant.subscription_status == "past_due"
+        assert tenant.is_active is True
+        assert "expired_within_grace -> past_due" in result.reasons
+
+    def test_sync_subscription_state_suspends_after_grace(self, admin_user):
+        tenant = Tenant.objects.create(
+            name="Suspended Tenant",
+            subdomain="suspended-tenant",
+            owner=admin_user,
+            subscription_status="past_due",
+            access_until=timezone.now() - timezone.timedelta(days=10),
+            is_active=True,
+            billing_info={"past_due_since": (timezone.now() - timezone.timedelta(days=8)).isoformat()},
+        )
+
+        result = sync_subscription_state(tenant, save=False)
+
+        assert result.changed is True
+        assert tenant.subscription_status == "suspended"
+        assert tenant.is_active is False
+        assert "past_due_grace_exceeded -> suspended" in result.reasons
+
+    def test_sync_subscription_state_archives_old_suspended_tenant(self, admin_user):
+        tenant = Tenant.objects.create(
+            name="Archived Tenant",
+            subdomain="archived-tenant",
+            owner=admin_user,
+            subscription_status="suspended",
+            is_active=False,
+            billing_info={"suspended_at": (timezone.now() - timezone.timedelta(days=100)).isoformat()},
+        )
+
+        result = sync_subscription_state(tenant, save=False)
+
+        assert result.changed is True
+        assert tenant.subscription_status == "archived"
+        assert tenant.is_active is False
+        assert "suspended_too_long -> archived" in result.reasons
+
+    def test_subscription_domain_helpers_respect_lifecycle(self, admin_user):
+        tenant = Tenant.objects.create(
+            name="Lifecycle Tenant",
+            subdomain="lifecycle-tenant",
+            owner=admin_user,
+            subscription_status="trial",
+            trial_end_date=timezone.now().date() + timezone.timedelta(days=3),
+            is_active=True,
+        )
+
+        assert is_subscription_active(tenant) is True
+        assert get_access_level(tenant) == "full"
+
+        mark_past_due(tenant)
+        assert tenant.subscription_status == "past_due"
+        assert get_access_level(tenant) == "limited"
+
+        suspend_subscription(tenant)
+        assert tenant.subscription_status == "suspended"
+        assert get_access_level(tenant) == "blocked"
+
+        archive_tenant(tenant)
+        assert tenant.subscription_status == "archived"
+        assert get_access_level(tenant) == "hidden"
+
+    def test_activate_and_extend_subscription_helpers(self, admin_user):
+        tenant = Tenant.objects.create(
+            name="Active Helper Tenant",
+            subdomain="active-helper-tenant",
+            owner=admin_user,
+            subscription_status="suspended",
+            is_active=False,
+        )
+
+        changed_fields = activate_subscription(tenant, days=15)
+        assert "subscription_status" in changed_fields
+        assert tenant.subscription_status == "active"
+        assert tenant.is_active is True
+        assert tenant.access_until is not None
+
+        current_access_until = tenant.access_until
+        extend_fields = extend_subscription(tenant, days=5)
+        assert "access_until" in extend_fields
+        assert tenant.access_until > current_access_until

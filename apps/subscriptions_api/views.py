@@ -699,8 +699,8 @@ class RenewSubscriptionView(APIView):
         plans_data = SubscriptionPlanSerializer(plans, many=True).data
         access_level = tenant.get_access_level()
         days_in_grace = 0
-        if access_level == 'grace' and tenant.trial_end_date:
-            days_in_grace = max(0, 3 - (timezone.now().date() - tenant.trial_end_date).days)
+        if tenant.subscription_status == 'past_due' and tenant.access_until:
+            days_in_grace = max(0, 7 - (timezone.now() - tenant.access_until).days)
         
         return Response({
             'tenant_name': tenant.name,

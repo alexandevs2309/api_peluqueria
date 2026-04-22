@@ -10,14 +10,16 @@ class Command(BaseCommand):
         plans = [
             {
                 'name': 'free',
-                'description': 'Plan gratuito de prueba por 7 dias',
+                'description': 'Prueba gratis por 7 dias para conocer la plataforma antes de suscribirte.',
                 'price': 0.00,
                 'duration_month': 0,
-                'max_employees': 2,
+                'max_employees': 3,
                 'max_users': 3,
                 'features': {
                     'appointments': True,
-                    'basic_reports': False,
+                    'basic_reports': True,
+                    'cash_register': True,
+                    'client_history': True,
                     'inventory': False,
                     'advanced_reports': False,
                     'multi_location': False,
@@ -25,12 +27,15 @@ class Command(BaseCommand):
                     'custom_branding': False,
                     'priority_support': False
                 },
-                'commercial_benefits': [],
+                'commercial_benefits': [
+                    'Prueba gratis por 7 dias',
+                    'Ideal para evaluar antes de pagar'
+                ],
                 'is_active': True
             },
             {
                 'name': 'basic',
-                'description': 'Plan Profesional para barberias pequenas',
+                'description': 'Para barberias pequenas que necesitan ordenar citas, cobros y seguimiento de clientes sin complicarse.',
                 'price': 29.99,
                 'duration_month': 1,
                 'stripe_price_id': '',
@@ -49,12 +54,15 @@ class Command(BaseCommand):
                     'api_access': False,
                     'custom_branding': False
                 },
-                'commercial_benefits': [],
+                'commercial_benefits': [
+                    'Ideal para empezar a operar con orden',
+                    'Sin limite de tiempo y listo para uso diario'
+                ],
                 'is_active': True
             },
             {
                 'name': 'standard',
-                'description': 'Plan Negocio para barberias en crecimiento',
+                'description': 'El plan recomendado para negocios en crecimiento que necesitan mas control, visibilidad y operacion multi-sucursal.',
                 'price': 69.99,
                 'duration_month': 1,
                 'stripe_price_id': '',
@@ -73,12 +81,15 @@ class Command(BaseCommand):
                     'api_access': False,
                     'custom_branding': False
                 },
-                'commercial_benefits': [],
+                'commercial_benefits': [
+                    'La mejor relacion valor-precio para crecer',
+                    'Mas control operativo para equipos y sucursales'
+                ],
                 'is_active': True
             },
             {
                 'name': 'premium',
-                'description': 'Plan Premium para operaciones grandes',
+                'description': 'Para operaciones grandes que necesitan crecer sin topes fijos, reforzar su marca y recibir atencion prioritaria.',
                 'price': 129.99,
                 'duration_month': 1,
                 'stripe_price_id': '',
@@ -99,7 +110,8 @@ class Command(BaseCommand):
                 },
                 'commercial_benefits': [
                     'Atencion prioritaria',
-                    'Acompanamiento comercial'
+                    'Acompanamiento comercial',
+                    'Escala sin limite de empleados ni usuarios'
                 ],
                 'is_active': True
             }

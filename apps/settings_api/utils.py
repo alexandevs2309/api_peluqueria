@@ -1,6 +1,7 @@
 from .models import SystemSettings
 from django.core.cache import cache
 from django.utils import timezone
+from apps.subscriptions_api.plan_consistency import build_plan_settings_snapshot, is_unlimited_limit
 
 
 def get_system_config():
@@ -36,7 +37,7 @@ def validate_employee_limit(tenant, plan_type='basic'):
 
     tenant_limit = getattr(tenant, 'max_employees', None)
     if tenant_limit is not None:
-        if tenant_limit == 0:
+        if is_unlimited_limit(tenant_limit):
             return True
         return current_count < tenant_limit
 
@@ -89,11 +90,10 @@ def _apply_auto_upgrade(tenant, next_plan, changed_by, trigger, current_count, p
     tenant.plan_type = next_plan.name
     tenant.max_employees = next_plan.max_employees
     tenant.max_users = next_plan.max_users
+    tenant.settings.update(
+        build_plan_settings_snapshot(next_plan, inherited_at=str(timezone.now()))
+    )
     tenant.settings.update({
-        'plan_features': next_plan.features,
-        'plan_price': str(next_plan.price),
-        'plan_duration_months': next_plan.duration_month,
-        'plan_description': next_plan.description,
         'plan_type_logic': f'Plan {next_plan.name} aplicado por auto_upgrade_limits',
         'auto_upgraded_at': str(timezone.now()),
         'auto_upgrade_trigger': trigger,
@@ -168,7 +168,7 @@ def maybe_auto_upgrade_employee_limit(tenant, changed_by=None):
         return {'upgraded': False, 'reason': 'disabled'}
 
     current_limit = getattr(tenant, 'max_employees', 0)
-    if current_limit == 0:
+    if is_unlimited_limit(current_limit):
         return {'upgraded': False, 'reason': 'already_unlimited'}
 
     current_count = tenant.employees.filter(is_active=True).count() if hasattr(tenant, 'employees') else 0
@@ -194,7 +194,7 @@ def maybe_auto_upgrade_user_limit(tenant, changed_by=None):
         return {'upgraded': False, 'reason': 'disabled'}
 
     current_limit = getattr(tenant, 'max_users', 0)
-    if current_limit == 0:
+    if is_unlimited_limit(current_limit):
         return {'upgraded': False, 'reason': 'already_unlimited'}
 
     current_count = tenant.users.filter(is_active=True).count() if hasattr(tenant, 'users') else 0

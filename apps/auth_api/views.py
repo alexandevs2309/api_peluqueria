@@ -171,12 +171,12 @@ class RegisterView(generics.CreateAPIView):
         
         # Transacción atómica para garantizar tenant antes de usuario
         with transaction.atomic():
-            # Obtener plan FREE por defecto
-            free_plan = SubscriptionPlan.objects.filter(name='free').first()
-            if not free_plan:
-                free_plan = SubscriptionPlan.objects.filter(name='basic').first()
-            if not free_plan:
-                free_plan = SubscriptionPlan.objects.first()
+            # Plan de onboarding para iniciar el tenant en trial sin exponer un plan gratis permanente en la oferta publica.
+            starter_plan = SubscriptionPlan.objects.filter(name='free').first()
+            if not starter_plan:
+                starter_plan = SubscriptionPlan.objects.filter(name='basic').first()
+            if not starter_plan:
+                starter_plan = SubscriptionPlan.objects.first()
             
             # Crear subdomain único
             full_name = serializer.validated_data.get('full_name', 'barbershop')
@@ -203,7 +203,7 @@ class RegisterView(generics.CreateAPIView):
                 name=tenant_name,
                 subdomain=subdomain,
                 owner=None,
-                subscription_plan=free_plan,
+                subscription_plan=starter_plan,
                 is_active=True
             )
             

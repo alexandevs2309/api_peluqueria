@@ -5,6 +5,22 @@ import sys
 from django.contrib.auth import get_user_model
 from datetime import timedelta
 from dateutil.relativedelta import relativedelta
+from apps.subscriptions_api.plan_consistency import (
+    build_plan_settings_snapshot,
+    can_add_employee as can_add_employee_for_tenant,
+    can_add_user as can_add_user_for_tenant,
+    tenant_has_feature,
+)
+from .subscription_lifecycle import (
+    activate_subscription as activate_subscription_for_tenant,
+    archive_tenant as archive_tenant_for_tenant,
+    extend_subscription as extend_subscription_for_tenant,
+    get_access_level as get_tenant_access_level,
+    is_subscription_active as is_tenant_subscription_active,
+    mark_past_due as mark_past_due_for_tenant,
+    suspend_subscription as suspend_subscription_for_tenant,
+    sync_subscription_state as sync_subscription_state_for_tenant,
+)
 
 class Tenant(models.Model):
     PLAN_CHOICES = [
@@ -17,7 +33,9 @@ class Tenant(models.Model):
     SUBSCRIPTION_STATUS = [
         ("trial", "Trial"),
         ("active", "Active"),
+        ("past_due", "Past Due"),
         ("suspended", "Suspended"),
+        ("archived", "Archived"),
         ("cancelled", "Cancelled"),
     ]
 
@@ -59,6 +77,13 @@ class Tenant(models.Model):
             models.Index(fields=['deleted_at']),
         ]
 
+    def _subscription_plan_changed(self):
+        if not self.pk or not self.subscription_plan_id:
+            return bool(self.subscription_plan_id)
+
+        current_plan_id = type(self).objects.filter(pk=self.pk).values_list('subscription_plan_id', flat=True).first()
+        return current_plan_id != self.subscription_plan_id
+
     def save(self, *args, **kwargs):
         # Si estamos en modo test y no se proporcionó owner, asignar uno por defecto
         if any(cmd in sys.argv for cmd in ['test', 'pytest']):
@@ -73,14 +98,17 @@ class Tenant(models.Model):
                         owner = None
                 if owner:
                     self.owner = owner
-        # Heredar TODAS las características del plan seleccionado
+        should_refresh_plan_snapshot = not self.pk or self._subscription_plan_changed()
+
+        # Heredar snapshot del plan solo en creación o cambio explícito de plan
         if self.subscription_plan:
             plan = self.subscription_plan
             
             # Características básicas
             self.plan_type = plan.name
-            self.max_employees = plan.max_employees
-            self.max_users = plan.max_users
+            if should_refresh_plan_snapshot:
+                self.max_employees = plan.max_employees
+                self.max_users = plan.max_users
             
             # TODOS los planes empiezan con trial (solo en creación)
             if not self.pk:
@@ -93,41 +121,25 @@ class Tenant(models.Model):
                     
                 self.trial_end_date = timezone.now().date() + timedelta(days=trial_days)
             
-            # Heredar todas las características del plan
-            self.settings.update({
-                'plan_features': plan.features,
-                'plan_price': str(plan.price),
-                'plan_duration_months': plan.duration_month,
-                'plan_description': plan.description,
-                'plan_type_logic': f'Plan {plan.name} configurado automáticamente',
-                'inherited_at': str(timezone.now())
-            })
+            if should_refresh_plan_snapshot:
+                self.settings = dict(self.settings or {})
+                self.settings.update(
+                    build_plan_settings_snapshot(plan, inherited_at=str(timezone.now()))
+                )
                 
         super().save(*args, **kwargs)
     
     def has_feature(self, feature_name):
         """Check if tenant has access to specific feature"""
-        if not self.subscription_plan:
-            return False
-        features = self.subscription_plan.features or {}
-        return features.get(feature_name, False)
+        return tenant_has_feature(self, feature_name, default=False)
     
     def can_add_user(self):
         """Check if tenant can add more users"""
-        if self.max_users == 0:  # Unlimited
-            return True
-        current_users = self.users.filter(is_active=True).count()
-        return current_users < self.max_users
+        return can_add_user_for_tenant(self)
     
     def can_add_employee(self):
         """Check if tenant can add more employees"""
-        if self.max_employees == 0:  # Unlimited
-            return True
-        current_employees = self.users.filter(
-            is_active=True, 
-            role='ClientStaff'
-        ).count()
-        return current_employees < self.max_employees
+        return can_add_employee_for_tenant(self)
     
     def get_user_usage(self):
         """Get current user usage stats"""
@@ -178,57 +190,50 @@ class Tenant(models.Model):
     def check_and_suspend_expired_trial(self):
         """Verificar y suspender trial expirado"""
         if self.is_trial_expired():
-            self.subscription_status = 'suspended'
-            # Mantener consistencia: un tenant suspendido no debe quedar activo.
-            self.is_active = False
-            self.save(update_fields=['subscription_status', 'is_active', 'updated_at'])
+            changed_fields = suspend_subscription_for_tenant(self, now=timezone.now())
+            self.save(update_fields=[*changed_fields, 'updated_at'])
             return True
         return False
+
+    def is_subscription_active(self):
+        """Estado de negocio reutilizable para trial y acceso pago."""
+        return is_tenant_subscription_active(self)
+
+    def mark_past_due(self, save=True):
+        changed_fields = mark_past_due_for_tenant(self, now=timezone.now())
+        if changed_fields and save:
+            self.save(update_fields=[*changed_fields, 'updated_at'])
+        return changed_fields
+
+    def suspend_subscription(self, save=True):
+        changed_fields = suspend_subscription_for_tenant(self, now=timezone.now())
+        if changed_fields and save:
+            self.save(update_fields=[*changed_fields, 'updated_at'])
+        return changed_fields
+
+    def archive_tenant(self, save=True):
+        changed_fields = archive_tenant_for_tenant(self, now=timezone.now())
+        if changed_fields and save:
+            self.save(update_fields=[*changed_fields, 'updated_at'])
+        return changed_fields
+
+    def extend_subscription(self, days, save=True):
+        changed_fields = extend_subscription_for_tenant(self, days=days, now=timezone.now())
+        if changed_fields and save:
+            self.save(update_fields=[*changed_fields, 'updated_at'])
+        return changed_fields
 
     def sync_subscription_state(self, save=True):
         """
         Normaliza el estado persistido del tenant segun fechas y flags actuales.
         Devuelve True si hubo cambios en memoria o en BD.
         """
-        changed_fields = []
-
-        if self.deleted_at is not None:
-            if self.is_active:
-                self.is_active = False
-                changed_fields.append('is_active')
-            if self.subscription_status != 'cancelled':
-                self.subscription_status = 'cancelled'
-                changed_fields.append('subscription_status')
-        elif self.is_trial_expired():
-            if self.subscription_status != 'suspended':
-                self.subscription_status = 'suspended'
-                changed_fields.append('subscription_status')
-            if self.is_active:
-                self.is_active = False
-                changed_fields.append('is_active')
-        elif self.subscription_status == 'suspended' and self.is_active:
-            self.is_active = False
-            changed_fields.append('is_active')
-        elif self.subscription_status in {'trial', 'active'} and not self.is_active:
-            self.is_active = True
-            changed_fields.append('is_active')
-
-        if changed_fields and save:
-            self.save(update_fields=[*changed_fields, 'updated_at'])
-
-        return bool(changed_fields)
+        result = sync_subscription_state_for_tenant(self, save=save)
+        return result.changed
     
     def get_access_level(self):
         """Determinar nivel de acceso del tenant"""
-        if self.subscription_status == 'active':
-            if self.is_paid_access_expired():
-                return 'blocked'
-            return 'full'
-        elif self.subscription_status == 'trial':
-            return 'full' if not self.is_trial_expired() else 'grace'
-        elif self.subscription_status == 'suspended':
-            return 'blocked'
-        return 'blocked'
+        return get_tenant_access_level(self)
     
     def should_send_trial_notification(self, days_before):
         """Verificar si debe enviar notificación de trial"""
@@ -244,28 +249,35 @@ class Tenant(models.Model):
         self.trial_notifications_sent[notification_key] = True
         self.save(update_fields=['trial_notifications_sent'])
     
-    def activate_subscription(self):
+    def activate_subscription(self, days=None):
         """Activar suscripción (después de pago)"""
-        months = 1
-        if self.subscription_plan and self.subscription_plan.duration_month:
-            months = max(1, int(self.subscription_plan.duration_month))
-        base_time = timezone.now()
-        if self.access_until and self.access_until > base_time:
-            base_time = self.access_until
+        if days is None:
+            months = 1
+            if self.subscription_plan and self.subscription_plan.duration_month:
+                months = max(1, int(self.subscription_plan.duration_month))
+            base_time = timezone.now()
+            if self.access_until and self.access_until > base_time:
+                base_time = self.access_until
 
-        self.subscription_status = 'active'
-        self.trial_end_date = None
-        self.is_active = True
-        self.access_until = base_time + relativedelta(months=months)
+            self.subscription_status = 'active'
+            self.trial_end_date = None
+            self.is_active = True
+            self.access_until = base_time + relativedelta(months=months)
+            self.trial_notifications_sent = {}
+            self.save(update_fields=[
+                'subscription_status',
+                'trial_end_date',
+                'is_active',
+                'access_until',
+                'trial_notifications_sent',
+                'updated_at'
+            ])
+            return
+
+        changed_fields = activate_subscription_for_tenant(self, days=days, now=timezone.now())
         self.trial_notifications_sent = {}
-        self.save(update_fields=[
-            'subscription_status',
-            'trial_end_date',
-            'is_active',
-            'access_until',
-            'trial_notifications_sent',
-            'updated_at'
-        ])
+        changed_fields.append('trial_notifications_sent')
+        self.save(update_fields=[*dict.fromkeys(changed_fields), 'updated_at'])
     
     def soft_delete(self):
         """Eliminación lógica del tenant"""

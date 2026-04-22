@@ -4,6 +4,7 @@ from django.utils import timezone
 from django.core.mail import send_mail
 from django.conf import settings
 from apps.tenants_api.models import Tenant
+from apps.tenants_api.subscription_lifecycle import sync_subscription_state
 from apps.subscriptions_api.models import UserSubscription, Subscription
 from apps.settings_api.policy_utils import should_auto_suspend_expired
 import logging
@@ -49,6 +50,34 @@ def _build_html_email(tenant, title, message_lines):
     """
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def daily_subscription_check(self):
+    """
+    Task diaria para normalizar lifecycle de suscripciones.
+    Pensada para Celery beat o cron.
+    """
+    try:
+        now = timezone.now()
+        processed = 0
+
+        tenants = Tenant.objects.filter(deleted_at__isnull=True).order_by('id')
+        for tenant in tenants.iterator():
+            result = sync_subscription_state(tenant, now=now, save=True)
+            if result.changed:
+                processed += 1
+                logger.info(
+                    "Subscription lifecycle synced tenant=%s status=%s reasons=%s",
+                    tenant.id,
+                    tenant.subscription_status,
+                    ", ".join(result.reasons),
+                )
+
+        logger.info("Daily subscription check processed %s tenants", processed)
+        return f"Processed {processed} tenant subscription transitions"
+    except Exception as e:
+        logger.error(f"Error running daily subscription check: {str(e)}")
+        raise self.retry(exc=e)
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def check_trial_expirations(self):
     """
     Task diario para verificar trials expirados
@@ -65,12 +94,14 @@ def check_trial_expirations(self):
         expired_trials = Tenant.objects.filter(
             subscription_status='trial',
             trial_end_date__lt=today,
-            is_active=True
+            is_active=True,
+            deleted_at__isnull=True,
         )
         
         suspended_count = 0
         for tenant in expired_trials:
-            if not tenant.sync_subscription_state(save=True):
+            result = sync_subscription_state(tenant, save=True)
+            if not result.changed:
                 continue
             
             # Desactivar suscripción del usuario
@@ -103,12 +134,14 @@ def cleanup_expired_trials(self):
         # Limpiar tenants suspendidos por más de 30 días
         old_suspended = Tenant.objects.filter(
             subscription_status='suspended',
-            updated_at__lt=today - timedelta(days=30)
+            updated_at__lt=today - timedelta(days=30),
+            deleted_at__isnull=True,
         )
         
         cleaned_count = 0
         for tenant in old_suspended:
-            if tenant.sync_subscription_state(save=True):
+            result = sync_subscription_state(tenant, save=True)
+            if result.changed:
                 cleaned_count += 1
             
             logger.info(f"Cleaned up old suspended tenant {tenant.name} (ID: {tenant.id})")

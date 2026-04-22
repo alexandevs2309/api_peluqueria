@@ -325,6 +325,7 @@ class PosConfiguration(models.Model):
     phone = models.CharField(max_length=50, blank=True)
     email = models.EmailField(blank=True)
     website = models.URLField(blank=True)
+    rnc = models.CharField(max_length=30, blank=True, null=True, help_text='RNC/Cédula para comprobantes fiscales (RD)')
     currency = models.CharField(max_length=3, default='USD')
     currency_symbol = models.CharField(max_length=5, default='$')
     tax_rate = models.DecimalField(max_digits=5, decimal_places=4, default=0.0000)

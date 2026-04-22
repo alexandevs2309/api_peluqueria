@@ -1,6 +1,7 @@
 from datetime import timedelta
 from django.utils import timezone
 from apps.settings_api.utils import get_trial_period_days
+from .plan_consistency import get_feature_value
 
 
 def create_trial_subscription(tenant, plan):
@@ -43,7 +44,7 @@ def get_user_feature_flag(user, feature_name):
 
     features = getattr(subscription.plan, 'features', None) or {}
     if isinstance(features, dict) and feature_name in features:
-        return bool(features.get(feature_name, False))
+        return get_feature_value(features, feature_name, default=False)
 
     plan_features = {
         'basic': ['pos_enabled', 'appointments_enabled'],

@@ -3,6 +3,7 @@ from django.core.exceptions import ValidationError
 from django.utils.timezone import now
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, SubscriptionAuditLog
+from apps.subscriptions_api.plan_consistency import get_feature_value
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
     features_list = serializers.SerializerMethodField()
@@ -49,17 +50,17 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
         if obj.max_employees == 0:
             highlights.append('Empleados ilimitados')
         else:
-            highlights.append(f'{obj.max_employees} empleados')
+            highlights.append(f'Hasta {obj.max_employees} empleados')
 
         if obj.max_users == 0:
             highlights.append('Usuarios ilimitados')
         else:
-            highlights.append(f'{obj.max_users} usuarios')
+            highlights.append(f'Hasta {obj.max_users} usuarios')
 
-        if obj.features.get('custom_branding'):
+        if get_feature_value(obj.features, 'custom_branding', default=False):
             highlights.append('Logo personalizado')
         elif obj.allows_multiple_branches:
-            highlights.append('Multi-sucursal')
+            highlights.append('Varias sucursales')
         else:
             highlights.append('1 sucursal')
 
@@ -67,20 +68,20 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
 
     def get_technical_features(self, obj):
         labels = {
-            'appointments': 'Agenda completa',
-            'basic_reports': 'Reportes basicos',
-            'cash_register': 'Caja y ventas',
-            'client_history': 'Historial de clientes',
-            'inventory': 'Inventario',
-            'advanced_reports': 'Reportes avanzados',
-            'multi_location': 'Multiples sucursales',
-            'role_permissions': 'Permisos de rol avanzados',
-            'api_access': 'Acceso a API',
-            'custom_branding': 'Branding basico con logo personalizado',
+            'appointments': 'Agenda de citas organizada',
+            'basic_reports': 'Reportes basicos del negocio',
+            'cash_register': 'Caja y ventas en un solo lugar',
+            'client_history': 'Historial completo de clientes',
+            'inventory': 'Control de inventario en tiempo real',
+            'advanced_reports': 'Reportes avanzados para tomar decisiones',
+            'multi_location': 'Gestion de multiples sucursales',
+            'role_permissions': 'Permisos avanzados para el equipo',
+            'api_access': 'Acceso a integraciones por API',
+            'custom_branding': 'Logo personalizado para tu negocio',
         }
         if not isinstance(obj.features, dict):
             return []
-        return [label for key, label in labels.items() if obj.features.get(key)]
+        return [label for key, label in labels.items() if get_feature_value(obj.features, key, default=False)]
 
 class UserSubscriptionSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', read_only=True)

@@ -147,8 +147,9 @@ def product_low_stock(sender, instance, **kwargs):
 @receiver(post_save, sender='subscriptions_api.Subscription')
 def subscription_expiring(sender, instance, **kwargs):
     """Notificar cuando una suscripción está por vencer"""
-    if instance.end_date:
-        days_until_expiry = (instance.end_date - timezone.now().date()).days
+    end_date = getattr(instance, 'end_date', None)
+    if end_date:
+        days_until_expiry = (end_date - timezone.now().date()).days
         
         if days_until_expiry in [7, 3, 1]:  # Notificar 7, 3 y 1 día antes
             service = NotificationService()
@@ -163,7 +164,7 @@ def subscription_expiring(sender, instance, **kwargs):
                 context = {
                     'tenant_name': instance.tenant.name,
                     'plan_name': instance.plan.name,
-                    'expiry_date': instance.end_date.strftime('%d/%m/%Y'),
+                    'expiry_date': end_date.strftime('%d/%m/%Y'),
                     'days_remaining': days_until_expiry
                 }
                 

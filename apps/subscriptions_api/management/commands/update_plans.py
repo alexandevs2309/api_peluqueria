@@ -9,7 +9,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         updates = {
             'basic': {
-                'description': 'Plan Profesional para barberias pequenas',
+                'description': 'Para barberias pequenas que necesitan ordenar citas, cobros y seguimiento de clientes sin complicarse.',
                 'price': 29.99,
                 'max_employees': 8,
                 'max_users': 16,
@@ -26,10 +26,13 @@ class Command(BaseCommand):
                     'api_access': False,
                     'custom_branding': False
                 },
-                'commercial_benefits': []
+                'commercial_benefits': [
+                    'Ideal para empezar a operar con orden',
+                    'Sin limite de tiempo y listo para uso diario'
+                ]
             },
             'standard': {
-                'description': 'Plan Negocio para barberias en crecimiento',
+                'description': 'El plan recomendado para negocios en crecimiento que necesitan mas control, visibilidad y operacion multi-sucursal.',
                 'price': 69.99,
                 'max_employees': 25,
                 'max_users': 50,
@@ -46,10 +49,13 @@ class Command(BaseCommand):
                     'api_access': False,
                     'custom_branding': False
                 },
-                'commercial_benefits': []
+                'commercial_benefits': [
+                    'La mejor relacion valor-precio para crecer',
+                    'Mas control operativo para equipos y sucursales'
+                ]
             },
             'premium': {
-                'description': 'Plan Premium para operaciones grandes',
+                'description': 'Para operaciones grandes que necesitan crecer sin topes fijos, reforzar su marca y recibir atencion prioritaria.',
                 'price': 129.99,
                 'max_employees': 0,
                 'max_users': 0,
@@ -68,7 +74,8 @@ class Command(BaseCommand):
                 },
                 'commercial_benefits': [
                     'Atencion prioritaria',
-                    'Acompanamiento comercial'
+                    'Acompanamiento comercial',
+                    'Escala sin limite de empleados ni usuarios'
                 ]
             }
         }

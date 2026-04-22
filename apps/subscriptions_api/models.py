@@ -10,9 +10,9 @@ from django.core.exceptions import ValidationError
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
-        ('basic', 'Professional'),
-        ('standard', 'Business'),
-        ('premium', 'Premium'),
+        ('basic', 'Esencial'),
+        ('standard', 'Crecimiento'),
+        ('premium', 'Escala'),
         ('enterprise', 'Enterprise'),
     ]
 
@@ -51,10 +51,22 @@ class UserSubscription(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
 
+    @staticmethod
+    def _should_validate_employee_limit_change(old_limit, new_limit):
+        """0 means unlimited, so only finite targets need capacity validation."""
+        if new_limit == 0:
+            return False
+        if old_limit == 0:
+            return True
+        return new_limit < old_limit
+
     def change_plan(self, new_plan):
         old_plan = self.plan
 
-        if new_plan.max_employees < old_plan.max_employees:
+        if self._should_validate_employee_limit_change(
+            old_plan.max_employees,
+            new_plan.max_employees,
+        ):
             self._validate_employee_limit(new_plan)
 
         if not new_plan.allows_multiple_branches and old_plan.allows_multiple_branches:
@@ -75,6 +87,9 @@ class UserSubscription(models.Model):
 
         tenant = self.user.tenant
         if not tenant:
+            return
+
+        if new_plan.max_employees == 0:
             return
 
         current_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
@@ -131,10 +146,22 @@ class Subscription(models.Model):
     class Meta:
         unique_together = ('tenant', 'plan')
 
+    @staticmethod
+    def _should_validate_employee_limit_change(old_limit, new_limit):
+        """0 means unlimited, so only finite targets need capacity validation."""
+        if new_limit == 0:
+            return False
+        if old_limit == 0:
+            return True
+        return new_limit < old_limit
+
     def change_plan(self, new_plan):
         old_plan = self.plan
 
-        if new_plan.max_employees < old_plan.max_employees:
+        if self._should_validate_employee_limit_change(
+            old_plan.max_employees,
+            new_plan.max_employees,
+        ):
             self._validate_employee_limit(new_plan)
 
         if not new_plan.allows_multiple_branches and old_plan.allows_multiple_branches:
@@ -145,6 +172,9 @@ class Subscription(models.Model):
 
     def _validate_employee_limit(self, new_plan):
         from apps.employees_api.models import Employee
+
+        if new_plan.max_employees == 0:
+            return
 
         current_employees = Employee.objects.filter(tenant=self.tenant, is_active=True).count()
 

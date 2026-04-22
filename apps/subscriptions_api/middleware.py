@@ -5,6 +5,7 @@ from datetime import datetime
 from apps.subscriptions_api.models import UserSubscription
 from django.core.cache import cache
 import logging
+from apps.tenants_api.subscription_lifecycle import sync_subscription_state
 
 logger = logging.getLogger(__name__)
 
@@ -51,9 +52,17 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             }, status=403)
             
         tenant = request.user.tenant
+        sync_subscription_state(tenant, save=True)
         
+        if tenant.subscription_status in {'archived', 'cancelled'}:
+            return JsonResponse({
+                'error': 'Tenant archived',
+                'code': 'TENANT_ARCHIVED',
+                'action_required': 'contact_support'
+            }, status=403)
+
         # Validar si tenant está activo
-        if not tenant.is_active:
+        if not tenant.is_active and tenant.subscription_status not in {'past_due'}:
             return JsonResponse({
                 'error': 'Tenant suspended',
                 'code': 'TENANT_SUSPENDED',
@@ -84,16 +93,17 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                     'upgrade_url': '/subscriptions/plans/'
                 }, status=402)  # Payment Required
 
-        # Validar expiración de acceso pago (fecha de corte)
-        if (
-            tenant.subscription_status == 'active' and
-            tenant.access_until and
-            tenant.access_until < timezone.now()
-        ):
+        if tenant.subscription_status == 'past_due':
+            request.subscription_limited = True
+            request.subscription_status = 'past_due'
+            return None
+
+        # Validar expiración de acceso pago / estados bloqueados
+        if tenant.subscription_status == 'suspended':
             return JsonResponse({
                 'error': 'Subscription expired',
-                'code': 'SUBSCRIPTION_EXPIRED',
-                'expired_date': tenant.access_until.isoformat(),
+                'code': 'SUBSCRIPTION_SUSPENDED',
+                'expired_date': tenant.access_until.isoformat() if tenant.access_until else None,
                 'action_required': 'renew_subscription',
                 'renewal_url': '/client/payment'
             }, status=402)

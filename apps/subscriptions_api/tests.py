@@ -1,8 +1,11 @@
 import pytest
 from functools import wraps
+from io import StringIO
 from django.urls import path
 from django.db.models import Q
 from django.urls import reverse
+from django.core.exceptions import ValidationError
+from django.core.management import call_command
 from rest_framework.test import APIClient
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
@@ -13,9 +16,12 @@ from datetime import date, timedelta
 
 from apps.auth_api.models import User
 from apps.tenants_api.models import Tenant
+from apps.employees_api.models import Employee
+from apps.subscriptions_api.access_control import has_feature
 from apps.subscriptions_api.utils import log_subscription_event
 from apps.subscriptions_api.tasks import check_expired_subscriptions as deactivate_expired_subscriptions
-from apps.subscriptions_api.models import SubscriptionAuditLog, SubscriptionPlan, UserSubscription
+from apps.subscriptions_api.models import Subscription, SubscriptionAuditLog, SubscriptionPlan, UserSubscription
+from apps.subscriptions_api.plan_consistency import can_add_employee, can_add_user, tenant_has_feature
 from apps.subscriptions_api import views as subscription_views
 
 
@@ -523,3 +529,192 @@ def test_renew_subscription_auto_renew_returns_requires_action(monkeypatch):
     assert response.status_code == 200
     assert response.data.get("requires_action") is True
     assert response.data.get("auto_renew") is True
+
+
+@pytest.mark.django_db
+def test_user_subscription_change_plan_allows_unlimited_target_plan():
+    user, tenant = _make_tenant_user("unlimited-user-sub")
+    premium_plan = SubscriptionPlan.objects.create(
+        name="premium",
+        price=80,
+        duration_month=12,
+        max_employees=0,
+    )
+    subscription = UserSubscription.objects.create(user=user, plan=premium_plan)
+
+    for idx in range(3):
+        employee_user = User.objects.create_user(
+            email=f"employee_unlimited_{idx}@test.com",
+            password="pass",
+            full_name=f"Employee {idx}",
+            tenant=tenant,
+            role="Client-Staff",
+        )
+        assert Employee.objects.filter(user=employee_user, tenant=tenant, is_active=True).exists()
+
+    subscription.change_plan(premium_plan)
+    subscription.refresh_from_db()
+
+    assert subscription.plan == premium_plan
+
+
+@pytest.mark.django_db
+def test_user_subscription_change_plan_from_unlimited_to_finite_validates_employee_count():
+    user, tenant = _make_tenant_user("finite-user-sub")
+    unlimited_plan = SubscriptionPlan.objects.create(
+        name="premium",
+        price=80,
+        duration_month=12,
+        max_employees=0,
+    )
+    limited_plan = SubscriptionPlan.objects.create(
+        name="enterprise",
+        price=120,
+        duration_month=12,
+        max_employees=2,
+    )
+    subscription = UserSubscription.objects.create(user=user, plan=unlimited_plan)
+
+    for idx in range(3):
+        employee_user = User.objects.create_user(
+            email=f"employee_finite_{idx}@test.com",
+            password="pass",
+            full_name=f"Employee {idx}",
+            tenant=tenant,
+            role="Client-Staff",
+        )
+        assert Employee.objects.filter(user=employee_user, tenant=tenant, is_active=True).exists()
+
+    with pytest.raises(ValidationError, match="No puede cambiar a este plan"):
+        subscription.change_plan(limited_plan)
+
+
+@pytest.mark.django_db
+def test_subscription_change_plan_from_unlimited_to_finite_validates_employee_count():
+    user, tenant = _make_tenant_user("finite-tenant-sub")
+    unlimited_plan = SubscriptionPlan.objects.create(
+        name="premium",
+        price=80,
+        duration_month=12,
+        max_employees=0,
+    )
+    limited_plan = SubscriptionPlan.objects.create(
+        name="enterprise",
+        price=120,
+        duration_month=12,
+        max_employees=2,
+    )
+    subscription = Subscription.objects.create(tenant=tenant, plan=unlimited_plan, is_active=True)
+
+    for idx in range(3):
+        employee_user = User.objects.create_user(
+            email=f"employee_tenant_{idx}@test.com",
+            password="pass",
+            full_name=f"Employee {idx}",
+            tenant=tenant,
+            role="Client-Staff",
+        )
+        assert Employee.objects.filter(user=employee_user, tenant=tenant, is_active=True).exists()
+
+    with pytest.raises(ValidationError, match="No puede cambiar a este plan"):
+        subscription.change_plan(limited_plan)
+
+
+@pytest.mark.django_db
+def test_limit_helpers_treat_zero_as_unlimited():
+    user, tenant = _make_tenant_user("limit-helpers")
+    tenant.max_employees = 0
+    tenant.max_users = 0
+
+    assert can_add_employee(tenant, count=500, current_count=999)
+    assert can_add_user(tenant, count=500, current_count=999)
+
+
+@pytest.mark.django_db
+def test_tenant_has_feature_reads_settings_snapshot_safely():
+    user, tenant = _make_tenant_user("tenant-feature")
+    plan = tenant.subscription_plan
+    plan.features = {"appointments": True}
+    plan.save(update_fields=["features"])
+
+    tenant.settings["plan_features"] = {"appointments": True}
+    tenant.save(update_fields=["settings"])
+
+    assert tenant_has_feature(tenant, "appointments") is True
+    assert tenant_has_feature(tenant, "cash_register") is False
+
+
+@pytest.mark.django_db
+def test_access_control_has_feature_returns_false_for_missing_key():
+    user, tenant = _make_tenant_user("access-feature")
+    tenant.settings["plan_features"] = {"appointments": True}
+    tenant.save(update_fields=["settings"])
+
+    assert has_feature(tenant, "appointments") is True
+    assert has_feature(tenant, "custom_branding") is False
+
+
+@pytest.mark.django_db
+def test_sync_plan_consistency_command_dry_run_does_not_persist():
+    user, tenant = _make_tenant_user("sync-dry-run")
+    plan = tenant.subscription_plan
+    plan.features = {"appointments": True}
+    plan.save(update_fields=["features"])
+
+    tenant.settings["plan_features"] = {"appointments": True}
+    tenant.max_employees = 999
+    tenant.max_users = 999
+    tenant.save(update_fields=["settings", "max_employees", "max_users"])
+
+    stdout = StringIO()
+    call_command("sync_plan_consistency", stdout=stdout)
+
+    plan.refresh_from_db()
+    tenant.refresh_from_db()
+
+    assert "cash_register" not in plan.features
+    assert tenant.max_employees == 999
+    assert tenant.max_users == 999
+    assert "DRY-RUN" in stdout.getvalue()
+
+
+@pytest.mark.django_db
+def test_sync_plan_consistency_command_apply_normalizes_and_syncs():
+    user, tenant = _make_tenant_user("sync-apply")
+    other_plan = SubscriptionPlan.objects.create(
+        name="premium",
+        price=80,
+        duration_month=12,
+        max_employees=0,
+        max_users=0,
+        features={"appointments": True, "cash_register": True, "custom_branding": True},
+    )
+
+    plan = tenant.subscription_plan
+    plan.features = {"appointments": True}
+    plan.max_employees = 8
+    plan.max_users = 16
+    plan.save(update_fields=["features", "max_employees", "max_users"])
+
+    tenant.settings["plan_features"] = {"appointments": True}
+    tenant.max_employees = 999
+    tenant.max_users = 777
+    tenant.save(update_fields=["settings", "max_employees", "max_users"])
+
+    stdout = StringIO()
+    call_command(
+        "sync_plan_consistency",
+        "--apply",
+        "--apply-feature-values",
+        "--apply-limits",
+        stdout=stdout,
+    )
+
+    plan.refresh_from_db()
+    tenant.refresh_from_db()
+
+    assert plan.features["cash_register"] is False
+    assert tenant.settings["plan_features"]["cash_register"] is False
+    assert tenant.max_employees == plan.max_employees
+    assert tenant.max_users == plan.max_users
+    assert "Summary" in stdout.getvalue()

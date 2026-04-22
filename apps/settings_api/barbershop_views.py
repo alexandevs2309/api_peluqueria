@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import PermissionDenied
 from django.db import transaction
 from .barbershop_models import BarbershopSettings
 from .barbershop_serializers import (
@@ -14,7 +15,11 @@ from .permissions import IsClientAdmin
 from apps.pos_api.models import PosConfiguration
 from apps.pos_api.models import Sale
 from apps.employees_api.earnings_models import PayrollPeriod
+from apps.subscriptions_api.access_control import has_feature
 from apps.subscriptions_api.permissions import requires_feature
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class BarbershopSettingsViewSet(viewsets.ViewSet):
@@ -51,28 +56,56 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         if not pos:
             return None
 
+        logger.info(f"[DEBUG] _get_pos_config_data: rnc={pos.rnc}, user_id={request.user.id}")
+        
         return {
             'business_name': pos.business_name,
             'address': pos.address,
             'phone': pos.phone,
             'email': pos.email,
-            'website': pos.website
+            'website': pos.website,
+            'rnc': pos.rnc
         }
 
     def _save_pos_config(self, request, pos_config_data):
         """
         Persistir configuración POS para el usuario actual si viene en payload.
         """
+        logger.info(f"[DEBUG] _save_pos_config: pos_config_data={pos_config_data}")
+        
         if not isinstance(pos_config_data, dict):
+            logger.warning(f"[DEBUG] pos_config_data no es dict, es: {type(pos_config_data)}")
             return
 
-        pos, _ = PosConfiguration.objects.get_or_create(user=request.user)
-        pos.business_name = pos_config_data.get('business_name', pos.business_name)
-        pos.address = pos_config_data.get('address', pos.address)
-        pos.phone = pos_config_data.get('phone', pos.phone)
-        pos.email = pos_config_data.get('email', pos.email)
-        pos.website = pos_config_data.get('website', pos.website)
-        pos.save()
+        try:
+            pos, created = PosConfiguration.objects.get_or_create(user=request.user)
+            logger.info(f"[DEBUG] PosConfiguration: user_id={request.user.id}, created={created}")
+            
+            # Guardar valores anteriores
+            old_values = {
+                'business_name': pos.business_name,
+                'address': pos.address,
+                'phone': pos.phone,
+                'email': pos.email,
+                'website': pos.website,
+                'rnc': pos.rnc
+            }
+            
+            # Actualizar campos
+            pos.business_name = pos_config_data.get('business_name', pos.business_name)
+            pos.address = pos_config_data.get('address', pos.address)
+            pos.phone = pos_config_data.get('phone', pos.phone)
+            pos.email = pos_config_data.get('email', pos.email)
+            pos.website = pos_config_data.get('website', pos.website)
+            pos.rnc = pos_config_data.get('rnc', pos.rnc)
+            
+            logger.info(f"[DEBUG] Valores a guardar: business_name={pos.business_name}, address={pos.address}, phone={pos.phone}, email={pos.email}, website={pos.website}, rnc={pos.rnc}")
+            
+            pos.save()
+            logger.info(f"[DEBUG] PosConfiguration guardado exitosamente. user_id={request.user.id}, rnc={pos.rnc}")
+            
+        except Exception as e:
+            logger.error(f"[ERROR] Error al guardar PosConfiguration: {str(e)}", exc_info=True)
     
     def list(self, request):
         """
@@ -167,11 +200,14 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     
     def create(self, request):
         """Save barbershop settings con validaciones y auditoría"""
+        logger.info(f"[DEBUG] create() called. request.data={request.data}")
+        
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
         tenant = request.user.tenant
 
         # Campos auxiliares que no pertenecen al serializer principal.
         pos_config_data = data.pop('pos_config', None)
+        logger.info(f"[DEBUG] pos_config_data extraído: {pos_config_data}")
         confirmed_critical = bool(data.pop('confirmed_critical', False))
         data.pop('currency_locked', None)
         data.pop('currency_lock_reason', None)
@@ -282,11 +318,15 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     @requires_feature('custom_branding')
     def upload_logo(self, request):
         """Upload logo"""
+        tenant = getattr(request.user, 'tenant', None)
+        if not has_feature(tenant, 'custom_branding'):
+            raise PermissionDenied('Tu plan no incluye branding personalizado.')
+
         if 'logo' not in request.FILES:
             return Response({'error': 'No logo file provided'}, status=400)
         
         settings, created = BarbershopSettings.objects.get_or_create(
-            tenant=request.user.tenant
+            tenant=tenant
         )
         
         settings.logo = request.FILES['logo']

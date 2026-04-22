@@ -2,6 +2,7 @@ from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
 from rest_framework import status
 from functools import wraps
+from .plan_consistency import can_add_employee, can_add_user, tenant_has_feature
 
 class HasFeaturePermission(BasePermission):
     """
@@ -26,10 +27,9 @@ class HasFeaturePermission(BasePermission):
         if not tenant.subscription_plan:
             return False
             
-        features = tenant.subscription_plan.features or {}
         if not feature_name:
             return False
-        return features.get(feature_name, False)
+        return tenant_has_feature(tenant, feature_name, default=False)
 
 def requires_feature(feature_name):
     """
@@ -70,8 +70,7 @@ def requires_feature(feature_name):
                     status=status.HTTP_403_FORBIDDEN
                 )
                 
-            features = tenant.subscription_plan.features or {}
-            if not features.get(feature_name, False):
+            if not tenant_has_feature(tenant, feature_name, default=False):
                 return Response(
                     {"error": f"Feature '{feature_name}' not available in your plan"}, 
                     status=status.HTTP_403_FORBIDDEN
@@ -85,23 +84,13 @@ def check_user_limit(tenant):
     """
     Check if tenant can add more users
     """
-    if tenant.max_users == 0:  # Unlimited
-        return True
-    current_users = tenant.users.filter(is_active=True).count()
-    return current_users < tenant.max_users
+    return can_add_user(tenant)
 
 def check_employee_limit(tenant):
     """
     Check if tenant can add more employees
     """
-    if tenant.max_employees == 0:  # Unlimited
-        return True
-    # Assuming employees are users with ClientStaff role
-    current_employees = tenant.users.filter(
-        is_active=True, 
-        role='ClientStaff'
-    ).count()
-    return current_employees < tenant.max_employees
+    return can_add_employee(tenant)
 
 class IsSuperuserOrReadOnly(BasePermission):
     """

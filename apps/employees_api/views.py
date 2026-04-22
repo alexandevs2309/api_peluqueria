@@ -3,12 +3,11 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 from django.utils import timezone
-from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
-from apps.subscriptions_api.utils import get_user_active_subscription
-from apps.settings_api.utils import validate_employee_limit, maybe_auto_upgrade_employee_limit
+from apps.subscriptions_api.access_control import can_add_employee
+from apps.settings_api.utils import maybe_auto_upgrade_employee_limit
 from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer, AttendanceRecordSerializer
@@ -59,15 +58,17 @@ class EmployeeViewSet(TenantScopedViewSet):
             raise ValidationError("Usuario sin tenant asignado")
         
         tenant = self.request.tenant
+        current_count = tenant.employees.filter(is_active=True).count() if hasattr(tenant, 'employees') else 0
             
         # Validar límite de empleados según el plan
         plan_type = getattr(tenant, 'plan_type', 'basic')
-        if not validate_employee_limit(tenant, plan_type):
+        if not can_add_employee(tenant, current_count=current_count, amount=1):
             upgrade_result = maybe_auto_upgrade_employee_limit(tenant, changed_by=user)
             tenant.refresh_from_db(fields=['plan_type', 'subscription_plan', 'max_employees', 'max_users', 'settings', 'updated_at'])
             if upgrade_result.get('upgraded'):
                 plan_type = getattr(tenant, 'plan_type', plan_type)
-            if not validate_employee_limit(tenant, plan_type):
+            current_count = tenant.employees.filter(is_active=True).count() if hasattr(tenant, 'employees') else 0
+            if not can_add_employee(tenant, current_count=current_count, amount=1):
                 error_message = f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
                 if upgrade_result.get('reason') == 'no_higher_plan':
                     error_message = 'Ya se alcanzó el plan más alto disponible y no hay más capacidad automática para empleados.'
@@ -75,7 +76,10 @@ class EmployeeViewSet(TenantScopedViewSet):
                     error_message = f'Su plan {plan_type} no permite más empleados. Actualice su plan.'
                 raise ValidationError({
                     'error': 'Límite de empleados alcanzado',
-                    'message': error_message
+                    'message': error_message,
+                    'current': current_count,
+                    'limit': tenant.max_employees,
+                    'unlimited': tenant.max_employees == 0,
                 })
             
         serializer.save(tenant=tenant)

@@ -229,6 +229,48 @@ Run tests:pytest --cov=apps
 
 
 
+## Subscription Lifecycle Operations
+
+Use `sync_subscription_lifecycle` to audit or apply tenant subscription lifecycle transitions safely in production.
+
+Lifecycle supported:
+- `trial`
+- `active`
+- `past_due`
+- `suspended`
+- `archived`
+
+Safe dry-run audit:
+
+```powershell
+docker compose exec web python manage.py sync_subscription_lifecycle
+```
+
+Apply changes:
+
+```powershell
+docker compose exec web python manage.py sync_subscription_lifecycle --apply
+```
+
+Run for one tenant:
+
+```powershell
+docker compose exec web python manage.py sync_subscription_lifecycle --tenant-id 17
+```
+
+Include logically deleted tenants in the report:
+
+```powershell
+docker compose exec web python manage.py sync_subscription_lifecycle --include-deleted
+```
+
+What it does:
+- Moves expired `active` tenants into `past_due` while they are still inside the grace window
+- Moves overdue `past_due` tenants into `suspended`
+- Moves long-suspended tenants into `archived`
+- Preserves data and never deletes tenants automatically
+- Keeps `cancelled` as a legacy compatibility state
+
 🤝 Contributing
 We welcome contributions! Follow these steps:
 
@@ -257,8 +299,8 @@ Alexander del Rosario
 
 | Plan | Price | Max Employees | Max Users | Features |
 |------|-------|---------------|-----------|----------|
-| **Free** | $0 (7 days trial) | 2 | 3 | Appointments only |
-| **Basic** | $29.99/month | 5 | 10 | + Basic reports |
-| **Standard** | $49.99/month | 10 | 20 | + Inventory |
-| **Premium** | $79.99/month | 25 | 50 | + Advanced reports + Multi-location + Custom branding |
+| **Trial** | $0 (7 days) | 3 | 3 | Agenda, caja, historial y reportes basicos para evaluar la plataforma |
+| **Esencial** | $29.99/month | 8 | 16 | Agenda, caja, historial de clientes y reportes basicos |
+| **Crecimiento** | $69.99/month | 25 | 50 | + Inventario + Reportes avanzados + Multi-sucursal |
+| **Escala** | $129.99/month | Unlimited | Unlimited | + Logo personalizado + Atencion prioritaria + Acompanamiento comercial |
 | **Enterprise** | $149.99/month | Unlimited | Unlimited | + API access + Priority support |
