@@ -10,6 +10,17 @@ class IntegrationService:
     """Servicio para manejar integraciones basado en feature toggles"""
 
     @staticmethod
+    def _setting_or_env(system_value, env_name, settings_attr=None, default=''):
+        if system_value:
+            return system_value
+        env_value = os.getenv(env_name)
+        if env_value:
+            return env_value
+        if settings_attr:
+            return getattr(django_settings, settings_attr, default) or default
+        return default
+
+    @staticmethod
     def get_system_settings():
         """Obtener configuraciones del sistema"""
         return SystemSettings.get_settings()
@@ -58,11 +69,11 @@ class IntegrationService:
         if not system_settings.sendgrid_enabled:
             return False
 
-        smtp_host = system_settings.smtp_host
-        smtp_port = system_settings.smtp_port
-        smtp_username = system_settings.smtp_username
-        smtp_password = system_settings.smtp_password
-        from_email = system_settings.from_email
+        smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
+        smtp_port = system_settings.smtp_port or int(os.getenv('EMAIL_PORT') or getattr(django_settings, 'EMAIL_PORT', 0) or 0)
+        smtp_username = IntegrationService._setting_or_env(system_settings.smtp_username, 'EMAIL_HOST_USER', 'EMAIL_HOST_USER')
+        smtp_password = IntegrationService._setting_or_env(system_settings.smtp_password, 'EMAIL_HOST_PASSWORD', 'EMAIL_HOST_PASSWORD')
+        from_email = IntegrationService._setting_or_env(system_settings.from_email, 'DEFAULT_FROM_EMAIL', 'DEFAULT_FROM_EMAIL')
 
         api_key = os.getenv('SENDGRID_API_KEY')
         using_smtp = bool(smtp_host and smtp_port and smtp_username and smtp_password and from_email)
@@ -103,6 +114,7 @@ class IntegrationService:
             system_settings.aws_s3_enabled
             and bool(os.getenv('AWS_ACCESS_KEY_ID'))
             and bool(os.getenv('AWS_SECRET_ACCESS_KEY'))
+            and bool(os.getenv('AWS_STORAGE_BUCKET_NAME'))
         )
 
     @staticmethod
@@ -135,11 +147,14 @@ class IntegrationService:
             from django.core.mail import send_mail, get_connection
             system_settings = IntegrationService.get_system_settings()
 
-            smtp_host = system_settings.smtp_host
-            smtp_port = system_settings.smtp_port
-            smtp_username = system_settings.smtp_username
-            smtp_password = system_settings.smtp_password
-            from_email = system_settings.from_email or django_settings.DEFAULT_FROM_EMAIL
+            smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
+            smtp_port = system_settings.smtp_port or int(os.getenv('EMAIL_PORT') or getattr(django_settings, 'EMAIL_PORT', 0) or 0)
+            smtp_username = IntegrationService._setting_or_env(system_settings.smtp_username, 'EMAIL_HOST_USER', 'EMAIL_HOST_USER')
+            smtp_password = IntegrationService._setting_or_env(system_settings.smtp_password, 'EMAIL_HOST_PASSWORD', 'EMAIL_HOST_PASSWORD')
+            from_email = (
+                IntegrationService._setting_or_env(system_settings.from_email, 'DEFAULT_FROM_EMAIL', 'DEFAULT_FROM_EMAIL')
+                or django_settings.DEFAULT_FROM_EMAIL
+            )
             from_name = system_settings.from_name
 
             use_ssl = smtp_port == 465

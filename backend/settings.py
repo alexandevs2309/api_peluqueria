@@ -398,7 +398,13 @@ if (BASE_DIR / 'static').exists():
     STATICFILES_DIRS.append(BASE_DIR / 'static')
 
 MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
+_is_render = env.bool('RENDER', default=bool(os.getenv('RENDER')))
+_default_media_root = '/var/data/media' if _is_render else str(BASE_DIR / 'media')
+MEDIA_ROOT = Path(env('MEDIA_ROOT', default=_default_media_root))
+
+# En entornos tipo Render el path por defecto del código es efímero.
+# Si no hay S3, al menos garantizamos que el directorio local exista.
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
