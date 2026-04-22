@@ -417,6 +417,8 @@ MEDIA_ROOT = Path(env('MEDIA_ROOT', default=_default_media_root))
 
 # En entornos tipo Render el path por defecto del código es efímero.
 # Si no hay S3, al menos garantizamos que el directorio local exista.
+USE_CLOUDINARY = env.bool("USE_CLOUDINARY", default=False)
+
 if not USE_CLOUDINARY:
     os.makedirs(MEDIA_ROOT, exist_ok=True)
 
