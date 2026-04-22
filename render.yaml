@@ -8,7 +8,7 @@ services:
     healthCheckPath: /api/healthz/
     envVars:
       - key: PYTHON_VERSION
-        value: "3.12"
+        value: "3.12.8"
       - key: DEBUG
         value: "False"
       - key: DJANGO_SETTINGS_MODULE
