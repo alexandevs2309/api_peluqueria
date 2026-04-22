@@ -118,6 +118,16 @@ class IntegrationService:
         )
 
     @staticmethod
+    def is_cloudinary_enabled():
+        """Verificar si Cloudinary esta habilitado para media storage"""
+        return bool(
+            getattr(django_settings, 'USE_CLOUDINARY', False)
+            and os.getenv('CLOUDINARY_CLOUD_NAME')
+            and os.getenv('CLOUDINARY_API_KEY')
+            and os.getenv('CLOUDINARY_API_SECRET')
+        )
+
+    @staticmethod
     def get_integration_status():
         """Obtener estado de todas las integraciones"""
         return {
@@ -126,6 +136,7 @@ class IntegrationService:
             'twilio': IntegrationService.is_twilio_enabled(),
             'sendgrid': IntegrationService.is_sendgrid_enabled(),
             'aws_s3': IntegrationService.is_aws_s3_enabled(),
+            'cloudinary': IntegrationService.is_cloudinary_enabled(),
         }
 
     @staticmethod

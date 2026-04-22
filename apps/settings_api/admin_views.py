@@ -307,6 +307,15 @@ class SystemMonitorView(views.APIView):
     def _check_storage(self):
         started = time.perf_counter()
         media_root = getattr(settings, 'MEDIA_ROOT', None)
+        if IntegrationService.is_cloudinary_enabled():
+            cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME', '')
+            return {
+                'status': 'up',
+                'last_check': timezone.now().isoformat(),
+                'response_time': self._elapsed_ms(started),
+                'details': f'Cloudinary configurado para media storage ({cloud_name})'
+            }
+
         if IntegrationService.is_aws_s3_enabled():
             bucket_name = (
                 os.getenv('AWS_STORAGE_BUCKET_NAME')
