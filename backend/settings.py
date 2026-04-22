@@ -77,6 +77,9 @@ INSTALLED_APPS = [
     'rest_framework_simplejwt.token_blacklist',    
     'celery',
     'django_celery_beat',
+    "cloudinary",
+    "cloudinary_storage",
+
 
 # Apps personalizadas (auth_api PRIMERO)
     'apps.auth_api',
@@ -267,6 +270,16 @@ CACHES = {
     }
 }
 
+
+import os
+
+CLOUDINARY_STORAGE = {
+    "CLOUD_NAME": os.getenv("CLOUDINARY_CLOUD_NAME"),
+    "API_KEY": os.getenv("CLOUDINARY_API_KEY"),
+    "API_SECRET": os.getenv("CLOUDINARY_API_SECRET"),
+}
+
+DEFAULT_FILE_STORAGE = "cloudinary_storage.storage.MediaCloudinaryStorage"
 # Session engine using Redis cache
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
