@@ -314,15 +314,6 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.notifications_api.tasks.notify_upcoming_appointments',
         'schedule': crontab(minute=0),  # Cada hora
     },
-    # Tareas existentes de notificaciones
-    'send-appointment-reminders': {
-        'task': 'apps.notifications_api.tasks.send_appointment_reminders',
-        'schedule': crontab(hour=18, minute=0),  # Diario a las 6:00 PM
-    },
-    'process-scheduled-notifications': {
-        'task': 'apps.notifications_api.tasks.process_scheduled_notifications',
-        'schedule': crontab(minute='*/15'),  # Cada 15 minutos
-    },
     'cleanup-old-notifications': {
         'task': 'apps.notifications_api.tasks.cleanup_old_notifications',
         'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Domingos a las 3:00 AM
