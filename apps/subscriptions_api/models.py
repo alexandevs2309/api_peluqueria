@@ -28,6 +28,7 @@ class SubscriptionPlan(models.Model):
         help_text="Stripe Price ID (ej: price_...) para cobro recurrente"
     )
     is_active = models.BooleanField(default=True)
+    is_public = models.BooleanField(default=True, help_text="Visible y elegible en catalogo publico y onboarding")
     max_employees = models.PositiveIntegerField(default=0)
     max_users = models.PositiveIntegerField(default=0)
     allows_multiple_branches = models.BooleanField(default=False, help_text="Permite multiples sucursales")

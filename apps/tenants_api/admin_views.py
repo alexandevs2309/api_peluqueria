@@ -5,6 +5,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Q, Count
 from apps.auth_api.models import User
 from apps.auth_api.serializers import UserListSerializer
+from apps.auth_api.role_utils import get_effective_role_name
 from apps.core.permissions import IsSuperAdmin
 from apps.roles_api.models import Role, UserRole
 from .models import Tenant
@@ -135,12 +136,17 @@ class AdminUserManagementViewSet(viewsets.ModelViewSet):
             
             # Usuarios por rol (usando campo role directamente)
             users_by_role = []
-            role_counts = queryset.values('role').annotate(count=Count('role'))
-            for item in role_counts:
-                if item['role'] and item['role'] != 'SuperAdmin':
+            role_counts: dict[str, int] = {}
+            for user in queryset.select_related('tenant').prefetch_related('roles'):
+                role_name = get_effective_role_name(user, tenant=user.tenant)
+                if role_name and role_name != 'SuperAdmin':
+                    role_counts[role_name] = role_counts.get(role_name, 0) + 1
+
+            for role_name, count in sorted(role_counts.items()):
+                if role_name:
                     users_by_role.append({
-                        'role': item['role'],
-                        'count': item['count']
+                        'role': role_name,
+                        'count': count
                     })
             
             # Usuarios por tenant
@@ -160,7 +166,7 @@ class AdminUserManagementViewSet(viewsets.ModelViewSet):
                     'email': user.email,
                     'full_name': user.full_name,
                     'tenant': user.tenant.name if user.tenant else None,
-                    'role': user.role,
+                    'role': get_effective_role_name(user, tenant=user.tenant),
                     'created_at': user.date_joined.isoformat()
                 })
             

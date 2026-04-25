@@ -12,7 +12,7 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = SubscriptionPlan
         fields = [
-            'id', 'name', 'display_name', 'description', 'price', 'duration_month', 'stripe_price_id', 'is_active',
+            'id', 'name', 'display_name', 'description', 'price', 'duration_month', 'stripe_price_id', 'is_active', 'is_public',
             'max_employees', 'max_users', 'allows_multiple_branches', 'features', 'commercial_benefits',
             'features_list', 'created_at', 'updated_at'
         ]

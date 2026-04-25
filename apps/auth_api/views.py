@@ -25,7 +25,7 @@ from .serializers import (
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
     EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input
 )
-from .role_utils import normalize_role_for_api
+from .role_utils import normalize_role_for_api, get_effective_role_name, get_effective_role_api
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -302,7 +302,7 @@ class LoginView(generics.GenericAPIView):
         user = serializer.validated_data['user']
         tenant = serializer.validated_data['tenant']
 
-        user_role_api = normalize_role_for_api(user.role, is_superuser=user.is_superuser)
+        user_role_api = get_effective_role_api(user, tenant=tenant)
         if not tenant and user_role_api != 'SUPER_ADMIN':
             return Response({"detail": "Usuario sin tenant asignado. Contacte al administrador."}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -356,9 +356,7 @@ class LoginView(generics.GenericAPIView):
             timestamp=now()
         )
 
-        user_role = normalize_role_for_api(user.role, is_superuser=user.is_superuser)
-        if not user_role and user.roles.exists():
-            user_role = normalize_role_for_api(user.roles.first().name, is_superuser=user.is_superuser)
+        user_role = get_effective_role_api(user, tenant=tenant)
         
         response_data = {
             'user': {
@@ -815,9 +813,7 @@ class MFALoginVerifyView(APIView):
             timestamp=now()
         )
 
-        user_role = normalize_role_for_api(user.role, is_superuser=user.is_superuser)
-        if not user_role and user.roles.exists():
-            user_role = normalize_role_for_api(user.roles.first().name, is_superuser=user.is_superuser)
+        user_role = get_effective_role_api(user, tenant=tenant)
 
         response_data = {
             'user': {
@@ -881,9 +877,10 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def _is_tenant_admin_or_superuser(self, request) -> bool:
         """Solo SuperAdmin o Client-Admin pueden gestionar usuarios."""
-        if request.user.is_superuser:
-            return True
-        return (request.user.role or '') == 'Client-Admin'
+        return get_effective_role_name(
+            request.user,
+            tenant=self._get_request_tenant(),
+        ) in {'SuperAdmin', 'Client-Admin'}
     
     def destroy(self, request, *args, **kwargs):
         """Override destroy to add logging and proper deletion"""
@@ -982,17 +979,18 @@ class UserViewSet(viewsets.ModelViewSet):
         
         # ✅ VALIDACIÓN DE JERARQUÍA DE ROLES
         requested_role = request.data.get('role')
+        actor_role = get_effective_role_name(request.user, tenant=self._get_request_tenant()) or 'Client-Staff'
         if requested_role:
             is_valid, error_msg = validate_role_assignment(
-                creator_role=request.user.role or 'Client-Staff',
+                creator_role=actor_role,
                 target_role=requested_role,
                 creator_is_superuser=request.user.is_superuser
             )
             if not is_valid:
                 return Response({
                     'error': error_msg,
-                    'your_role': request.user.role,
-                    'allowed_roles': get_allowed_roles(request.user.role, request.user.is_superuser)
+                    'your_role': actor_role,
+                    'allowed_roles': get_allowed_roles(actor_role, request.user.is_superuser)
                 }, status=status.HTTP_403_FORBIDDEN)
         
         serializer = self.get_serializer(data=request.data)
@@ -1069,9 +1067,11 @@ class UserViewSet(viewsets.ModelViewSet):
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
         # ✅ VALIDAR QUE PUEDE MODIFICAR ESTE USUARIO
+        actor_role = get_effective_role_name(request.user, tenant=self._get_request_tenant()) or 'Client-Staff'
+        target_role = get_effective_role_name(instance, tenant=instance.tenant) or 'Client-Staff'
         can_modify, error_msg = can_modify_user(
-            modifier_role=request.user.role or 'Client-Staff',
-            target_user_role=instance.role or 'Client-Staff',
+            modifier_role=actor_role,
+            target_user_role=target_role,
             modifier_is_superuser=request.user.is_superuser
         )
         if not can_modify:
@@ -1081,15 +1081,15 @@ class UserViewSet(viewsets.ModelViewSet):
         if 'role' in request.data:
             new_role = request.data.get('role')
             is_valid, error_msg = validate_role_assignment(
-                creator_role=request.user.role or 'Client-Staff',
+                creator_role=actor_role,
                 target_role=new_role,
                 creator_is_superuser=request.user.is_superuser
             )
             if not is_valid:
                 return Response({
                     'error': error_msg,
-                    'your_role': request.user.role,
-                    'allowed_roles': get_allowed_roles(request.user.role, request.user.is_superuser)
+                    'your_role': actor_role,
+                    'allowed_roles': get_allowed_roles(actor_role, request.user.is_superuser)
                 }, status=status.HTTP_403_FORBIDDEN)
         
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
@@ -1208,6 +1208,6 @@ class VerifyAuthView(APIView):
             'user': {
                 'id': request.user.id,
                 'email': request.user.email,
-                'role': normalize_role_for_api(request.user.role, is_superuser=request.user.is_superuser)
+                'role': get_effective_role_api(request.user, tenant=getattr(request, 'tenant', None))
             }
         })

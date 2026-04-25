@@ -110,15 +110,16 @@ class Tenant(models.Model):
                 self.max_employees = plan.max_employees
                 self.max_users = plan.max_users
             
-            # TODOS los planes empiezan con trial (solo en creación)
+            # El trial es un estado promocional del tenant, no un producto.
+            # Se aplica al onboarding inicial sobre el plan comercial elegido.
             if not self.pk:
                 self.subscription_status = 'trial'
-                
-                if plan.name == 'enterprise':
-                    trial_days = 14
-                else:  # basic, standard, premium
+                trial_days = 7
+                try:
+                    from apps.settings_api.models import SystemSettings
+                    trial_days = max(0, int(SystemSettings.get_settings().trial_days or 0))
+                except Exception:
                     trial_days = 7
-                    
                 self.trial_end_date = timezone.now().date() + timedelta(days=trial_days)
             
             if should_refresh_plan_snapshot:

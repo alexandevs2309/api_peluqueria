@@ -4,16 +4,21 @@ from apps.services_api.models import Service
 from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from apps.services_api.serializers import ServiceSerializer
 from django.contrib.auth import get_user_model
+from apps.auth_api.role_utils import get_effective_role_api
 
 User = get_user_model()
 
 class UserBasicSerializer(serializers.ModelSerializer):
     first_name = serializers.SerializerMethodField()
     last_name = serializers.SerializerMethodField()
+    role = serializers.SerializerMethodField()
     
     class Meta:
         model = User
         fields = ['id', 'email', 'full_name', 'first_name', 'last_name', 'role']
+
+    def get_role(self, obj):
+        return get_effective_role_api(obj, tenant=getattr(obj, 'tenant', None))
     
     def get_first_name(self, obj):
         if obj.full_name:
@@ -53,7 +58,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 'full_name': instance.user.full_name or '',
                 'first_name': first_name,
                 'last_name': last_name,
-                'role': instance.user.role or 'Sin rol'
+                'role': get_effective_role_api(instance.user, tenant=getattr(instance.user, 'tenant', None)) or 'Sin rol'
             }
         return data
 

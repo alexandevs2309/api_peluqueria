@@ -1,5 +1,24 @@
 from rest_framework import permissions
-from apps.roles_api.models import UserRole
+from apps.auth_api.role_utils import get_effective_role_name
+
+
+def _resolve_tenant(request):
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None:
+        return tenant
+    user = getattr(request, 'user', None)
+    if user and getattr(user, 'is_authenticated', False):
+        return getattr(user, 'tenant', None)
+    return None
+
+
+def _matches_role(role_name, *candidates):
+    aliases = {
+        'Admin': 'Client-Admin',
+        'Stylist': 'Estilista',
+    }
+    normalized = aliases.get(role_name, role_name)
+    return normalized in candidates
 
 class RolePermission(permissions.BasePermission):
     def __init__(self, allowed_roles=None):
@@ -10,8 +29,9 @@ class RolePermission(permissions.BasePermission):
             return False
         if request.user.is_superuser:
             return True
-        user_roles_names = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
-        return any(role in self.allowed_roles for role in user_roles_names)
+        tenant = _resolve_tenant(request)
+        role_name = get_effective_role_name(request.user, tenant=tenant)
+        return any(_matches_role(role_name, role) for role in self.allowed_roles)
 
 def role_permission_for(roles):
     return type(
@@ -28,14 +48,17 @@ class IsAdminOrOwnStylist(permissions.BasePermission):
             return False
         if request.user.is_superuser:
             return True
-        user_roles_names = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
+        tenant = _resolve_tenant(request)
+        role_name = get_effective_role_name(request.user, tenant=tenant)
         # Permitir solo a Admin para crear o modificar
         if hasattr(view, 'action') and view.action in ['create', 'update', 'partial_update', 'destroy']:
-            return 'Admin' in user_roles_names
+            return _matches_role(role_name, 'Admin', 'Client-Admin')
         # Para otras acciones permitir Admin o Stylist
-        return any(role in ['Admin', 'Stylist'] for role in user_roles_names)
+        return _matches_role(role_name, 'Admin', 'Client-Admin', 'Stylist', 'Estilista')
 
     def has_object_permission(self, request, view, obj):
-        if UserRole.objects.filter(user=request.user, role__name='Admin').exists():
+        tenant = _resolve_tenant(request)
+        role_name = get_effective_role_name(request.user, tenant=tenant)
+        if _matches_role(role_name, 'Admin', 'Client-Admin'):
             return True
         return obj.user == request.user

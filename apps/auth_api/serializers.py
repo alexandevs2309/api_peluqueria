@@ -7,7 +7,7 @@ from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.core.exceptions import MultipleObjectsReturned
 from .models import ActiveSession
-from .role_utils import normalize_role_for_api
+from .role_utils import normalize_role_for_api, get_effective_role_api
 from .settings_policy import (
     get_password_min_length,
     is_email_verification_required,
@@ -280,7 +280,7 @@ class UserListSerializer(serializers.ModelSerializer):
         return obj.avatar.url if obj.avatar else None
 
     def get_role(self, obj):
-        return normalize_role_for_api(getattr(obj, 'role', None), is_superuser=getattr(obj, 'is_superuser', False))
+        return get_effective_role_api(obj, tenant=getattr(obj, 'tenant', None))
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod

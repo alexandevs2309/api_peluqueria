@@ -22,6 +22,7 @@ from apps.roles_api.models import Role, UserRole
 from rest_framework.throttling import UserRateThrottle
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
 from apps.core.permissions import IsSuperAdmin
+from apps.auth_api.role_utils import get_effective_role_name
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 logger = logging.getLogger(__name__)
@@ -137,7 +138,7 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='public-catalog', permission_classes=[AllowAny])
     def public_catalog(self, request):
-        plans = self.get_queryset().filter(is_active=True).order_by('price')
+        plans = self.get_queryset().filter(is_active=True, is_public=True).order_by('price')
         serializer = PublicSubscriptionPlanSerializer(plans, many=True)
         return Response(serializer.data)
 
@@ -312,7 +313,7 @@ class MyEntitlementsView(APIView):
 
     def get(self, request):
         # Para Super-Admin, devolver entitlements limitados (no exponer capacidades)
-        if request.user.is_superuser or request.user.role == 'SuperAdmin':
+        if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
             return Response({
                 "plan": "admin",
                 "plan_display": "Plan Administrativo",
@@ -679,7 +680,7 @@ class RenewSubscriptionView(APIView):
     def get(self, request):
         """Obtener información de renovación"""
         # SuperAdmin no necesita renovar suscripción
-        if request.user.is_superuser or request.user.role == 'SuperAdmin':
+        if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
             return Response({
                 'tenant_name': 'Sistema Administrativo',
                 'current_status': 'active',
@@ -695,7 +696,7 @@ class RenewSubscriptionView(APIView):
             return Response({'error': 'No tenant found'}, status=400)
         
         # Obtener planes disponibles
-        plans = SubscriptionPlan.objects.filter(is_active=True)
+        plans = SubscriptionPlan.objects.filter(is_active=True, is_public=True)
         plans_data = SubscriptionPlanSerializer(plans, many=True).data
         access_level = tenant.get_access_level()
         days_in_grace = 0
@@ -715,7 +716,7 @@ class RenewSubscriptionView(APIView):
     def post(self, request):
         """Renovar suscripción con pago real"""
         # SuperAdmin no necesita renovar suscripción
-        if request.user.is_superuser or request.user.role == 'SuperAdmin':
+        if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
             return Response({'error': 'SuperAdmin does not need subscription renewal'}, status=400)
             
         tenant = request.user.tenant

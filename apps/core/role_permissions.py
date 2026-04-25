@@ -2,6 +2,7 @@
 Permisos adicionales para control de acceso por rol
 """
 from rest_framework.permissions import BasePermission
+from apps.auth_api.role_utils import get_effective_role_name
 
 
 class IsAdminRole(BasePermission):
@@ -12,10 +13,10 @@ class IsAdminRole(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        if request.user.is_superuser:
-            return True
-        
-        return request.user.role in ['Client-Admin', 'SuperAdmin', 'Super-Admin']
+        return get_effective_role_name(
+            request.user,
+            tenant=getattr(request, 'tenant', None),
+        ) in ['Client-Admin', 'SuperAdmin']
 
 
 class CanManageUsers(BasePermission):
@@ -26,11 +27,10 @@ class CanManageUsers(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         
-        if request.user.is_superuser:
-            return True
-        
-        # Solo Client-Admin y Manager pueden gestionar usuarios
-        return request.user.role in ['Client-Admin', 'Manager']
+        return get_effective_role_name(
+            request.user,
+            tenant=getattr(request, 'tenant', None),
+        ) in ['Client-Admin', 'Manager', 'SuperAdmin']
 
 
 class IsReadOnlyOrAdmin(BasePermission):
@@ -46,7 +46,7 @@ class IsReadOnlyOrAdmin(BasePermission):
             return True
         
         # Escritura solo para admins
-        if request.user.is_superuser:
-            return True
-        
-        return request.user.role in ['Client-Admin', 'Manager']
+        return get_effective_role_name(
+            request.user,
+            tenant=getattr(request, 'tenant', None),
+        ) in ['Client-Admin', 'Manager', 'SuperAdmin']

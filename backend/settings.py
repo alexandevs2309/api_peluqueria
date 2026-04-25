@@ -194,9 +194,10 @@ CSRF_TRUSTED_ORIGINS = env.list(
 
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://.*\.netlify\.app$",
-]
+CORS_ALLOWED_ORIGIN_REGEXES = env.list(
+    'CORS_ALLOWED_ORIGIN_REGEXES',
+    default=[],
+)
 SPECTACULAR_SETTINGS = {
     'TITLE': 'Sistema de Gestión de Peluquería API',
     'DESCRIPTION': 'API para la gestión de citas, clientes, empleados y servicios de peluquería',
@@ -377,6 +378,8 @@ LANGUAGE_CODE = 'es'
 LANGUAGES = [
     ('es', _('Spanish')),
     ('en', _('English')),
+    ('fr',_('France')),
+    
 ]
 
 LOCALE_PATHS = [

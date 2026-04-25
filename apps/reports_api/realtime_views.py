@@ -2,6 +2,8 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.subscriptions_api.permissions import requires_feature
+from apps.subscriptions_api.access_control import has_feature
 from django.db.models import Count, Sum, F
 from django.utils import timezone
 from datetime import timedelta
@@ -11,6 +13,7 @@ from apps.clients_api.models import Client
 
 @api_view(['GET'])
 @permission_classes([TenantPermissionByAction])
+@requires_feature('basic_reports')
 def realtime_metrics(request):
     realtime_metrics.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """Métricas en tiempo real para dashboard"""
@@ -87,6 +90,7 @@ def realtime_metrics(request):
 
 @api_view(['GET'])
 @permission_classes([TenantPermissionByAction])
+@requires_feature('basic_reports')
 def live_dashboard_data(request):
     live_dashboard_data.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """Datos para dashboard en vivo"""
@@ -150,6 +154,7 @@ def live_dashboard_data(request):
 
 @api_view(['GET'])
 @permission_classes([TenantPermissionByAction])
+@requires_feature('basic_reports')
 def performance_alerts(request):
     performance_alerts.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """Alertas de rendimiento y oportunidades"""
@@ -206,21 +211,22 @@ def performance_alerts(request):
             'action': 'Revisar política de cancelaciones'
         })
     
-    # Verificar stock bajo
-    from apps.inventory_api.models import Product
-    low_stock_products = Product.objects.filter(
-        tenant=tenant,
-        stock__lte=F('min_stock'),
-        is_active=True
-    ).count()
-    
-    if low_stock_products > 0:
-        alerts.append({
-            'type': 'inventory_low',
-            'message': f'{low_stock_products} productos con stock bajo',
-            'severity': 'info',
-            'action': 'Revisar inventario y hacer pedidos'
-        })
+    # Verificar stock bajo solo si el plan incluye inventario.
+    if has_feature(tenant, 'inventory'):
+        from apps.inventory_api.models import Product
+        low_stock_products = Product.objects.filter(
+            tenant=tenant,
+            stock__lte=F('min_stock'),
+            is_active=True
+        ).count()
+        
+        if low_stock_products > 0:
+            alerts.append({
+                'type': 'inventory_low',
+                'message': f'{low_stock_products} productos con stock bajo',
+                'severity': 'info',
+                'action': 'Revisar inventario y hacer pedidos'
+            })
     
     return Response({
         'alerts': alerts,

@@ -178,8 +178,9 @@ class CookieLoginView(APIView):
             message="Login con cookies exitoso"
         )
         
-        # Respuesta con datos del usuario
-        user_role = (user.role or 'Client-Staff').upper().replace('-', '_')
+        # Respuesta con datos del usuario usando el rol efectivo.
+        from .role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=tenant)
 
         response_data = {
             'user': {

@@ -8,6 +8,7 @@ from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfigurati
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
 from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.auth_api.role_utils import get_effective_role_name
 
 class PayrollViewSet(viewsets.ViewSet):
     """ViewSet para gestión de nómina"""
@@ -24,7 +25,8 @@ class PayrollViewSet(viewsets.ViewSet):
     
     def _require_admin_role(self, request):
         """Validar que el usuario tenga rol de administrador"""
-        if not request.user.roles.filter(name__in=['Super-Admin', 'Client-Admin']).exists():
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if get_effective_role_name(request.user, tenant=tenant) not in {'SuperAdmin', 'Client-Admin'}:
             raise PermissionDenied("No autorizado para operaciones de nómina.")
     
     def get_queryset(self):

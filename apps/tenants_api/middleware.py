@@ -10,6 +10,7 @@ import logging
 
 from django.contrib.gis.geoip2 import GeoIP2
 from apps.auth_api.utils import get_client_ip
+from apps.auth_api.role_utils import get_effective_role_name
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +23,7 @@ class TenantMiddleware(MiddlewareMixin):
     def _is_superadmin(user) -> bool:
         if not getattr(user, 'is_authenticated', False):
             return False
-        return bool(
-            getattr(user, 'is_superuser', False) or
-            getattr(user, 'role', '') == 'super_admin' or
-            getattr(user, 'role', '') == 'SuperAdmin'
-        )
+        return get_effective_role_name(user) == 'SuperAdmin'
 
     @staticmethod
     def _inactive_tenant_response(tenant=None):

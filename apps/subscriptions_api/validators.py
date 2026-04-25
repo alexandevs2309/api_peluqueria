@@ -1,5 +1,6 @@
 from rest_framework.exceptions import ValidationError
 from .utils import get_user_active_subscription
+from apps.auth_api.role_utils import get_effective_role_name
 
 class SubscriptionLimitValidator:
     """Validador para límites de suscripción"""
@@ -8,9 +9,10 @@ class SubscriptionLimitValidator:
     def validate_employee_limit(user, tenant=None):
         """Valida límite de empleados según el plan"""
         from apps.employees_api.models import Employee
+        current_tenant = tenant or getattr(user, 'tenant', None)
         
         # Super-Admin sin límites
-        if user.roles.filter(name='Super-Admin').exists():
+        if get_effective_role_name(user, tenant=current_tenant) == 'SuperAdmin':
             return True
             
         # Obtener suscripción activa
@@ -26,7 +28,6 @@ class SubscriptionLimitValidator:
             return True
             
         # Contar empleados actuales
-        current_tenant = tenant or getattr(user, 'tenant', None)
         if not current_tenant:
             return True
             
@@ -44,9 +45,10 @@ class SubscriptionLimitValidator:
     def validate_client_limit(user, tenant=None):
         """Valida límite de clientes según el plan"""
         from apps.clients_api.models import Client
+        current_tenant = tenant or getattr(user, 'tenant', None)
         
         # Super-Admin sin límites
-        if user.roles.filter(name='Super-Admin').exists():
+        if get_effective_role_name(user, tenant=current_tenant) == 'SuperAdmin':
             return True
             
         subscription = get_user_active_subscription(user)
@@ -58,7 +60,6 @@ class SubscriptionLimitValidator:
         if max_clients == 0:
             return True
             
-        current_tenant = tenant or getattr(user, 'tenant', None)
         if not current_tenant:
             return True
             
@@ -78,9 +79,10 @@ class SubscriptionLimitValidator:
         from apps.appointments_api.models import Appointment
         from django.utils import timezone
         from datetime import datetime
+        current_tenant = tenant or getattr(user, 'tenant', None)
         
         # Super-Admin sin límites
-        if user.roles.filter(name='Super-Admin').exists():
+        if get_effective_role_name(user, tenant=current_tenant) == 'SuperAdmin':
             return True
             
         subscription = get_user_active_subscription(user)
@@ -94,7 +96,6 @@ class SubscriptionLimitValidator:
         if max_appointments == 0:
             return True
             
-        current_tenant = tenant or getattr(user, 'tenant', None)
         if not current_tenant:
             return True
             

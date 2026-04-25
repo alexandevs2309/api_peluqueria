@@ -11,6 +11,10 @@ from django.utils import timezone
 from datetime import timedelta
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import UserSubscription
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
@@ -68,59 +72,20 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def mark_as_paid(self, request, pk=None):
-        """Marcar factura como pagada (SuperAdmin o propietario)"""
-        from django.db import transaction
-        from django.contrib.contenttypes.models import ContentType
-        from apps.audit_api.models import AuditLog
-        
-        with transaction.atomic():
-            # 🔒 Bloqueo real de fila
-            invoice = Invoice.objects.select_for_update().get(pk=pk)
-
-            # Validación de ownership dentro del lock
-            if not request.user.is_superuser:
-                if invoice.user != request.user:
-                    if not (hasattr(request.user, 'tenant') and invoice.user and invoice.user.tenant_id == request.user.tenant_id):
-                        return Response(
-                            {'error': 'No tienes permiso para modificar esta factura.'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-            
-            # Validar doble pago dentro del lock
-            if invoice.is_paid:
-                return Response(
-                    {'error': 'La factura ya está pagada.'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            # Validar período cerrado
-            if invoice.issued_at < timezone.now() - timedelta(days=90):
-                return Response(
-                    {'error': 'No se puede modificar una factura de período cerrado.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            # Aplicar cambios controlados
-            invoice.is_paid = True
-            invoice.paid_at = timezone.now()
-            invoice.status = 'paid'
-            
-            invoice.save(update_fields=['is_paid', 'paid_at', 'status'])
-            
-            # Mantener auditoría obligatoria
-            AuditLog.objects.create(
-                user=request.user,
-                action='MARK_PAID',
-                description=f'Marcó factura #{invoice.id} como pagada',
-                content_type=ContentType.objects.get_for_model(invoice),
-                object_id=invoice.id,
-                ip_address=request.META.get('REMOTE_ADDR'),
-                user_agent=request.META.get('HTTP_USER_AGENT', ''),
-                source='SYSTEM',
-                extra_data={'amount': str(invoice.amount)}
-            )
-        
-        return Response({'message': 'Factura marcada como pagada correctamente.'})
+        """Deshabilitado: el estado paid solo puede venir de webhooks verificados."""
+        invoice = self.get_object()
+        logger.warning(
+            "Blocked manual invoice mark_as_paid invoice_id=%s user_id=%s",
+            invoice.id,
+            request.user.id,
+        )
+        return Response(
+            {
+                'error': 'Manual invoice settlement is disabled.',
+                'detail': 'Invoices are marked as paid only by verified provider webhooks.'
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
     
     def perform_create(self, serializer):
         from rest_framework.exceptions import ValidationError
@@ -151,57 +116,20 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'], url_path='pay')
     def pay(self, request, pk=None):
-        from django.db import transaction
-        
-        try:
-            with transaction.atomic():
-                # 🔒 Lock de fila para prevenir race condition
-                invoice = Invoice.objects.select_for_update().get(pk=pk)
-
-                # Validar dentro del lock
-                if not request.user.is_superuser:
-                    if invoice.user != request.user:
-                        if not (hasattr(request.user, 'tenant') and invoice.user and invoice.user.tenant_id == request.user.tenant_id):
-                            return Response(
-                                {'detail': 'No tienes permiso para modificar esta factura.'},
-                                status=status.HTTP_403_FORBIDDEN
-                            )
-
-                if invoice.is_paid:
-                    return Response(
-                        {'detail': 'Esta factura ya fue pagada.'},
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                
-                # Simulación del intento de pago
-                PaymentAttempt.objects.create(
-                    invoice=invoice, 
-                    success=True,
-                    status='success',
-                    message="Pago simulado exitoso."
-                )
-
-                invoice.is_paid = True
-                invoice.paid_at = timezone.now()
-                invoice.status = 'paid'
-                invoice.save(update_fields=['is_paid', 'paid_at', 'status'])
-            
-            return Response({
-                'detail': 'Pago exitoso.',
-                'invoice_id': invoice.id,
-                'amount': str(invoice.amount)
-            }, status=status.HTTP_200_OK)
-            
-        except Invoice.DoesNotExist:
-            return Response(
-                {'detail': 'Factura no encontrada.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        except Exception as e:
-            return Response(
-                {'detail': f'Error al procesar el pago: {str(e)}'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        """Deshabilitado: no se permite pagar facturas por simulación local."""
+        invoice = self.get_object()
+        logger.warning(
+            "Blocked simulated invoice payment invoice_id=%s user_id=%s",
+            invoice.id,
+            request.user.id,
+        )
+        return Response(
+            {
+                'error': 'Direct invoice payment is disabled.',
+                'detail': 'Use the provider checkout flow and verified billing webhooks instead.'
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
 
     @action(detail=False, methods=['post'], url_path='generate-for-tenant')
     def generate_for_tenant(self, request):

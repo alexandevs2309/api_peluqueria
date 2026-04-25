@@ -6,8 +6,19 @@ from apps.subscriptions_api.models import UserSubscription
 from django.core.cache import cache
 import logging
 from apps.tenants_api.subscription_lifecycle import sync_subscription_state
+from apps.auth_api.role_utils import get_effective_role_name
 
 logger = logging.getLogger(__name__)
+
+BILLING_WEBHOOK_PATHS = [
+    '/api/billing/webhooks/stripe/',
+    '/api/payments/stripe/webhook/',
+]
+
+BILLING_ACCESS_PATHS = [
+    '/api/payments/payments/create_subscription_payment/',
+    '/api/subscriptions/renew/',
+]
 
 class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
@@ -15,6 +26,10 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
     
     def process_request(self, request):
+        for exempt_path in BILLING_WEBHOOK_PATHS:
+            if request.path.startswith(exempt_path):
+                return None
+
         # Excluir rutas que no requieren validación
         exempt_paths = [
             '/api/auth/',
@@ -25,9 +40,6 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             '/api/subscriptions/plans/',  # Permitir ver planes
             '/api/subscriptions/register/',  # Permitir registro
             '/api/subscriptions/register-with-plan/',  # Permitir registro con plan
-            '/api/subscriptions/renew/',  # Permitir renovación
-            '/api/payments/',
-            '/api/billing/',
             '/api/settings/contact/',
         ]
         
@@ -40,7 +52,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             return None
             
         # SuperAdmin siempre tiene acceso
-        if request.user.is_superuser or request.user.role == 'SuperAdmin' or request.user.roles.filter(name='Super-Admin').exists():
+        if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
             return None
             
         # Validar tenant y plan
@@ -184,6 +196,10 @@ class APIRateLimitMiddleware(MiddlewareMixin):
         # Solo aplicar a usuarios autenticados
         if not hasattr(request, 'user') or not request.user.is_authenticated:
             return None
+
+        for exempt_path in BILLING_ACCESS_PATHS:
+            if request.path.startswith(exempt_path):
+                return None
         
         # SuperAdmin sin límite
         if request.user.is_superuser:

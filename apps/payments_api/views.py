@@ -5,14 +5,16 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.http import HttpResponse
 from django.conf import settings
+import logging
 
 import stripe
 
 from apps.core.tenant_permissions import TenantPermissionByAction
-from .models import Payment, PaymentProvider
-from .services import StripeService, OnboardingService, NotificationService
+from .models import Payment
+from .services import StripeService
 from .serializers import PaymentSerializer
-from apps.subscriptions_api.models import SubscriptionPlan
+
+logger = logging.getLogger(__name__)
 
 class PaymentViewSet(viewsets.ModelViewSet):
     queryset = Payment.objects.all()
@@ -31,6 +33,33 @@ class PaymentViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         return Payment.objects.filter(user=self.request.user)
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {
+                'error': 'Direct payment creation is disabled.',
+                'detail': 'Use create_subscription_payment instead.'
+            },
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    def update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Direct payment mutation is disabled.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    def partial_update(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Direct payment mutation is disabled.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
+
+    def destroy(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'Direct payment deletion is disabled.'},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED
+        )
     
     @action(detail=False, methods=['post'])
     def create_subscription_payment(self, request):
@@ -54,73 +83,37 @@ class PaymentViewSet(viewsets.ModelViewSet):
     
     @action(detail=True, methods=['post'])
     def confirm_payment(self, request, pk=None):
-        """Confirmar pago y completar onboarding"""
-        try:
-            payment = self.get_object()
-            
-            # Actualizar estado del pago
-            payment.status = 'completed'
-            payment.save()
-            
-            # Completar onboarding automático
-            result = OnboardingService.complete_subscription_purchase(payment.id)
-            
-            # Enviar notificaciones
-            NotificationService.send_payment_confirmation(request.user, payment)
-            NotificationService.send_welcome_email(request.user, result['tenant'])
-            
-            return Response({
-                'success': True,
-                'tenant_id': result['tenant'].id,
-                'subscription_id': result['subscription'].id,
-                'message': 'Subscription activated successfully'
-            })
-            
-        except Exception as e:
-            return Response({'error': str(e)}, 
-                          status=status.HTTP_400_BAD_REQUEST)
+        """
+        Endpoint legacy deshabilitado.
+        La confirmación de pagos debe ocurrir únicamente vía webhook verificado.
+        """
+        payment = self.get_object()
+        logger.warning(
+            "Blocked legacy confirm_payment mutation payment_id=%s user_id=%s",
+            payment.id,
+            request.user.id,
+        )
+        return Response(
+            {
+                'error': 'Manual payment confirmation is disabled.',
+                'detail': 'Payments are confirmed only by verified provider webhooks.'
+            },
+            status=status.HTTP_403_FORBIDDEN
+        )
 
 from django.views import View
 
 class StripeWebhookView(View):
-    """Webhook para recibir eventos de Stripe"""
+    """Compatibilidad legacy: delega al webhook idempotente de billing."""
     
     @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
         return super().dispatch(*args, **kwargs)
     
     def post(self, request):
-        try:
-            payload = request.body
-            sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
-            endpoint_secret = getattr(settings, 'STRIPE_WEBHOOK_SECRET', None)
-
-            if not sig_header or not endpoint_secret:
-                return HttpResponse(status=400)
-            
-            event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
-            event_data = event
-            
-            if event_data['type'] == 'payment_intent.succeeded':
-                payment_intent = event_data['data']['object']
-                
-                # Actualizar pago en base de datos
-                try:
-                    payment = Payment.objects.get(
-                        provider_payment_id=payment_intent['id']
-                    )
-                    payment.status = 'completed'
-                    payment.save()
-                    
-                    # Completar onboarding automáticamente
-                    OnboardingService.complete_subscription_purchase(payment.id)
-                    
-                except Payment.DoesNotExist:
-                    pass
-            
-            return HttpResponse(status=200)
-
-        except (ValueError, stripe.error.SignatureVerificationError):
-            return HttpResponse(status=400)
-        except Exception as e:
-            return HttpResponse(status=400)
+        logger.warning(
+            "Legacy Stripe webhook path invoked; delegating to billing webhook path=%s",
+            request.path,
+        )
+        from apps.billing_api.webhooks_idempotent import stripe_webhook
+        return stripe_webhook(request)

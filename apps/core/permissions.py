@@ -4,6 +4,19 @@ Evita duplicación de permisos comunes en múltiples apps.
 """
 from rest_framework.permissions import BasePermission
 from apps.roles_api.models import UserRole
+from apps.auth_api.role_utils import get_effective_role_name
+
+
+def _resolve_permission_tenant(request):
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None:
+        return tenant
+
+    user = getattr(request, 'user', None)
+    if user and getattr(user, 'is_authenticated', False):
+        return getattr(user, 'tenant', None)
+
+    return None
 
 
 class IsSuperAdmin(BasePermission):
@@ -21,13 +34,12 @@ class IsTenantAdmin(BasePermission):
     Usado en endpoints de gestión del tenant.
     """
     def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
             return False
         
-        if request.user.is_superuser:
-            return True
-        
-        return request.user.role == 'Client-Admin'
+        tenant = _resolve_permission_tenant(request)
+        return get_effective_role_name(user, tenant=tenant) in {'SuperAdmin', 'Client-Admin'}
 
 
 class IsTenantMember(BasePermission):
@@ -56,5 +68,10 @@ class RolePermission(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        user_roles = UserRole.objects.filter(user=request.user).values_list('role__name', flat=True)
+        tenant = _resolve_permission_tenant(request)
+        user_roles = UserRole.objects.filter(user=request.user)
+        if tenant is not None:
+            user_roles = user_roles.filter(tenant=tenant)
+
+        user_roles = user_roles.values_list('role__name', flat=True)
         return any(role in self.allowed_roles for role in user_roles)

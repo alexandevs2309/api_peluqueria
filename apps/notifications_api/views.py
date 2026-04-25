@@ -2,8 +2,14 @@ from rest_framework import generics, permissions
 from rest_framework.response import Response
 from django.utils import timezone
 from apps.core.tenant_permissions import tenant_permission
+from apps.auth_api.role_utils import get_effective_role_name
 from .models import Notification, NotificationTemplate, InAppNotification
 from .serializers import NotificationSerializer, NotificationTemplateSerializer, NotificationPreferenceSerializer, InAppNotificationSerializer
+
+
+def _can_manage_tenant_notifications(user, tenant=None) -> bool:
+    role_name = get_effective_role_name(user, tenant=tenant)
+    return role_name in {'SuperAdmin', 'Client-Admin'}
 
 class NotificationListCreateView(generics.ListCreateAPIView):
     serializer_class = InAppNotificationSerializer
@@ -16,9 +22,10 @@ class NotificationListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        tenant = getattr(self.request, 'tenant', getattr(user, 'tenant', None))
         
         # Administradores ven todas las notificaciones
-        if user.is_superuser or user.roles.filter(name__in=['Super-Admin', 'Client-Admin']).exists():
+        if _can_manage_tenant_notifications(user, tenant=tenant):
             return InAppNotification.objects.filter(recipient__tenant=user.tenant).order_by('-created_at')
         
         # Usuarios normales solo ven sus notificaciones
@@ -37,9 +44,10 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
+        tenant = getattr(self.request, 'tenant', getattr(user, 'tenant', None))
         
         # Administradores pueden actualizar todas las notificaciones de su tenant
-        if user.is_superuser or user.roles.filter(name__in=['Super-Admin', 'Client-Admin']).exists():
+        if _can_manage_tenant_notifications(user, tenant=tenant):
             return InAppNotification.objects.filter(recipient__tenant=user.tenant)
         
         # Usuarios normales solo sus notificaciones
