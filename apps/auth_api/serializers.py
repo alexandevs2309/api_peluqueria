@@ -212,6 +212,9 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         # Asegurar que is_active sea True por defecto
         validated_data.setdefault('is_active', True)
+        # Usuarios creados por un administrador del tenant ya fueron autorizados
+        # internamente; deben poder iniciar sesion sin verificacion publica.
+        validated_data.setdefault('is_email_verified', True)
         
         # Asignar tenant automáticamente si no se especifica
         request = self.context.get('request')
