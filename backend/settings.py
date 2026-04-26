@@ -52,9 +52,23 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)
 
-ALLOWED_HOSTS = env.list('ALLOWED_HOSTS', default=['127.0.0.1', 'localhost'])
+ALLOWED_HOSTS = env.list(
+    'ALLOWED_HOSTS',
+    default=['127.0.0.1', 'localhost', 'api-peluqueria-p25h.onrender.com']
+)
 if DEBUG:
     ALLOWED_HOSTS.extend(['web', 'api_peluqueria-web-1', 'testserver'])
+
+FRONTEND_URL = env(
+    'FRONTEND_URL',
+    default='https://frontend-app.auron-suites.workers.dev'
+).strip()
+
+
+def _frontend_origin_defaults():
+    if not FRONTEND_URL:
+        return []
+    return [FRONTEND_URL]
 
 # Application definition
 
@@ -185,11 +199,15 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = env.list(
     'CORS_ALLOWED_ORIGINS',
-    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else []
+    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else [
+        'https://frontend-app.auron-suites.workers.dev'
+    ]
 )
 CSRF_TRUSTED_ORIGINS = env.list(
     'CSRF_TRUSTED_ORIGINS',
-    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else []
+    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else [
+        'https://frontend-app.auron-suites.workers.dev'
+    ]
 )
 
 CORS_ALLOW_CREDENTIALS = True
@@ -446,9 +464,6 @@ STATICFILES_FINDERS = [
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Email configuration
-FRONTEND_URL = env('FRONTEND_URL', default='http://localhost:4200')
-
 # En desarrollo, redirige todos los emails a esta dirección (limitación de Resend en modo test)
 DEV_EMAIL_OVERRIDE = env('DEV_EMAIL_OVERRIDE', default='') if DEBUG else ''
 
@@ -492,8 +507,8 @@ SECURE_HSTS_PRELOAD = not DEBUG
 
 # Sesiones Django y CSRF pueden seguir estrictas; los JWT cross-origin usan
 # configuración específica en auth_api.cookie_utils.
-SESSION_COOKIE_SAMESITE = 'Strict' if not DEBUG else 'Lax'
-CSRF_COOKIE_SAMESITE = 'Strict' if not DEBUG else 'Lax'
+SESSION_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = False  # JS necesita leerlo
 
