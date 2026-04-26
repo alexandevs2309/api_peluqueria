@@ -136,6 +136,7 @@ class TenantPermissionByAction(BasePermission):
             'change_appointment', 'view_client', 'add_client',
             'change_client', 'view_service', 'view_sale', 'add_sale',
             'view_cashregister', 'add_cashregister', 'change_cashregister',
+            'view_product', 'view_promotion',
         ],
         'Estilista': [
             'view_employee', 'view_appointment', 'view_client',

@@ -32,8 +32,10 @@ class ProductSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Product
-        fields = '__all__'
-        read_only_fields = ['tenant']
+        fields = ['id', 'name', 'sku', 'barcode', 'price', 'stock', 'min_stock', 
+                  'unit', 'is_active', 'description', 'category', 'category_name', 
+                  'image', 'image_url']
+        read_only_fields = ['id', 'category_name', 'image_url']
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None
