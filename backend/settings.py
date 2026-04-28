@@ -70,6 +70,25 @@ def _frontend_origin_defaults():
         return []
     return [FRONTEND_URL]
 
+
+LOCAL_DEV_ORIGIN_DEFAULTS = [
+    'http://localhost:4200',
+    'http://127.0.0.1:4200',
+]
+
+
+def _merge_origin_lists(*origin_lists):
+    merged = []
+    seen = set()
+    for origin_list in origin_lists:
+        for origin in origin_list:
+            normalized = (origin or '').strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            merged.append(normalized)
+    return merged
+
 # Application definition
 
 INSTALLED_APPS = [
@@ -199,15 +218,19 @@ SIMPLE_JWT = {
 
 CORS_ALLOWED_ORIGINS = env.list(
     'CORS_ALLOWED_ORIGINS',
-    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else [
-        'https://frontend-app.auron-suites.workers.dev'
-    ]
+    default=_merge_origin_lists(
+        LOCAL_DEV_ORIGIN_DEFAULTS,
+        _frontend_origin_defaults(),
+        ['https://frontend-app.auron-suites.workers.dev'] if not DEBUG else []
+    )
 )
 CSRF_TRUSTED_ORIGINS = env.list(
     'CSRF_TRUSTED_ORIGINS',
-    default=['http://localhost:4200', 'http://127.0.0.1:4200'] if DEBUG else [
-        'https://frontend-app.auron-suites.workers.dev'
-    ]
+    default=_merge_origin_lists(
+        LOCAL_DEV_ORIGIN_DEFAULTS,
+        _frontend_origin_defaults(),
+        ['https://frontend-app.auron-suites.workers.dev'] if not DEBUG else []
+    )
 )
 
 CORS_ALLOW_CREDENTIALS = True

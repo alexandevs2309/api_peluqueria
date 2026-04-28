@@ -7,7 +7,13 @@ from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
 from django.core.exceptions import MultipleObjectsReturned
 from .models import ActiveSession
-from .role_utils import normalize_role_for_api, get_effective_role_api
+from .role_utils import (
+    get_business_role_display,
+    get_effective_business_role,
+    get_effective_role_api,
+    map_business_role_to_legacy_role,
+    map_legacy_role_to_business_role,
+)
 from .settings_policy import (
     get_password_min_length,
     is_email_verification_required,
@@ -201,15 +207,30 @@ class MFAVerifySerializer(serializers.Serializer):
 class EmployeeUserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
     tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True)
+    business_role = serializers.ChoiceField(
+        choices=User.BUSINESS_ROLE_CHOICES,
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = User
-        fields = ['email', 'full_name', 'phone', 'password', 'tenant', 'role', 'is_active']
+        fields = ['email', 'full_name', 'phone', 'password', 'tenant', 'role', 'business_role', 'is_active']
 
     def validate_password(self, value):
         return validate_password_policy(value)
 
     def create(self, validated_data):
+        requested_business_role = validated_data.get('business_role')
+        requested_role = validated_data.get('role')
+        if requested_business_role and not requested_role:
+            inferred_role = map_business_role_to_legacy_role(requested_business_role)
+            if inferred_role:
+                validated_data['role'] = inferred_role
+                requested_role = inferred_role
+        elif requested_role and not requested_business_role:
+            validated_data['business_role'] = map_legacy_role_to_business_role(requested_role)
+
         # Asegurar que is_active sea True por defecto
         validated_data.setdefault('is_active', True)
         # Usuarios creados por un administrador del tenant ya fueron autorizados
@@ -256,6 +277,13 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         # No actualizar password en update
         validated_data.pop('password', None)
+
+        if 'business_role' in validated_data and 'role' not in validated_data:
+            inferred_role = map_business_role_to_legacy_role(validated_data.get('business_role'))
+            if inferred_role:
+                validated_data['role'] = inferred_role
+        elif 'role' in validated_data and 'business_role' not in validated_data:
+            validated_data['business_role'] = map_legacy_role_to_business_role(validated_data.get('role'))
         
         # Manejar tenant correctamente
         tenant = validated_data.pop('tenant', None)
@@ -274,16 +302,29 @@ class UserListSerializer(serializers.ModelSerializer):
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     avatar_url = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
+    business_role = serializers.SerializerMethodField()
+    business_role_display = serializers.SerializerMethodField()
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'phone', 'role', 'tenant', 'tenant_name', 'is_active', 'mfa_enabled', 'date_joined', 'last_login', 'avatar_url']
+        fields = [
+            'id', 'email', 'full_name', 'phone', 'role', 'business_role', 'business_role_display',
+            'tenant', 'tenant_name', 'is_active', 'mfa_enabled', 'date_joined', 'last_login', 'avatar_url'
+        ]
 
     def get_avatar_url(self, obj):
         return obj.avatar.url if obj.avatar else None
 
     def get_role(self, obj):
         return get_effective_role_api(obj, tenant=getattr(obj, 'tenant', None))
+
+    def get_business_role(self, obj):
+        return get_effective_business_role(obj, tenant=getattr(obj, 'tenant', None))
+
+    def get_business_role_display(self, obj):
+        return get_business_role_display(
+            get_effective_business_role(obj, tenant=getattr(obj, 'tenant', None))
+        )
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod

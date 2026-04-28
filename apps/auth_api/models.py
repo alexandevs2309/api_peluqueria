@@ -2,6 +2,7 @@ from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, Permis
 from django.db import models
 from django.utils import timezone
 from django.core.exceptions import ValidationError
+from .role_utils import map_business_role_to_legacy_role, map_legacy_role_to_business_role, normalize_business_role
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -64,7 +65,23 @@ class User(AbstractBaseUser, PermissionsMixin):
         ('Manager', 'Manager'),
         ('Utility', 'Utility'),
     ]
+    BUSINESS_ROLE_CHOICES = [
+        ('owner', 'Propietario'),
+        ('manager', 'Gerente'),
+        ('frontdesk_cashier', 'Recepcion / Caja'),
+        ('professional', 'Profesional'),
+        ('internal_support', 'Soporte interno'),
+        ('marketing', 'Marketing'),
+        ('accounting', 'Contabilidad'),
+    ]
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, blank=True, null=True)
+    business_role = models.CharField(
+        max_length=32,
+        choices=BUSINESS_ROLE_CHOICES,
+        blank=True,
+        null=True,
+        db_index=True,
+    )
 
     roles = models.ManyToManyField(
         'roles_api.Role',
@@ -102,6 +119,27 @@ class User(AbstractBaseUser, PermissionsMixin):
             })
 
     def save(self, *args, **kwargs):
+        if self.role:
+            self.business_role = map_legacy_role_to_business_role(
+                self.role,
+                is_superuser=self.is_superuser,
+            ) or self.business_role
+        elif self.business_role:
+            normalized_business_role = normalize_business_role(
+                self.business_role,
+                is_superuser=self.is_superuser,
+            )
+            self.business_role = normalized_business_role or self.business_role
+            inferred_legacy_role = map_business_role_to_legacy_role(
+                self.business_role,
+                is_superuser=self.is_superuser,
+            )
+            if inferred_legacy_role:
+                self.role = inferred_legacy_role
+
+        if self.is_superuser and not self.business_role:
+            self.business_role = 'internal_support'
+
         # Validar antes de guardar (excepto en creación de superuser)
         if not kwargs.pop('skip_validation', False):
             self.full_clean()

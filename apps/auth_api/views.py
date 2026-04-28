@@ -25,7 +25,11 @@ from .serializers import (
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
     EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input
 )
-from .role_utils import normalize_role_for_api, get_effective_role_name, get_effective_role_api
+from .role_utils import (
+    get_effective_role_api,
+    get_effective_role_name,
+    map_business_role_to_legacy_role,
+)
 from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import viewsets
 from rest_framework.decorators import action
@@ -978,7 +982,8 @@ class UserViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_403_FORBIDDEN)
         
         # ✅ VALIDACIÓN DE JERARQUÍA DE ROLES
-        requested_role = request.data.get('role')
+        requested_business_role = request.data.get('business_role')
+        requested_role = request.data.get('role') or map_business_role_to_legacy_role(requested_business_role)
         actor_role = get_effective_role_name(request.user, tenant=self._get_request_tenant()) or 'Client-Staff'
         if requested_role:
             is_valid, error_msg = validate_role_assignment(
@@ -1078,8 +1083,10 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'error': error_msg}, status=status.HTTP_403_FORBIDDEN)
         
         # ✅ VALIDAR CAMBIO DE ROL SI SE ESPECIFICA
-        if 'role' in request.data:
-            new_role = request.data.get('role')
+        requested_business_role = request.data.get('business_role')
+        requested_role = request.data.get('role') or map_business_role_to_legacy_role(requested_business_role)
+        if requested_role:
+            new_role = requested_role
             is_valid, error_msg = validate_role_assignment(
                 creator_role=actor_role,
                 target_role=new_role,
@@ -1099,8 +1106,8 @@ class UserViewSet(viewsets.ModelViewSet):
             user = serializer.save()
             
             # Actualizar rol si se especifica
-            if 'role' in request.data:
-                role_name = request.data.get('role')
+            if requested_role:
+                role_name = requested_role
                 user.role = role_name
                 user.save()
                 
