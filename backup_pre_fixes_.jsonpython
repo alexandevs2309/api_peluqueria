@@ -1,0 +1,12 @@
+Invalid line: STORAGES
+C:\Users\AlexanderADP\AppData\Local\Programs\Python\Python313\Lib\importlib\__init__.py:88: RuntimeWarning: STRIPE_SECRET_KEY es clave de test (sk_test_). Reemplazar con clave live antes de aceptar pagos reales.
+  return _bootstrap._gcd_import(name[level:], package, level)
+usage: manage.py dumpdata [-h] [--format FORMAT] [--indent INDENT]
+                          [--database {default}] [-e EXCLUDE]
+                          [--natural-foreign] [--natural-primary] [-a]
+                          [--pks PRIMARY_KEYS] [-o OUTPUT] [--version]
+                          [-v {0,1,2,3}] [--settings SETTINGS]
+                          [--pythonpath PYTHONPATH] [--traceback] [--no-color]
+                          [--force-color] [--skip-checks]
+                          [app_label[.ModelName] ...]
+manage.py dumpdata: error: unrecognized arguments: -m --tb=short -q

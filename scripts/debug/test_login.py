@@ -1,5 +1,15 @@
+import pytest
+import django
+
+
 from apps.auth_api.serializers import LoginSerializer
 from django.test import RequestFactory
+
+pytestmark = pytest.mark.django_db
+
+def test_ejecutar_login_debug():
+    factory = RequestFactory()
+    request = factory.post('/api/auth/cookie-login/')
 
 factory = RequestFactory()
 request = factory.post('/api/auth/cookie-login/')
