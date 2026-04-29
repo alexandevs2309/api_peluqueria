@@ -8,7 +8,9 @@ services:
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    # Puerto removido por seguridad - solo acceso interno
+    ports:
+      - "5432:5432"
+    # Puerto expuesto temporalmente para backup desde host
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-barbershop_db}"]
       interval: 5s
