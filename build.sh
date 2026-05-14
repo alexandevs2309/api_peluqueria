@@ -13,9 +13,9 @@ echo "[build] Static files..."
 python manage.py collectstatic --noinput
 
 echo "[build] Migrations..."
-# Fix: 0006 may be missing from django_migrations table but its changes
-# are already applied in the DB (was renamed/replaced after 0007 was deployed).
-python manage.py migrate auth_api 0006 --fake --noinput || true
+# Fix: insert auth_api.0006 directly into django_migrations if missing.
+# Django's consistency check runs before --fake can help, so we use SQL.
+python scripts/fix_migration_history.py
 python manage.py migrate --noinput
 
 if [ "${RUN_SETUP_SAAS_ON_BUILD:-0}" = "1" ]; then
