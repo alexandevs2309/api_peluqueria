@@ -69,12 +69,11 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
     def get_technical_features(self, obj):
         labels = {
             'appointments': 'Agenda de citas organizada',
-            'basic_reports': 'Reportes basicos del negocio',
+            'reports': 'Reportes e analíticas',
             'cash_register': 'Caja y ventas en un solo lugar',
             'client_history': 'Historial completo de clientes',
             'inventory': 'Control de inventario en tiempo real',
-            'advanced_reports': 'Reportes avanzados para tomar decisiones',
-            'multi_location': 'Gestion de multiples sucursales',
+                        'multi_location': 'Gestion de multiples sucursales',
             'role_permissions': 'Permisos avanzados para el equipo',
             'api_access': 'Acceso a integraciones por API',
             'custom_branding': 'Logo personalizado para tu negocio',

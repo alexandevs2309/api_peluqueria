@@ -2,7 +2,6 @@ from django.core.management.base import BaseCommand
 
 from apps.subscriptions_api.models import SubscriptionPlan
 
-
 class Command(BaseCommand):
     help = 'Create default subscription plans'
 
@@ -17,11 +16,11 @@ class Command(BaseCommand):
                 'max_users': 3,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': False,
-                    'advanced_reports': False,
+                    
                     'multi_location': False,
                     'api_access': False,
                     'custom_branding': False,
@@ -35,62 +34,89 @@ class Command(BaseCommand):
             },
             {
                 'name': 'basic',
-                'description': 'Para barberias pequenas que necesitan ordenar citas, cobros y seguimiento de clientes sin complicarse.',
-                'price': 29.99,
+                'description': 'Entrada seria para barberias pequenas que necesitan citas, caja, clientes y reportes sin complicarse.',
+                'price': 29.00,
                 'duration_month': 1,
                 'stripe_price_id': '',
-                'max_employees': 8,
-                'max_users': 16,
+                'max_employees': 5,
+                'max_users': 10,
                 'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': False,
-                    'advanced_reports': False,
+                    
                     'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
-                    'Ideal para empezar a operar con orden',
-                    'Sin limite de tiempo y listo para uso diario'
+                    'Entrada seria para operar con orden',
+                    'Ideal para equipos pequenos'
                 ],
                 'is_active': True
             },
             {
                 'name': 'standard',
-                'description': 'El plan recomendado para negocios en crecimiento que necesitan mas control, visibilidad y operacion multi-sucursal.',
-                'price': 69.99,
+                'description': 'El plan recomendado para negocios en crecimiento que necesitan inventario, reportes avanzados y mas capacidad.',
+                'price': 59.00,
                 'duration_month': 1,
                 'stripe_price_id': '',
-                'max_employees': 25,
-                'max_users': 50,
-                'allows_multiple_branches': True,
+                'max_employees': 15,
+                'max_users': 30,
+                'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    'advanced_reports': True,
-                    'multi_location': True,
+                    
+                    'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
-                    'La mejor relacion valor-precio para crecer',
-                    'Mas control operativo para equipos y sucursales'
+                    'Plan recomendado para la mayoria de barberias',
+                    'Mas control operativo sin dar un salto grande de precio'
                 ],
                 'is_active': True
             },
             {
                 'name': 'premium',
-                'description': 'Para operaciones grandes que necesitan crecer sin topes fijos, reforzar su marca y recibir atencion prioritaria.',
-                'price': 129.99,
+                'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
+                'price': 99.00,
+                'duration_month': 1,
+                'stripe_price_id': '',
+                'max_employees': 50,
+                'max_users': 100,
+                'allows_multiple_branches': True,
+                'features': {
+                    'appointments': True,
+                    'reports': True,
+                    'cash_register': True,
+                    'client_history': True,
+                    'inventory': True,
+                    
+                    'multi_location': True,
+                    'role_permissions': True,
+                    'api_access': True,
+                    'custom_branding': True
+                },
+                'commercial_benefits': [
+                    'Pensado para operaciones con varias areas o sucursales',
+                    'Permisos avanzados, branding y mas capacidad'
+                ],
+                'is_active': True
+            },
+            {
+                'name': 'enterprise',
+                'description': 'Para cadenas y operaciones que necesitan escala ilimitada, soporte prioritario y acompanamiento.',
+                'price': 149.00,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'max_employees': 0,
@@ -98,20 +124,21 @@ class Command(BaseCommand):
                 'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    'advanced_reports': True,
+                    
                     'multi_location': True,
                     'role_permissions': True,
                     'api_access': True,
-                    'custom_branding': True
+                    'custom_branding': True,
+                    'priority_support': True
                 },
                 'commercial_benefits': [
-                    'Atencion prioritaria',
-                    'Acompanamiento comercial',
-                    'Escala sin limite de empleados ni usuarios'
+                    'Escala sin limite de empleados ni usuarios',
+                    'Soporte prioritario y acompanamiento comercial',
+                    'Ideal para cadenas y operaciones con necesidades custom'
                 ],
                 'is_active': True
             }

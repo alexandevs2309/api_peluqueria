@@ -1,6 +1,8 @@
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
+from django.core.cache import cache
+from django.db import connection
 from django.http import JsonResponse
 from django.views.decorators.cache import cache_page
 from django.views.decorators.csrf import csrf_exempt
@@ -14,7 +16,31 @@ from apps.settings_api.views import SystemSettingsRetrieveUpdateView, SystemSett
 @require_http_methods(["GET"])
 @cache_page(60)
 def health_check(request):
-    return JsonResponse({"status": "ok"})
+    checks = {}
+    all_ok = True
+
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        checks["database"] = "ok"
+    except Exception as exc:
+        checks["database"] = f"error: {exc}"
+        all_ok = False
+
+    try:
+        cache.set("healthz_ping", "pong", timeout=5)
+        checks["cache"] = "ok" if cache.get("healthz_ping") == "pong" else "error: unexpected value"
+        if checks["cache"] != "ok":
+            all_ok = False
+    except Exception as exc:
+        checks["cache"] = f"error: {exc}"
+        all_ok = False
+
+    checks["app"] = "ok"
+    return JsonResponse(
+        {"status": "healthy" if all_ok else "degraded", "checks": checks},
+        status=200 if all_ok else 503,
+    )
 
 def sentry_test(request):
     """Endpoint para probar Sentry - solo en DEBUG"""

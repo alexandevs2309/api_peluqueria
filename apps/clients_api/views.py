@@ -8,7 +8,7 @@ from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.subscriptions_api.permissions import requires_feature
-from .models import Client
+from .models import Client, LoyaltyTransaction
 from .serializers import ClientSerializer
 
 class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
@@ -23,6 +23,7 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
         'partial_update': 'clients_api.change_client',
         'destroy': 'clients_api.delete_client',
         'history': 'clients_api.view_client',
+        'loyalty_history': 'clients_api.view_client',
         'add_loyalty_points': 'clients_api.change_client',
         'redeem_points': 'clients_api.change_client',
         'stats': 'clients_api.view_client',
@@ -124,6 +125,19 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
             'loyalty_points': client.loyalty_points,
             'last_visit': client.last_visit
         })
+
+    @action(detail=True, methods=['get'])
+    def loyalty_history(self, request, pk=None):
+        client = self.get_object()
+        transactions = LoyaltyTransaction.objects.filter(client=client)[:50]
+        return Response([{
+            'id': t.id,
+            'points': t.points,
+            'transaction_type': t.transaction_type,
+            'description': t.description,
+            'sale_id': t.sale_id,
+            'created_at': t.created_at
+        } for t in transactions])
 
     @action(detail=False, methods=['get'])
     def birthdays_this_month(self, request):

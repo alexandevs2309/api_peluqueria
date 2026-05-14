@@ -14,6 +14,19 @@ from apps.auth_api.role_utils import get_effective_role_name
 
 logger = logging.getLogger(__name__)
 
+
+PAYWALL_SAFE_PREFIXES = [
+    '/api/subscriptions/me/entitlements/',
+    '/api/subscriptions/renew/',
+    '/api/tenants/current/',
+    '/api/tenants/locale/',
+    '/api/tenants/subscription-status/',
+]
+
+PAYWALL_SAFE_READONLY_PREFIXES = [
+    '/api/notifications/',
+]
+
 class TenantMiddleware(MiddlewareMixin):
     """
     Middleware para manejar multitenancy basado en JWT claims o usuario autenticado
@@ -57,8 +70,19 @@ class TenantMiddleware(MiddlewareMixin):
             'message': message,
             'tenant_id': getattr(tenant, 'id', None),
             'tenant_subdomain': getattr(tenant, 'subdomain', None),
-            'support_email': 'support@barbershop.com'
+            'support_email': getattr(settings, 'SUPPORT_EMAIL', 'soporte@auron-suite.com'),
+            'support_url': getattr(settings, 'SUPPORT_URL', 'https://auron-suite.com/soporte'),
         }, status=403)
+
+    @staticmethod
+    def _is_paywall_safe_request(request) -> bool:
+        if any(request.path.startswith(prefix) for prefix in PAYWALL_SAFE_PREFIXES):
+            return True
+
+        if request.method in ('GET', 'HEAD', 'OPTIONS'):
+            return any(request.path.startswith(prefix) for prefix in PAYWALL_SAFE_READONLY_PREFIXES)
+
+        return False
     
     def process_request(self, request):
         # Excluir admin de Django
@@ -189,6 +213,10 @@ class TenantMiddleware(MiddlewareMixin):
         
         # Verificar y manejar trial expirado
         if request.tenant:
+            if self._is_paywall_safe_request(request):
+                self.check_trial_notifications(request.tenant)
+                return None
+
             # Verificar rutas que no requieren validación de suscripción
             subscription_exempt_paths = [
                 '/api/subscriptions/renew/',
@@ -261,22 +289,27 @@ class TenantMiddleware(MiddlewareMixin):
         # Notificación 3 días antes
         if tenant.should_send_trial_notification(3):
             self.send_trial_notification(tenant, 3)
-            tenant.mark_notification_sent(3)
         
         # Notificación 1 día antes
         elif tenant.should_send_trial_notification(1):
             self.send_trial_notification(tenant, 1)
-            tenant.mark_notification_sent(1)
     
     def send_trial_notification(self, tenant, days_left):
-        """Enviar notificación de trial"""
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        if days_left > 0:
-            logger.info(f"TRIAL WARNING: {tenant.name} has {days_left} days left")
-        else:
-            days_since_expiry = (timezone.now().date() - tenant.trial_end_date).days if tenant.trial_end_date else 0
-            if days_since_expiry <= 3:
-                logger.info(f"GRACE PERIOD: {tenant.name} in grace period, {3 - days_since_expiry} days left")
-        # TODO: Implementar envío real de email/SMS
+        """Enviar notificacion real de trial via Celery."""
+        try:
+            from apps.subscriptions_api.tasks import send_trial_warning_email
+            send_trial_warning_email.delay(
+                tenant_id=tenant.id,
+                days_remaining=days_left,
+            )
+            logger.info(
+                "Trial warning email queued tenant=%s days_left=%d",
+                tenant.subdomain,
+                days_left,
+            )
+        except Exception as exc:
+            logger.error(
+                "Failed to queue trial warning email tenant=%s: %s",
+                tenant.subdomain,
+                exc,
+            )

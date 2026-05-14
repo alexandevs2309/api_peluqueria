@@ -1,7 +1,7 @@
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
 from rest_framework.response import Response
 from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.subscriptions_api.permissions import HasFeaturePermission
 from django.db.models import Count, Sum, Avg, Q, F
 from django.utils import timezone
 from datetime import datetime, timedelta, date
@@ -10,97 +10,81 @@ from apps.employees_api.models import Employee
 from apps.pos_api.models import Sale
 from apps.appointments_api.models import Appointment
 from apps.services_api.models import Service
-from apps.subscriptions_api.permissions import requires_feature
 
-@api_view(['GET'])
-@permission_classes([TenantPermissionByAction])
-@requires_feature('advanced_reports')
-def advanced_analytics(request):
-    advanced_analytics.permission_map = {'get': 'reports_api.view_advanced_analytics'}
+class AdvancedAnalyticsView(APIView):
     """Analytics avanzados con métricas de negocio"""
-    tenant = request.user.tenant
-    period = request.GET.get('period', '30')  # días
-    days = int(period)
-    
-    start_date = timezone.now() - timedelta(days=days)
-    
-    # Métricas de retención de clientes
-    retention_data = calculate_client_retention(tenant, days)
-    
-    # Análisis de empleados
-    employee_performance = calculate_employee_performance(tenant, days)
-    
-    # Tendencias de servicios
-    service_trends = calculate_service_trends(tenant, days)
-    
-    # Predicciones básicas
-    predictions = calculate_predictions(tenant, days)
-    
-    return Response({
-        'period_days': days,
-        'retention': retention_data,
-        'employee_performance': employee_performance,
-        'service_trends': service_trends,
-        'predictions': predictions,
-        'generated_at': timezone.now().isoformat()
-    })
-
-@api_view(['GET'])
-@permission_classes([TenantPermissionByAction])
-@requires_feature('advanced_reports')
-def business_intelligence(request):
-    business_intelligence.permission_map = {'get': 'reports_api.view_advanced_analytics'}
-    """Business Intelligence con KPIs avanzados"""
-    tenant = request.user.tenant
-    
-    # KPIs de negocio
-    business_kpis = {
-        'customer_lifetime_value': calculate_clv(tenant),
-        'average_revenue_per_user': calculate_arpu(tenant),
-        'churn_rate': calculate_churn_rate(tenant),
-        'growth_rate': calculate_growth_rate(tenant),
-        'capacity_utilization': calculate_capacity_utilization(tenant)
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'reports'
+    permission_map = {
+        'GET': 'reports_api.view_advanced_analytics',
     }
-    
-    # Análisis de temporadas
-    seasonal_analysis = calculate_seasonal_patterns(tenant)
-    
-    # Benchmarking interno
-    benchmarks = calculate_internal_benchmarks(tenant)
-    
-    return Response({
-        'business_kpis': business_kpis,
-        'seasonal_analysis': seasonal_analysis,
-        'benchmarks': benchmarks,
-        'recommendations': generate_recommendations(business_kpis)
-    })
 
-@api_view(['GET'])
-@permission_classes([TenantPermissionByAction])
-@requires_feature('advanced_reports')
-def predictive_analytics(request):
-    predictive_analytics.permission_map = {'get': 'reports_api.view_advanced_analytics'}
-    """Análisis predictivo básico"""
-    tenant = request.user.tenant
-    
-    # Predicción de demanda
-    demand_forecast = predict_demand(tenant)
-    
-    # Predicción de ingresos
-    revenue_forecast = predict_revenue(tenant)
-    
-    # Identificar clientes en riesgo
-    at_risk_clients = identify_at_risk_clients(tenant)
-    
-    # Oportunidades de crecimiento
-    growth_opportunities = identify_growth_opportunities(tenant)
-    
-    return Response({
-        'demand_forecast': demand_forecast,
-        'revenue_forecast': revenue_forecast,
-        'at_risk_clients': at_risk_clients,
-        'growth_opportunities': growth_opportunities
-    })
+    def get(self, request):
+        tenant = request.user.tenant
+        period = request.GET.get('period', '30')  # dias
+        days = int(period)
+
+        retention_data = calculate_client_retention(tenant, days)
+        employee_performance = calculate_employee_performance(tenant, days)
+        service_trends = calculate_service_trends(tenant, days)
+        predictions = calculate_predictions(tenant, days)
+
+        return Response({
+            'period_days': days,
+            'retention': retention_data,
+            'employee_performance': employee_performance,
+            'service_trends': service_trends,
+            'predictions': predictions,
+            'generated_at': timezone.now().isoformat()
+        })
+
+
+class BusinessIntelligenceView(APIView):
+    """Business Intelligence con KPIs avanzados"""
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'reports'
+    permission_map = {
+        'GET': 'reports_api.view_advanced_analytics',
+    }
+
+    def get(self, request):
+        tenant = request.user.tenant
+        business_kpis = {
+            'customer_lifetime_value': calculate_clv(tenant),
+            'average_revenue_per_user': calculate_arpu(tenant),
+            'churn_rate': calculate_churn_rate(tenant),
+            'growth_rate': calculate_growth_rate(tenant),
+            'capacity_utilization': calculate_capacity_utilization(tenant)
+        }
+
+        seasonal_analysis = calculate_seasonal_patterns(tenant)
+        benchmarks = calculate_internal_benchmarks(tenant)
+
+        return Response({
+            'business_kpis': business_kpis,
+            'seasonal_analysis': seasonal_analysis,
+            'benchmarks': benchmarks,
+            'recommendations': generate_recommendations(business_kpis)
+        })
+
+
+class PredictiveAnalyticsView(APIView):
+    """Analisis predictivo basico"""
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'reports'
+    permission_map = {
+        'GET': 'reports_api.view_advanced_analytics',
+    }
+
+    def get(self, request):
+        tenant = request.user.tenant
+
+        return Response({
+            'demand_forecast': predict_demand(tenant),
+            'revenue_forecast': predict_revenue(tenant),
+            'at_risk_clients': identify_at_risk_clients(tenant),
+            'growth_opportunities': identify_growth_opportunities(tenant)
+        })
 
 def calculate_client_retention(tenant, days):
     """Calcular métricas de retención de clientes"""

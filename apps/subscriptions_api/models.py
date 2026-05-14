@@ -10,9 +10,9 @@ from django.core.exceptions import ValidationError
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
-        ('basic', 'Esencial'),
-        ('standard', 'Crecimiento'),
-        ('premium', 'Escala'),
+        ('basic', 'Basic'),
+        ('standard', 'Pro'),
+        ('premium', 'Business'),
         ('enterprise', 'Enterprise'),
     ]
 

@@ -20,6 +20,15 @@ if pg_dump "$DATABASE_URL" > "$BACKUP_FILE"; then
     gzip "$BACKUP_FILE"
     echo "[$(date)] Backup comprimido: $BACKUP_FILE.gz"
     
+    # Verificar integridad del archivo comprimido
+    if gunzip -t "$BACKUP_FILE.gz"; then
+        echo "[$(date)] Backup verificado: integridad OK"
+    else
+        echo "[$(date)] ERROR: El backup comprimido está corrupto"
+        rm -f "$BACKUP_FILE.gz"
+        exit 1
+    fi
+    
     # Limpiar backups antiguos
     find "$BACKUP_DIR" -name "backup_*.sql.gz" -mtime +$RETENTION_DAYS -delete
     echo "[$(date)] Backups antiguos eliminados (>$RETENTION_DAYS días)"

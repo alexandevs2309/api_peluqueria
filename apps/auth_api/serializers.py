@@ -206,7 +206,7 @@ class MFAVerifySerializer(serializers.Serializer):
 
 class EmployeeUserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
-    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True)
+    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True, default=None)
     business_role = serializers.ChoiceField(
         choices=User.BUSINESS_ROLE_CHOICES,
         required=False,
@@ -236,6 +236,11 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
         # Usuarios creados por un administrador del tenant ya fueron autorizados
         # internamente; deben poder iniciar sesion sin verificacion publica.
         validated_data.setdefault('is_email_verified', True)
+
+        # SuperAdmin debe tener is_superuser=True
+        if validated_data.get('role') == 'SuperAdmin':
+            validated_data['is_superuser'] = True
+            validated_data['is_staff'] = True
         
         # Asignar tenant automáticamente si no se especifica
         request = self.context.get('request')
@@ -309,7 +314,7 @@ class UserListSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'email', 'full_name', 'phone', 'role', 'business_role', 'business_role_display',
-            'tenant', 'tenant_name', 'is_active', 'mfa_enabled', 'date_joined', 'last_login', 'avatar_url'
+            'tenant', 'tenant_name', 'is_active', 'date_joined', 'avatar_url'
         ]
 
     def get_avatar_url(self, obj):

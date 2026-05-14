@@ -1,9 +1,12 @@
+import logging
+
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.utils import timezone
 from datetime import timedelta
 from .models import NotificationTemplate
 from .services import NotificationService
+from apps.settings_api.integration_service import IntegrationService
 
 @receiver(post_save, sender='appointments_api.Appointment')
 def appointment_created(sender, instance, created, **kwargs):
@@ -19,6 +22,20 @@ def appointment_created(sender, instance, created, **kwargs):
             message=f"Cita con {instance.client.full_name} el {instance.date_time.strftime('%d/%m/%Y a las %H:%M')}"
         )
         
+        # Notificación SMS al cliente
+        try:
+            if instance.client and instance.client.phone:
+                phone = instance.client.phone
+                if not phone.startswith('+'):
+                    phone = f'+1{phone}' if phone.isdigit() else phone
+                IntegrationService.send_sms(
+                    phone=phone,
+                    message=f"Recordatorio: Tienes una cita en la barbería el {instance.date_time.strftime('%d/%m/%Y')} a las {instance.date_time.strftime('%H:%M')}. Confirma o reagenda."
+                )
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.warning("No se pudo enviar SMS: %s", e)
+
         # Notificación por email (si existe template)
         service = NotificationService()
         try:
@@ -207,6 +224,20 @@ def create_appointment_reminders():
         )
         
         for appointment in appointments:
+            # SMS recordatorio
+            try:
+                if appointment.client and appointment.client.phone:
+                    phone = appointment.client.phone
+                    if not phone.startswith('+'):
+                        phone = f'+1{phone}' if phone.isdigit() else phone
+                    IntegrationService.send_sms(
+                        phone=phone,
+                        message=f"Recordatorio: Tu cita en la barbería es mañana {appointment.date_time.strftime('%d/%m/%Y')} a las {appointment.date_time.strftime('%H:%M')}. Te esperamos!"
+                    )
+            except Exception as e:
+                logger = logging.getLogger(__name__)
+                logger.warning("No se pudo enviar SMS recordatorio: %s", e)
+
             context = {
                 'client_name': appointment.client.full_name,
                 'appointment_date': appointment.date_time.strftime('%d/%m/%Y'),

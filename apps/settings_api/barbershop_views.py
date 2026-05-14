@@ -1,7 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from django.db import transaction
 from .barbershop_models import BarbershopSettings
@@ -12,6 +11,7 @@ from .barbershop_serializers import (
 )
 from .audit_models import SettingsAuditLog
 from .permissions import IsClientAdmin
+from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.pos_api.models import PosConfiguration
 from apps.pos_api.models import Sale
 from apps.employees_api.earnings_models import PayrollPeriod
@@ -23,13 +23,13 @@ logger = logging.getLogger(__name__)
 
 
 class BarbershopSettingsViewSet(viewsets.ViewSet):
-    permission_classes = [IsAuthenticated]
-    
-    def get_permissions(self):
-        """Control de permisos por acción"""
-        if self.action in ['create', 'upload_logo', 'admin_settings']:
-            return [IsAuthenticated(), IsClientAdmin()]
-        return [IsAuthenticated()]
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'settings_api.view_barbershopsettings',
+        'create': 'settings_api.change_barbershopsettings',
+        'admin_settings': 'settings_api.change_barbershopsettings',
+        'upload_logo': 'settings_api.change_barbershopsettings',
+    }
     
     # Campos críticos que requieren confirmación
     CRITICAL_FIELDS = ['currency']

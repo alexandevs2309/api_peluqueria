@@ -1,5 +1,6 @@
 import sys
 import logging
+import uuid
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -92,6 +93,8 @@ def issue_refresh_for_user(user, tenant=None):
     if tenant:
         refresh['tenant_id'] = tenant.id
         refresh['tenant_subdomain'] = tenant.subdomain
+        access_token['tenant_id'] = tenant.id
+        access_token['tenant_subdomain'] = tenant.subdomain
 
     return refresh, access_token
 
@@ -213,7 +216,9 @@ class RegisterView(generics.CreateAPIView):
             
             # Crear usuario con tenant asignado
             user = serializer.save(tenant=tenant)
-            
+            user.email_verification_token = uuid.uuid4().hex
+            user.save(update_fields=['email_verification_token'])
+
             # Actualizar owner del tenant
             tenant.owner = user
             tenant.save(update_fields=['owner'])
@@ -380,31 +385,31 @@ class LoginView(generics.GenericAPIView):
                 'subdomain': tenant.subdomain,
             }
 
-        # response.set_cookie(
-        #     'access_token',
-        #     value=access_token,
-        #     httponly=True,
-        #     secure=not settings.DEBUG,
-        #     samesite='Strict',
-        #     max_age=15 * 60,
-        #     path='/'
-        # )
-        # response.set_cookie(
-        #     'refresh_token',
-        #     value=refresh_token,
-        #     httponly=True,
-        #     secure=not settings.DEBUG,
-        #     samesite='Strict',
-        #     max_age=24 * 60 * 60,
-        #     path='/'
-        # )
         response = Response(response_data)
+        response.set_cookie(
+            'access_token',
+            value=access_token,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite='Strict',
+            max_age=get_jwt_expiry_minutes() * 60,
+            path='/'
+        )
+        response.set_cookie(
+            'refresh_token',
+            value=refresh_token,
+            httponly=True,
+            secure=not settings.DEBUG,
+            samesite='Strict',
+            max_age=24 * 60 * 60,
+            path='/'
+        )
         if tenant:
             response.set_cookie('tenant_id', str(tenant.id), httponly=False, secure=not settings.DEBUG, samesite='Strict')
         return response
 
 class LogoutView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         # Try to get refresh_token from cookies first, then from body
@@ -1170,8 +1175,32 @@ class UserViewSet(viewsets.ModelViewSet):
         if 'avatar' not in request.FILES:
             return Response({'error': 'No avatar file provided'}, status=status.HTTP_400_BAD_REQUEST)
 
+        avatar_file = request.FILES['avatar']
+
+        allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+        if avatar_file.content_type not in allowed_types:
+            return Response(
+                {'error': 'Tipo de archivo no permitido. Use JPEG, PNG, WebP o GIF.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        max_size = 2 * 1024 * 1024  # 2MB
+        if avatar_file.size > max_size:
+            return Response(
+                {'error': 'La imagen no puede superar los 2MB.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        ext = avatar_file.name.split('.')[-1].lower()
+        allowed_exts = {'jpg', 'jpeg', 'png', 'webp', 'gif'}
+        if ext not in allowed_exts:
+            return Response(
+                {'error': 'Extensión de archivo no permitida.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
         user = request.user
-        user.avatar = request.FILES['avatar']
+        user.avatar = avatar_file
         user.save()
 
         return Response({

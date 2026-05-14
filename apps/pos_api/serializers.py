@@ -23,7 +23,7 @@ class SaleDetailSerializer(serializers.ModelSerializer):
 class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
-        fields = ['id', 'method', 'amount']
+        fields = ['id', 'method', 'amount', 'stripe_payment_intent_id']
 
 class SaleSerializer(serializers.ModelSerializer):
     details = SaleDetailSerializer(many=True)
@@ -35,8 +35,8 @@ class SaleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sale
-        fields = ['id', 'client', 'client_name', 'employee_name', 'user', 'user_name', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment']
-        read_only_fields = ['user', 'user_name', 'date_time', 'closed', 'client_name', 'employee_name']
+        fields = ['id', 'client', 'client_name', 'employee_name', 'user', 'user_name', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment', 'points_earned', 'points_redeemed']
+        read_only_fields = ['user', 'user_name', 'date_time', 'closed', 'client_name', 'employee_name', 'points_earned', 'points_redeemed']
 
     def get_employee_name(self, obj):
         employee_user = getattr(getattr(obj, 'employee', None), 'user', None)

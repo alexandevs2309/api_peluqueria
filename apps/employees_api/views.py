@@ -2,7 +2,14 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from decimal import Decimal, ROUND_HALF_UP
+from calendar import monthrange
+from datetime import date, timedelta
+import json
+import uuid
+
 from django.utils import timezone
+from django.db import transaction
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
@@ -38,6 +45,8 @@ class EmployeeViewSet(TenantScopedViewSet):
         'loans': 'employees_api.manage_employee_loans',
         'loans_summary': 'employees_api.view_employee_payroll',
     }
+
+    LOAN_METADATA_PREFIX = '__loanmeta__:'
 
     def perform_create(self, serializer):
         """Override para validar límite de empleados según plan"""
@@ -81,8 +90,155 @@ class EmployeeViewSet(TenantScopedViewSet):
                     'limit': tenant.max_employees,
                     'unlimited': tenant.max_employees == 0,
                 })
-            
+
         serializer.save(tenant=tenant)
+
+    def _build_loan_description(
+        self,
+        *,
+        plan_id: str,
+        total_amount: Decimal,
+        installment_number: int,
+        total_installments: int,
+        reason: str,
+    ) -> str:
+        metadata = {
+            'plan_id': plan_id,
+            'total_amount': str(total_amount.quantize(Decimal('0.01'))),
+            'installment_number': installment_number,
+            'total_installments': total_installments,
+        }
+        reason_text = (reason or '').strip()
+        return f"{self.LOAN_METADATA_PREFIX}{json.dumps(metadata, separators=(',', ':'))}\n{reason_text}"
+
+    def _extract_loan_metadata(self, deduction):
+        description = deduction.description or ''
+        if not description.startswith(self.LOAN_METADATA_PREFIX):
+            installments = max(int(deduction.installments or 1), 1)
+            amount = Decimal(str(deduction.amount or 0))
+            return {
+                'plan_id': f'legacy-{deduction.id}',
+                'total_amount': amount * installments,
+                'installment_number': 1,
+                'total_installments': installments,
+                'reason': description.strip(),
+            }
+
+        metadata_line, _, reason = description.partition('\n')
+        raw_metadata = metadata_line[len(self.LOAN_METADATA_PREFIX):]
+
+        try:
+            parsed = json.loads(raw_metadata)
+        except json.JSONDecodeError:
+            installments = max(int(deduction.installments or 1), 1)
+            amount = Decimal(str(deduction.amount or 0))
+            return {
+                'plan_id': f'legacy-{deduction.id}',
+                'total_amount': amount * installments,
+                'installment_number': 1,
+                'total_installments': installments,
+                'reason': description.strip(),
+            }
+
+        total_installments = max(int(parsed.get('total_installments') or deduction.installments or 1), 1)
+        installment_number = max(int(parsed.get('installment_number') or 1), 1)
+
+        return {
+            'plan_id': parsed.get('plan_id') or f'legacy-{deduction.id}',
+            'total_amount': Decimal(str(parsed.get('total_amount') or deduction.amount or 0)),
+            'installment_number': installment_number,
+            'total_installments': total_installments,
+            'reason': reason.strip(),
+        }
+
+    def _get_or_create_current_payroll_period(self, employee):
+        from apps.employees_api.earnings_models import PayrollPeriod
+
+        period = PayrollPeriod.objects.filter(
+            employee=employee,
+            status__in=['open', 'pending_approval']
+        ).order_by('period_start').first()
+
+        if period:
+            return period
+
+        today = timezone.now().date()
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            end_date = today.replace(day=monthrange(today.year, today.month)[1])
+
+        period, _ = PayrollPeriod.objects.get_or_create(
+            employee=employee,
+            period_start=start_date,
+            period_end=end_date,
+            defaults={
+                'period_type': 'biweekly',
+                'status': 'open',
+            }
+        )
+        return period
+
+    def _get_next_period_bounds(self, period_type: str, current_start: date, current_end: date):
+        if period_type == 'weekly':
+            next_start = current_end + timedelta(days=1)
+            next_end = next_start + timedelta(days=6)
+            return next_start, next_end
+
+        if period_type == 'monthly':
+            if current_start.month == 12:
+                next_year = current_start.year + 1
+                next_month = 1
+            else:
+                next_year = current_start.year
+                next_month = current_start.month + 1
+            next_start = date(next_year, next_month, 1)
+            next_end = date(next_year, next_month, monthrange(next_year, next_month)[1])
+            return next_start, next_end
+
+        if current_start.day == 1:
+            next_start = current_start.replace(day=16)
+            next_end = current_start.replace(day=monthrange(current_start.year, current_start.month)[1])
+            return next_start, next_end
+
+        if current_start.month == 12:
+            next_year = current_start.year + 1
+            next_month = 1
+        else:
+            next_year = current_start.year
+            next_month = current_start.month + 1
+        next_start = date(next_year, next_month, 1)
+        next_end = date(next_year, next_month, 15)
+        return next_start, next_end
+
+    def _get_or_create_installment_periods(self, employee, installments: int):
+        from apps.employees_api.earnings_models import PayrollPeriod
+
+        periods = []
+        current_period = self._get_or_create_current_payroll_period(employee)
+        periods.append(current_period)
+
+        while len(periods) < installments:
+            previous = periods[-1]
+            next_start, next_end = self._get_next_period_bounds(
+                previous.period_type,
+                previous.period_start,
+                previous.period_end,
+            )
+            next_period, _ = PayrollPeriod.objects.get_or_create(
+                employee=employee,
+                period_start=next_start,
+                period_end=next_end,
+                defaults={
+                    'period_type': previous.period_type,
+                    'status': 'open',
+                }
+            )
+            periods.append(next_period)
+
+        return periods
 
     @action(detail=False, methods=['get'], url_path=r'by-user/(?P<user_id>[^/.]+)')
     def by_user(self, request, user_id=None):
@@ -306,7 +462,6 @@ class EmployeeViewSet(TenantScopedViewSet):
         from apps.employees_api.earnings_models import PayrollDeduction, PayrollPeriod
         
         if request.method == 'GET':
-            # Listar todos los préstamos
             loan_deductions = PayrollDeduction.objects.filter(
                 period__employee=employee,
                 deduction_type__in=['loan', 'advance', 'emergency_loan']
@@ -325,25 +480,54 @@ class EmployeeViewSet(TenantScopedViewSet):
                 'emergency_loan': 'emergency'
             }
             
+            grouped_loans = {}
+            for deduction in loan_deductions:
+                metadata = self._extract_loan_metadata(deduction)
+                plan_id = metadata['plan_id']
+                group = grouped_loans.get(plan_id)
+                if not group:
+                    group = {
+                        'id': deduction.id,
+                        'request_date': deduction.created_at,
+                        'loan_type': type_values.get(deduction.deduction_type, deduction.deduction_type),
+                        'type_display': type_labels.get(deduction.deduction_type, deduction.deduction_type),
+                        'installments': metadata['total_installments'],
+                        'monthly_payment': Decimal(str(deduction.amount or 0)),
+                        'remaining_balance': Decimal('0.00'),
+                        'status': 'paid',
+                        'reason': metadata['reason'] or 'Sin motivo',
+                        'amount': metadata['total_amount'],
+                        'period': deduction.period.period_display,
+                        'period_status': deduction.period.status,
+                    }
+                    grouped_loans[plan_id] = group
+
+                if deduction.created_at < group['request_date']:
+                    group['request_date'] = deduction.created_at
+                if deduction.period.status != 'paid':
+                    group['remaining_balance'] += Decimal(str(deduction.amount or 0))
+                    group['status'] = 'active'
+                    group['period'] = deduction.period.period_display
+                    group['period_status'] = deduction.period.status
+
             loans_data = [{
-                'id': d.id,
-                'request_date': d.created_at.isoformat(),
-                'loan_type': type_values.get(d.deduction_type, d.deduction_type),
-                'type_display': type_labels.get(d.deduction_type, d.deduction_type),
-                'installments': d.installments,
-                'monthly_payment': float(d.amount),
-                'remaining_balance': float(d.amount) if d.period.status != 'paid' else 0,
-                'status': 'Pagado' if d.period.status == 'paid' else 'Pendiente',
-                'reason': d.description or 'Sin motivo',
-                'amount': float(d.amount),
-                'period': d.period.period_display,
-                'period_status': d.period.status
-            } for d in loan_deductions]
+                'id': loan['id'],
+                'request_date': loan['request_date'].isoformat(),
+                'loan_type': loan['loan_type'],
+                'type_display': loan['type_display'],
+                'installments': loan['installments'],
+                'monthly_payment': float(loan['monthly_payment']),
+                'remaining_balance': float(loan['remaining_balance']),
+                'status': loan['status'],
+                'reason': loan['reason'],
+                'amount': float(loan['amount']),
+                'period': loan['period'],
+                'period_status': loan['period_status'],
+            } for loan in grouped_loans.values()]
             
             return Response({'loans': loans_data, 'count': len(loans_data)})
         
         elif request.method == 'POST':
-            # Crear nuevo préstamo
             amount = request.data.get('amount')
             description = request.data.get('description') or request.data.get('reason', '')
             loan_type = request.data.get('type') or request.data.get('loan_type', 'loan')
@@ -359,76 +543,78 @@ class EmployeeViewSet(TenantScopedViewSet):
             
             if not amount:
                 return Response({'error': 'amount es requerido'}, status=400)
+            try:
+                total_amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+                installments = int(installments)
+            except Exception:
+                return Response({'error': 'amount/installments inválidos'}, status=400)
+
+            if total_amount <= 0:
+                return Response({'error': 'amount debe ser mayor que cero'}, status=400)
+            if installments <= 0:
+                return Response({'error': 'installments debe ser mayor que cero'}, status=400)
             
             if loan_type not in ['loan', 'advance', 'emergency_loan']:
                 return Response({'error': 'type debe ser loan, advance o emergency_loan'}, status=400)
             
-            # Buscar período abierto o pendiente, o crear uno nuevo
-            period = PayrollPeriod.objects.filter(
-                employee=employee,
-                status__in=['open', 'pending_approval']
-            ).first()
-            
-            if not period:
-                # Crear período para quincena actual
-                from django.utils import timezone
-                today = timezone.now().date()
-                
-                if today.day <= 15:
-                    start_date = today.replace(day=1)
-                    end_date = today.replace(day=15)
-                else:
-                    start_date = today.replace(day=16)
-                    last_day = (today.replace(month=today.month+1 if today.month < 12 else 1, 
-                                             year=today.year if today.month < 12 else today.year+1, day=1) 
-                               - timezone.timedelta(days=1)).day
-                    end_date = today.replace(day=last_day)
-                
-                period = PayrollPeriod.objects.create(
-                    employee=employee,
-                    period_type='biweekly',
-                    period_start=start_date,
-                    period_end=end_date,
-                    status='open'
-                )
-            
-            # Verificar si ya existe un préstamo idéntico reciente (últimos 5 segundos)
-            from django.utils import timezone
-            from datetime import timedelta
             recent_threshold = timezone.now() - timedelta(seconds=5)
-            
+            periods = self._get_or_create_installment_periods(employee, installments)
+            first_installment_amount = (total_amount / installments).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
             existing = PayrollDeduction.objects.filter(
-                period=period,
+                period=periods[0],
                 deduction_type=loan_type,
-                amount=amount,
-                description=description,
+                amount=first_installment_amount,
                 created_at__gte=recent_threshold
             ).exists()
-            
+
             if existing:
                 return Response({'error': 'Préstamo duplicado detectado'}, status=400)
-            
-            deduction = PayrollDeduction.objects.create(
-                period=period,
-                deduction_type=loan_type,
-                amount=amount,
-                description=description,
-                installments=installments,
-                created_by=request.user
-            )
-            
-            # Recalcular período
-            period.calculate_amounts()
-            period.save()
+
+            plan_id = uuid.uuid4().hex
+            created_deductions = []
+
+            with transaction.atomic():
+                remaining_amount = total_amount
+                touched_periods = []
+
+                for index, period in enumerate(periods, start=1):
+                    if index == installments:
+                        installment_amount = remaining_amount
+                    else:
+                        installment_amount = first_installment_amount
+                        remaining_amount -= installment_amount
+
+                    deduction = PayrollDeduction.objects.create(
+                        period=period,
+                        deduction_type=loan_type,
+                        amount=installment_amount,
+                        description=self._build_loan_description(
+                            plan_id=plan_id,
+                            total_amount=total_amount,
+                            installment_number=index,
+                            total_installments=installments,
+                            reason=description,
+                        ),
+                        installments=installments,
+                        created_by=request.user
+                    )
+                    created_deductions.append(deduction)
+                    touched_periods.append(period)
+
+                for period in touched_periods:
+                    period.calculate_amounts()
+                    period.save()
             
             return Response({
                 'message': 'Préstamo creado exitosamente',
                 'loan': {
-                    'id': deduction.id,
-                    'type': deduction.deduction_type,
-                    'amount': float(deduction.amount),
-                    'description': deduction.description,
-                    'period': period.period_display
+                    'id': created_deductions[0].id,
+                    'type': loan_type,
+                    'amount': float(total_amount),
+                    'installments': installments,
+                    'installment_amount': float(created_deductions[0].amount),
+                    'description': description,
+                    'period': periods[0].period_display
                 }
             }, status=201)
     
@@ -437,7 +623,7 @@ class EmployeeViewSet(TenantScopedViewSet):
         """Resumen de préstamos del empleado"""
         employee = self.get_object()
         from apps.employees_api.earnings_models import PayrollDeduction
-        from django.db.models import Sum, Count
+        from django.db.models import Sum
         
         # Préstamos en períodos no pagados (pendientes)
         pending_loans = PayrollDeduction.objects.filter(
@@ -453,20 +639,58 @@ class EmployeeViewSet(TenantScopedViewSet):
             deduction_type__in=['loan', 'advance', 'emergency_loan']
         )
         
+        all_loans = PayrollDeduction.objects.filter(
+            period__employee=employee,
+            deduction_type__in=['loan', 'advance', 'emergency_loan']
+        ).select_related('period').order_by('period__period_start', 'created_at')
+
+        grouped_loans = {}
+        for deduction in all_loans:
+            metadata = self._extract_loan_metadata(deduction)
+            plan_id = metadata['plan_id']
+            group = grouped_loans.get(plan_id)
+            if not group:
+                group = {
+                    'total_amount': metadata['total_amount'],
+                    'remaining_balance': Decimal('0.00'),
+                    'has_paid': False,
+                    'has_pending': False,
+                }
+                grouped_loans[plan_id] = group
+
+            if deduction.period.status == 'paid':
+                group['has_paid'] = True
+            else:
+                group['has_pending'] = True
+                group['remaining_balance'] += Decimal(str(deduction.amount or 0))
+
+        next_pending_period = pending_loans.order_by('period__period_start').first()
+        next_deduction = Decimal('0.00')
+        if next_pending_period:
+            next_deduction = pending_loans.filter(
+                period__period_start=next_pending_period.period.period_start,
+                period__period_end=next_pending_period.period.period_end,
+            ).aggregate(total=Sum('amount'))['total'] or Decimal('0.00')
+
+        pending_count = sum(1 for loan in grouped_loans.values() if loan['has_pending'])
+        paid_count = sum(1 for loan in grouped_loans.values() if loan['has_paid'] and not loan['has_pending'])
+        remaining_balance = sum((loan['remaining_balance'] for loan in grouped_loans.values()), Decimal('0.00'))
+        total_amount = sum((loan['total_amount'] for loan in grouped_loans.values()), Decimal('0.00'))
+
         summary = {
             'pending': {
-                'count': pending_loans.count(),
-                'total': float(pending_loans.aggregate(total=Sum('amount'))['total'] or 0)
+                'count': pending_count,
+                'total': float(remaining_balance)
             },
             'paid': {
-                'count': paid_loans.count(),
-                'total': float(paid_loans.aggregate(total=Sum('amount'))['total'] or 0)
+                'count': paid_count,
+                'total': float((paid_loans.aggregate(total=Sum('amount'))['total'] or 0))
             },
-            'total_loans': pending_loans.count() + paid_loans.count(),
-            'total_amount': float(
-                (pending_loans.aggregate(total=Sum('amount'))['total'] or 0) +
-                (paid_loans.aggregate(total=Sum('amount'))['total'] or 0)
-            )
+            'total_loans': len(grouped_loans),
+            'total_amount': float(total_amount),
+            'remaining_balance': float(remaining_balance),
+            'next_deduction': float(next_deduction),
+            'active_loans': pending_count,
         }
         
         return Response(summary)

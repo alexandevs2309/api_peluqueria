@@ -15,12 +15,12 @@ class PayrollViewSet(viewsets.ViewSet):
     permission_classes = [TenantPermissionByAction]
     permission_map = {
         'list_periods': 'employees_api.view_employee_payroll',
-        'register_payment': 'employees_api.view_employee_payroll',
-        'recalculate_period': 'employees_api.view_employee_payroll',
-        'submit_for_approval': 'employees_api.view_employee_payroll',
-        'approve_period': 'employees_api.view_employee_payroll',
-        'reject_period': 'employees_api.view_employee_payroll',
         'get_receipt': 'employees_api.view_employee_payroll',
+        'register_payment': 'employees_api.approve_payroll',
+        'recalculate_period': 'employees_api.change_employee_payroll',
+        'submit_for_approval': 'employees_api.change_employee_payroll',
+        'approve_period': 'employees_api.approve_payroll',
+        'reject_period': 'employees_api.approve_payroll',
     }
     
     def _require_admin_role(self, request):

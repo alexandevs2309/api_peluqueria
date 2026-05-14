@@ -20,7 +20,7 @@ class StripeService:
         self.stripe = stripe
         provider = PaymentProvider.objects.filter(name='stripe', is_active=True).first()
         if provider:
-            self.stripe.api_key = provider.api_key
+            self.stripe.api_key = provider.get_api_key()
     
     def create_customer(self, user):
         """Crear cliente en Stripe"""

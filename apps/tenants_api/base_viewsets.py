@@ -23,61 +23,35 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
     
     Requisitos:
     - El modelo debe tener campo 'tenant' (ForeignKey a Tenant)
-    - El usuario debe tener atributo 'tenant'
+    - request.tenant debe estar seteado por middleware
     """
     
     def get_queryset(self):
-        """
-        Filtra queryset por tenant automáticamente.
-        
-        Override este método si necesitas lógica adicional:
-            def get_queryset(self):
-                qs = super().get_queryset()
-                # Lógica adicional aquí
-                return qs
-        """
         queryset = super().get_queryset()
-        user = self.request.user
-        
-        # SuperAdmin ve todo
-        if user.is_superuser:
+
+        if self.request.user.is_superuser:
             return queryset
-        
-        # Usuario sin tenant no ve nada
-        if not hasattr(user, 'tenant') or not user.tenant:
+
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
             return queryset.none()
-        
-        # Filtrar por tenant del usuario
-        return queryset.filter(tenant=user.tenant)
-    
+
+        return queryset.filter(tenant=self.request.tenant)
+
     def perform_create(self, serializer):
-        """
-        Asigna tenant automáticamente al crear.
-        
-        Override si necesitas lógica adicional:
-            def perform_create(self, serializer):
-                super().perform_create(serializer)
-                # Lógica adicional aquí
-        """
         user = self.request.user
-        
-        # SuperAdmin puede crear para cualquier tenant
+
         if user.is_superuser:
-            # Si no especifica tenant, usar el primero disponible
-            if 'tenant' not in serializer.validated_data:
-                from apps.tenants_api.models import Tenant
-                tenant = user.tenant or Tenant.objects.first()
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
                 serializer.save(tenant=tenant)
             else:
                 serializer.save()
             return
-        
-        # Usuario normal debe tener tenant
-        if not user.tenant:
+
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
             raise PermissionDenied("Usuario sin tenant asignado")
-        
-        # Asignar tenant del usuario
-        serializer.save(tenant=user.tenant)
+
+        serializer.save(tenant=self.request.tenant)
 
 
 class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
@@ -92,12 +66,11 @@ class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         queryset = super().get_queryset()
-        user = self.request.user
-        
-        if user.is_superuser:
+
+        if self.request.user.is_superuser:
             return queryset
-        
-        if not hasattr(user, 'tenant') or not user.tenant:
+
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
             return queryset.none()
-        
-        return queryset.filter(tenant=user.tenant)
+
+        return queryset.filter(tenant=self.request.tenant)

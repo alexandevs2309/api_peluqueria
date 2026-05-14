@@ -39,11 +39,16 @@ class PayrollCalculationService:
             total=Sum('amount')
         )['total'] or Decimal('0.00')
         
-        # 3. Total de comisiones
-        total_commission = sales_commission + adjustments_total
-        
-        # 4. Salario base (si aplica) - usar datos del empleado directamente
+        # 3. Obtener tipo de pago del empleado
         payment_type = period.employee.payment_type
+
+        # 4. Total de comisiones (solo commission/mixed reciben comisión de ventas)
+        if payment_type in ['commission', 'mixed']:
+            total_commission = sales_commission + adjustments_total
+        else:
+            total_commission = adjustments_total  # fixed solo recibe ajustes manuales
+
+        # 5. Salario base (si aplica)
         fixed_salary = period.employee.fixed_salary
         
         base_salary = Decimal('0.00')

@@ -41,9 +41,9 @@ class UserRole(models.Model):
     assigned_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ('user', 'role')
+        unique_together = ('user', 'role', 'tenant')
         indexes = [
-            models.Index(fields=['user', 'role']),
+            models.Index(fields=['user', 'role', 'tenant']),
         ]
 
     def __str__(self):

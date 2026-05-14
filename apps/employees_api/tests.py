@@ -1,4 +1,5 @@
 import pytest
+from decimal import Decimal
 from django.contrib.auth.models import Permission
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -9,6 +10,7 @@ from django.urls import reverse
 from apps.auth_api.factories import UserFactory
 from apps.roles_api.models import Role, UserRole
 from apps.employees_api.models import Employee, WorkSchedule
+from apps.employees_api.earnings_models import PayrollDeduction
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
 
@@ -260,6 +262,88 @@ def test_manager_cannot_delete_schedule_sensitive_action(manager_client, team_em
         reverse('work_schedule-detail', kwargs={'pk': schedule.id})
     )
     assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.fixture
+def payroll_admin_user(tenant_for_schedules):
+    user = User.objects.create_user(
+        email='payroll.admin@example.com',
+        password='testpassword123',
+        full_name='Payroll Admin',
+        tenant=tenant_for_schedules,
+        is_email_verified=True
+    )
+    role, _ = Role.objects.get_or_create(
+        name='Client-Admin',
+        defaults={'scope': 'TENANT', 'description': 'Client admin test role'}
+    )
+    perms = Permission.objects.filter(
+        content_type__app_label='employees_api',
+        codename__in=['view_employee', 'manage_employee_loans', 'view_employee_payroll']
+    )
+    role.permissions.add(*perms)
+    UserRole.objects.get_or_create(user=user, role=role, tenant=tenant_for_schedules)
+    return user
+
+
+@pytest.fixture
+def payroll_admin_client(payroll_admin_user):
+    client = APIClient()
+    client.force_authenticate(user=payroll_admin_user)
+    return client
+
+
+@pytest.fixture
+def payroll_employee(tenant_for_schedules):
+    worker_user = User.objects.create_user(
+        email='payroll.worker@example.com',
+        password='testpassword123',
+        full_name='Payroll Worker',
+        tenant=tenant_for_schedules,
+        is_email_verified=True
+    )
+    return Employee.objects.create(
+        user=worker_user,
+        tenant=tenant_for_schedules,
+        specialty='Manager',
+        payment_type='fixed',
+        fixed_salary=Decimal('30000.00'),
+        commission_rate=Decimal('0.00')
+    )
+
+
+@pytest.mark.django_db
+def test_create_biweekly_loan_splits_installments_across_periods(payroll_admin_client, payroll_employee):
+    response = payroll_admin_client.post(
+        reverse('employee-loans', kwargs={'pk': payroll_employee.id}),
+        {
+            'loan_type': 'personal_loan',
+            'amount': '2000.00',
+            'installments': 2,
+            'reason': 'Prestamo prueba'
+        },
+        format='json'
+    )
+
+    assert response.status_code == status.HTTP_201_CREATED
+    assert response.data['loan']['amount'] == 2000.0
+    assert response.data['loan']['installment_amount'] == 1000.0
+
+    deductions = PayrollDeduction.objects.filter(
+        period__employee=payroll_employee,
+        deduction_type='loan'
+    ).select_related('period').order_by('period__period_start')
+
+    assert deductions.count() == 2
+    assert list(deductions.values_list('amount', flat=True)) == [Decimal('1000.00'), Decimal('1000.00')]
+    assert deductions[0].period.period_end < deductions[1].period.period_start
+
+    summary_response = payroll_admin_client.get(reverse('employee-loans-summary', kwargs={'pk': payroll_employee.id}))
+    assert summary_response.status_code == status.HTTP_200_OK
+    assert summary_response.data['total_loans'] == 1
+    assert summary_response.data['active_loans'] == 1
+    assert summary_response.data['remaining_balance'] == 2000.0
+    assert summary_response.data['next_deduction'] == 1000.0
 
 
 @pytest.fixture

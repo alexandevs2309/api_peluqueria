@@ -6,7 +6,7 @@ from .models import Invoice, PaymentAttempt
 class PaymentAttemptSerializer(serializers.ModelSerializer):
     class Meta:
         model = PaymentAttempt
-        fields = "__all__"
+        fields = ["id", "invoice", "attempted_at", "success", "status"]
         read_only_fields = ["id", "attempted_at"]
 
     def validate(self, data):

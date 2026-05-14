@@ -1,4 +1,4 @@
-﻿from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status, serializers
@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
+from apps.subscriptions_api.permissions import HasFeaturePermission
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
@@ -17,7 +18,8 @@ User = get_user_model()
 class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'appointments'
     permission_map = {
         'list': 'appointments_api.view_appointment',
         'retrieve': 'appointments_api.view_appointment',
@@ -197,16 +199,15 @@ def calendar_events(request):
     except ValueError:
         return Response({'error': 'Formato de fecha inválido'}, status=400)
     
-    appointments = Appointment.objects.filter(
-        date_time__gte=start_date,
-        date_time__lte=end_date
-    )
+    base_filter = Q(date_time__gte=start_date, date_time__lte=end_date)
 
     # Filtro de tenant obligatorio - previene fuga cross-tenant
     if not request.user.is_superuser:
         if not hasattr(request, 'tenant') or not request.tenant:
             return Response([], status=200)
-        appointments = appointments.filter(client__tenant=request.tenant)
+        base_filter &= Q(client__tenant=request.tenant)
+
+    appointments = Appointment.objects.filter(base_filter)
 
     events = []
     for apt in appointments:
@@ -320,11 +321,15 @@ def stylist_schedule(request, stylist_id):
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
         
+        tenant_filter = {}
+        if not user.is_superuser and hasattr(request, 'tenant') and request.tenant:
+            tenant_filter['client__tenant'] = request.tenant
         appointments = Appointment.objects.filter(
             stylist=stylist,
             date_time__date__gte=week_start,
             date_time__date__lte=week_end,
-            status__in=['scheduled', 'completed']
+            status__in=['scheduled', 'completed'],
+            **tenant_filter
         ).values('date_time', 'client__full_name', 'service__name', 'status')
         
         return Response({

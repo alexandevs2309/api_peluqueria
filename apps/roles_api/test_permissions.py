@@ -7,6 +7,7 @@ from apps.roles_api.models import Role, UserRole
 from apps.roles_api.permissions import RolePermission, IsActiveAndRolePermission, role_permission_for
 from apps.roles_api.decorators import role_required, admin_action_log, permission_required
 from apps.roles_api.models import AdminActionLog
+from apps.tenants_api.models import Tenant
 
 User = get_user_model()
 
@@ -23,21 +24,46 @@ def role_client():
     return Role.objects.get_or_create(name="Client")[0]
 
 @pytest.fixture
-def admin_user(role_admin):
-    user = User.objects.create_user(email="admin@test.com", password="123456", full_name="Admin User")
-    UserRole.objects.create(user=user, role=role_admin)
+def tenant():
+    owner = User.objects.create_superuser(
+        email="owner@test.com",
+        password="123456",
+        full_name="Owner User",
+    )
+    return Tenant.objects.create(
+        name="Test Tenant",
+        subdomain="test-tenant",
+        owner=owner,
+        contact_email="owner@test.com",
+    )
+
+@pytest.fixture
+def admin_user(role_admin, tenant):
+    user = User.objects.create_user(
+        email="admin@test.com",
+        password="123456",
+        full_name="Admin User",
+        tenant=tenant,
+    )
+    UserRole.objects.create(user=user, role=role_admin, tenant=tenant)
     return user
 
 @pytest.fixture
-def client_user(role_client):
-    user = User.objects.create_user(email="client@test.com", password="123456", full_name="Client User")
-    UserRole.objects.create(user=user, role=role_client)
+def client_user(role_client, tenant):
+    user = User.objects.create_user(
+        email="client@test.com",
+        password="123456",
+        full_name="Client User",
+        tenant=tenant,
+    )
+    UserRole.objects.create(user=user, role=role_client, tenant=tenant)
     return user
 
 @pytest.mark.django_db
 def test_role_permission_allows_correct_role(factory, admin_user):
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     perm = RolePermission(allowed_roles=["Admin"])
     assert perm.has_permission(request, None)
 
@@ -45,6 +71,7 @@ def test_role_permission_allows_correct_role(factory, admin_user):
 def test_role_permission_denies_incorrect_role(factory, client_user):
     request = factory.get("/")
     request.user = client_user
+    request.current_tenant = client_user.tenant
     perm = RolePermission(allowed_roles=["Admin"])
     assert not perm.has_permission(request, None)
 
@@ -52,6 +79,7 @@ def test_role_permission_denies_incorrect_role(factory, client_user):
 def test_is_active_and_role_permission_allows(factory, admin_user):
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     perm = IsActiveAndRolePermission(allowed_roles=["Admin"])
     assert perm.has_permission(request, None)
 
@@ -61,6 +89,7 @@ def test_is_active_and_role_permission_denies_if_inactive(factory, admin_user):
     admin_user.save()
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     perm = IsActiveAndRolePermission(allowed_roles=["Admin"])
     assert not perm.has_permission(request, None)
 
@@ -68,6 +97,7 @@ def test_is_active_and_role_permission_denies_if_inactive(factory, admin_user):
 def test_role_permission_for_dynamic(factory, admin_user):
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     DynamicPerm = role_permission_for(["Admin"])
     perm = DynamicPerm()
     assert perm.has_permission(request, None)
@@ -80,6 +110,7 @@ def test_role_required_decorator_allows(admin_user):
     factory = APIRequestFactory()
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     response = view(request)
     assert response.status_code == 200
     assert response.data["ok"]
@@ -92,6 +123,7 @@ def test_role_required_decorator_denies(client_user):
     factory = APIRequestFactory()
     request = factory.get("/")
     request.user = client_user
+    request.current_tenant = client_user.tenant
     response = view(request)
     assert response.status_code == 403
 
@@ -103,6 +135,7 @@ def test_admin_action_log_decorator_creates_log(admin_user):
     factory = APIRequestFactory()
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     response = view(request)
     assert response.status_code == 200
     assert AdminActionLog.objects.filter(user=admin_user, action="Test Action").exists()
@@ -114,6 +147,7 @@ def test_permission_required_decorator_allows(factory, admin_user):
         return Response({"ok": True})
     request = factory.get("/")
     request.user = admin_user
+    request.current_tenant = admin_user.tenant
     response = view(request)
     assert response.status_code == 200
     assert response.data["ok"]
@@ -125,5 +159,6 @@ def test_permission_required_decorator_denies(factory, client_user):
         return Response({"ok": True})
     request = factory.get("/")
     request.user = client_user
+    request.current_tenant = client_user.tenant
     response = view(request)
     assert response.status_code == 403

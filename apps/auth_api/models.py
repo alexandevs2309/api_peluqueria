@@ -105,7 +105,13 @@ class User(AbstractBaseUser, PermissionsMixin):
                 condition=models.Q(tenant__isnull=False) | models.Q(is_superuser=True),
                 name='user_must_have_tenant_or_be_superuser',
                 violation_error_message='Los usuarios no superadmin deben tener un tenant asignado.'
-            )
+            ),
+            models.UniqueConstraint(
+                fields=['email'],
+                condition=models.Q(tenant__isnull=True),
+                name='unique_email_for_global_users',
+                violation_error_message='Ya existe un superusuario con este email.'
+            ),
         ]
         # ✅ UNIQUE CONSTRAINT POR TENANT
         unique_together = [['email', 'tenant']]
@@ -140,9 +146,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         if self.is_superuser and not self.business_role:
             self.business_role = 'internal_support'
 
-        # Validar antes de guardar (excepto en creación de superuser)
-        if not kwargs.pop('skip_validation', False):
-            self.full_clean()
+        kwargs.pop('skip_validation', None)
+        kwargs.pop('force_validation', None)
         super().save(*args, **kwargs)
 
     def __str__(self):

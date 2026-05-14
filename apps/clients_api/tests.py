@@ -16,7 +16,16 @@ class TestClientAPI:
 
     @pytest.fixture
     def auth_client(self):
-        user = UserFactory(is_email_verified=True)
+        from apps.tenants_api.models import Tenant
+        tenant = Tenant.objects.create(
+            name="Test Client Tenant",
+            subdomain="test-clients-api"
+        )
+        user = UserFactory(
+            is_email_verified=True,
+            is_superuser=True,
+            tenant=tenant
+        )
         client = APIClient()
         client.force_authenticate(user=user)
         return client, user
@@ -26,6 +35,7 @@ class TestClientAPI:
         client, user = auth_client
         return Client.objects.create(
             user=user,
+            tenant=user.tenant,
             full_name="Juan Pérez",
             email="juan@example.com",
             phone="+123456789",

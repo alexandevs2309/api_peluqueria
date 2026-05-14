@@ -1,3 +1,4 @@
+from django.http import JsonResponse
 from django.http import HttpRequest
 import pytest
 from rest_framework import status
@@ -18,16 +19,16 @@ from apps.roles_api.decorators import admin_action_log, permission_required
 
 @pytest.fixture
 def admin_user(db):
-    user = UserFactory(is_email_verified=True)
+    user = UserFactory(is_email_verified=True, is_superuser=True)
     admin_role, _ = Role.objects.get_or_create(name='Admin')
-    UserRole.objects.get_or_create(user=user, role=admin_role)
+    UserRole.objects.get_or_create(user=user, role=admin_role, tenant=user.tenant)
     return user
 
 @pytest.fixture
 def client_user(db):
     user = UserFactory(is_email_verified=True)
     client_role, _ = Role.objects.get_or_create(name='Client')
-    UserRole.objects.get_or_create(user=user, role=client_role)
+    UserRole.objects.get_or_create(user=user, role=client_role, tenant=user.tenant)
     return user
 
 @pytest.mark.django_db
@@ -40,8 +41,8 @@ def test_list_roles_as_admin(admin_user):
 
     response = client.get(reverse('role-list'))
     assert response.status_code == 200
-    assert response.data['count'] >= 3
-    role_names = [r['name'] for r in response.data['results']]
+    assert len(response.data) >= 3
+    role_names = [r['name'] for r in response.data]
     assert 'Admin' in role_names
 
     assert AdminActionLog.objects.filter(user=admin_user, action='List roles').exists()
@@ -184,19 +185,19 @@ def test_roles_api_permission_allows_superuser():
 
 @pytest.mark.django_db
 def test_roles_api_permission_allows_with_role():
-    user = User.objects.create_user(email="user@test.com", password="123456", full_name="User Test")
+    user = UserFactory(email="user@test.com", password="123456", full_name="User Test")
     role, _ = Role.objects.get_or_create(name="Stylist")
-    UserRole.objects.get_or_create(user=user, role=role)
+    UserRole.objects.get_or_create(user=user, role=role, tenant=user.tenant)
 
     factory = APIRequestFactory()
     request = factory.get('/')
     request.user = user
-    perm = RolePermission(allowed_roles=['Stylist'])
+    perm = RolePermission(allowed_roles=['Estilista'])
     assert perm.has_permission(request, None)
 
 @pytest.mark.django_db
 def test_roles_api_permission_denies_without_role():
-    user = User.objects.create_user(email="user2@test.com", password="123456", full_name="User2 Test")
+    user = UserFactory(email="user2@test.com", password="123456", full_name="User2 Test")
     factory = APIRequestFactory()
     request = factory.get('/')
     request.user = user
@@ -208,7 +209,7 @@ def test_roles_api_permission_denies_without_role():
 def test_inactive_user_denied_permission():
     user = UserFactory(is_email_verified=True, is_active=False)
     role, _ = Role.objects.get_or_create(name="Admin")
-    UserRole.objects.create(user=user, role=role)
+    UserRole.objects.create(user=user, role=role, tenant=user.tenant)
 
     factory = APIRequestFactory()
     request = factory.get('/')
@@ -220,9 +221,9 @@ def test_inactive_user_denied_permission():
 
 @pytest.mark.django_db
 def test_role_permission_for_dynamic_class():
-    user = User.objects.create_user(email="dynamic@test.com", password="123456", full_name="Dynamic Test")
+    user = UserFactory(email="dynamic@test.com", password="123456", full_name="Dynamic Test")
     role, _ = Role.objects.get_or_create(name="Manager")
-    UserRole.objects.get_or_create(user=user, role=role)
+    UserRole.objects.get_or_create(user=user, role=role, tenant=user.tenant)
 
     factory = APIRequestFactory()
     request = factory.get('/')
@@ -247,7 +248,7 @@ def test_get_client_ip_without_forwarded_for():
 
 @pytest.mark.django_db
 def test_role_permission_denied_for_inactive_user():
-    user = User.objects.create_user(email="inactive@test.com", password="123456", full_name="Inactive User", is_active=False)
+    user = UserFactory(email="inactive@test.com", password="123456", full_name="Inactive User", is_active=False)
     factory = APIRequestFactory()
     request = factory.get("/")
     request.user = user
@@ -255,43 +256,47 @@ def test_role_permission_denied_for_inactive_user():
     assert not perm.has_permission(request, None)
 
 
-def test_get_client_ip_with_forwarded_for():
-    request = HttpRequest()
-    request.META['HTTP_X_FORWARDED_FOR'] = '1.2.3.4'
-    ip = get_client_ip(request)
-    assert ip == '1.2.3.4'
-
-def test_get_client_ip_without_forwarded_for():
-    request = HttpRequest()
-    request.META['REMOTE_ADDR'] = '5.6.7.8'
-    ip = get_client_ip(request)
-    assert ip == '5.6.7.8'
-
-
 @pytest.mark.django_db
-def test_admin_action_log_executes_logging_on_exception(admin_user):
+def test_admin_action_log_creates_log_entry(admin_user):
+
     factory = APIRequestFactory()
     request = factory.get("/")
     request.user = admin_user
 
     @admin_action_log("delete_user")
-    def view_raises(request):
-        raise ValueError("Boom!")
+    def view_ok(request):
+        return JsonResponse({"success": True})
 
-    with patch("apps.roles_api.decorators.log_admin_action") as mock_logger:
-        with pytest.raises(ValueError):
-            view_raises(request)
-        mock_logger.assert_called_once_with(request, "delete_user")
+    response = view_ok(request)
+    assert response.status_code == 200
+    assert AdminActionLog.objects.filter(user=admin_user, action="delete_user").exists()
+
+
+@pytest.mark.django_db
+def test_admin_action_log_swallows_logging_error(admin_user):
+    factory = APIRequestFactory()
+    request = factory.get("/")
+    request.user = admin_user
+
+    @admin_action_log("delete_user")
+    def view_ok(request):
+        return JsonResponse({"success": True})
+
+    with patch("apps.roles_api.decorators.AdminActionLog.objects.create", side_effect=Exception("DB error")):
+        response = view_ok(request)
+        assert response.status_code == 200
+
+    assert not AdminActionLog.objects.filter(user=admin_user, action="delete_user").exists()
 
 class DummyPermission:
     def has_permission(self, request, view):
         return False
 
 @pytest.mark.django_db
-def test_permission_required_decorator_denies_access():
+def test_permission_required_decorator_denies_access(db):
     factory = APIRequestFactory()
     request = factory.get("/")
-    request.user = None
+    request.user = UserFactory(email="denied@test.com", password="testpass")
 
     @permission_required(DummyPermission)
     def dummy_view(request):

@@ -26,9 +26,9 @@ class Tenant(models.Model):
     PLAN_CHOICES = [
         ("free", "Free"),
         ("basic", "Basic"),
-        ("premium", "Premium"),
+        ("premium", "Business"),
         ("enterprise", "Enterprise"),
-        ("standard", "Standard"),
+        ("standard", "Pro"),
     ]
     SUBSCRIPTION_STATUS = [
         ("trial", "Trial"),
@@ -41,7 +41,7 @@ class Tenant(models.Model):
 
     name = models.CharField(max_length=100, unique=True)
     subdomain = models.CharField(max_length=50, unique=True)
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="owned_tenants")
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, related_name="owned_tenants")
     contact_email = models.EmailField(blank=True, null=True)
     contact_phone = models.CharField(max_length=20, blank=True, null=True)
     address = models.TextField(blank=True, null=True)
@@ -93,7 +93,7 @@ class Tenant(models.Model):
                 if not owner:
                     # Crear un owner mínimo para pruebas
                     try:
-                        owner = User.objects.create_user(email='test-tenant-owner@example.com', password='pass')
+                        owner = User.objects.create_user(email='test-tenant-owner@example.com', password='pass', is_superuser=True)
                     except Exception:
                         owner = None
                 if owner:

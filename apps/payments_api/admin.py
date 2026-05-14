@@ -20,7 +20,7 @@ class PaymentProviderAdmin(admin.ModelAdmin):
 
 @admin.register(Payment)
 class PaymentAdmin(BaseTenantAdmin):
-    tenant_lookup = "user__tenant"
+    tenant_lookup = "tenant"
     list_display = ['id', 'user', 'amount', 'status', 'provider', 'created_at']
     list_filter = ['status', 'provider', 'created_at']
     search_fields = ['user__email', 'provider_payment_id']

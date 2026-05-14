@@ -3,7 +3,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 from apps.auth_api.factories import UserFactory
 from apps.auth_api.models import User
-from apps.settings_api.models import Setting, Branch, SettingAuditLog
+from apps.settings_api.models import Setting, Branch, SettingsAuditLog as SettingAuditLog
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.cache import cache
 from PIL import Image

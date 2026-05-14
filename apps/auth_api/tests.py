@@ -7,14 +7,21 @@ from django.contrib.auth.tokens import default_token_generator
 from .factories import UserFactory
 from .models import User, ActiveSession, LoginAudit, AccessLog
 from rest_framework_simplejwt.tokens import RefreshToken
-from .permissions import RolePermission
-from .models import Role, UserRole
+from apps.core.permissions import RolePermission
+from apps.roles_api.models import Role, UserRole
 import pyotp
 
 
 @pytest.fixture(autouse=True)
 def mock_celery(monkeypatch):
     monkeypatch.setattr("apps.auth_api.tasks.send_email_async.delay", lambda *a, **kw: None)
+
+
+@pytest.fixture(autouse=True)
+def enable_mfa(monkeypatch):
+    monkeypatch.setattr('apps.auth_api.views.is_mfa_globally_enabled', lambda: True)
+    monkeypatch.setattr('apps.auth_api.serializers.is_mfa_globally_enabled', lambda: True)
+    monkeypatch.setattr('apps.auth_api.cookie_views.is_mfa_globally_enabled', lambda: True)
 
 
 @pytest.mark.django_db
@@ -52,7 +59,7 @@ def test_verify_email():
 def test_login_user():
     user = UserFactory(is_email_verified=True)
     client = APIClient()
-    response = client.post(reverse('login'), {'email': user.email, 'password': 'testpassword'})
+    response = client.post(reverse('login'), {'email': user.email, 'password': 'testpassword', 'tenant_subdomain': user.tenant.subdomain})
     assert response.status_code == 200
     assert 'access_token' in response.cookies
     assert 'refresh_token' in response.cookies
@@ -65,13 +72,13 @@ def test_login_user():
 def test_login_with_mfa():
     user = UserFactory(is_email_verified=True, mfa_enabled=True, mfa_secret=pyotp.random_base32())
     client = APIClient()
-    response = client.post(reverse('login'), {'email': user.email, 'password': 'testpassword'})
+    response = client.post(reverse('login'), {'email': user.email, 'password': 'testpassword', 'tenant_subdomain': user.tenant.subdomain})
     assert response.status_code == 200
     assert response.data['detail'] == "Se requiere verificación MFA."
     assert 'access_token' not in response.cookies
 
     code = pyotp.TOTP(user.mfa_secret).now()
-    response = client.post(reverse('mfa-login-verify'), {'email': user.email, 'code': code})
+    response = client.post(reverse('mfa-login-verify'), {'email': user.email, 'code': code, 'tenant_subdomain': user.tenant.subdomain})
     assert response.status_code == 200
     assert 'access_token' in response.cookies
 
@@ -80,6 +87,14 @@ def test_login_with_mfa():
 def test_logout():
     user = UserFactory(is_email_verified=True)
     refresh = RefreshToken.for_user(user)
+    ActiveSession.objects.create(
+        user=user,
+        refresh_token=str(refresh),
+        token_jti=refresh.access_token.get('jti') or 'test-jti',
+        ip_address='127.0.0.1',
+        user_agent='test-agent',
+        is_active=True,
+    )
     client = APIClient()
     client.cookies['refresh_token'] = str(refresh)
     client.cookies['access_token'] = str(refresh.access_token)
@@ -104,7 +119,8 @@ def test_change_password():
     # Login real
     login_response = client.post(reverse('login'), {
         'email': user.email,
-        'password': 'testpassword'
+        'password': 'testpassword',
+        'tenant_subdomain': user.tenant.subdomain,
     }, format='json')
 
     assert login_response.status_code == 200
@@ -236,7 +252,7 @@ def test_role_permission_denies_anonymous():
 
 @pytest.mark.django_db
 def test_role_permission_denies_user_without_role():
-    user = User.objects.create_user(email="user@test.com", password="123456", full_name="User Test")
+    user = UserFactory(email="user@test.com", password="123456", full_name="User Test")
     factory = APIRequestFactory()
     request = factory.get('/')
     request.user = user
@@ -245,14 +261,14 @@ def test_role_permission_denies_user_without_role():
 
 @pytest.mark.django_db
 def test_role_permission_allows_user_with_allowed_role():
-    user = User.objects.create_user(email="admin@test.com", password="123456", full_name="Admin Test")
+    user = UserFactory(email="admin@test.com", password="123456", full_name="Admin Test")
     role, _ = Role.objects.get_or_create(name="Admin")
-    UserRole.objects.create(user=user, role=role)
+    UserRole.objects.create(user=user, role=role, tenant=user.tenant)
 
     factory = APIRequestFactory()
     request = factory.get('/')
     request.user = user
-    perm = RolePermission()
+    perm = RolePermission(allowed_roles=['Client-Admin'])
     assert perm.has_permission(request, None)
 
 
@@ -260,7 +276,7 @@ def test_role_permission_allows_user_with_allowed_role():
 def test_login_inactive_user():
     user = UserFactory(is_email_verified=True, is_active=False)
     client = APIClient()
-    data = {"email": user.email, "password": "123456"}
+    data = {"email": user.email, "password": "123456", "tenant_subdomain": user.tenant.subdomain}
     response = client.post(reverse("login"), data)
     assert response.status_code == 400
     # Ajustar para aceptar mensaje genérico de credenciales inválidas
@@ -281,7 +297,8 @@ def test_mfa_login_invalid_code():
     client = APIClient()
     response = client.post(reverse("mfa-login-verify"), {
         "email": user.email,
-        "code": "000000"  # código inválido
+        "code": "000000",  # código inválido
+        "tenant_subdomain": user.tenant.subdomain,
     })
     assert response.status_code == 400
     assert "MFA inválido" in str(response.data)

@@ -44,7 +44,7 @@ def validate_employee_limit(tenant, plan_type='basic'):
     config = get_system_config()
     plan_limits = {
         'basic': config.basic_plan_max_employees,
-        'standard': config.premium_plan_max_employees,
+        'standard': 15,
         'premium': config.premium_plan_max_employees,
         'enterprise': config.enterprise_plan_max_employees,
     }

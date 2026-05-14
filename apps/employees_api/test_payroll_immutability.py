@@ -14,7 +14,7 @@ class TestPayrollPeriodImmutability:
     
     @pytest.fixture
     def tenant(self):
-        owner = User.objects.create_user(email="owner@test.com", password="ownerpass", full_name="Owner")
+        owner = User.objects.create_superuser(email="owner@test.com", password="ownerpass", full_name="Owner")
         return Tenant.objects.create(name="Test Tenant", subdomain="test-tenant-immutability", owner=owner)
     
     @pytest.fixture

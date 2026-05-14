@@ -5,6 +5,13 @@ from apps.subscriptions_api.models import UserSubscription
 
 
 class Invoice(models.Model):
+    tenant = models.ForeignKey(
+        'tenants_api.Tenant',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Tenant al que pertenece esta factura"
+    )
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="invoices")
     subscription = models.ForeignKey(UserSubscription, on_delete=models.SET_NULL, null=True, blank=True)
     amount = models.DecimalField(max_digits=10, decimal_places=2)

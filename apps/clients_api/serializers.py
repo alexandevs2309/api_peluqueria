@@ -5,7 +5,12 @@ from .models import Client
 class ClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
-        fields = '__all__'
+        fields = [
+            'id', 'full_name', 'email', 'phone', 'birthday', 'gender',
+            'preferred_stylist', 'loyalty_points', 'last_visit', 'source',
+            'notes', 'is_active', 'created_by', 'created_at', 'updated_at',
+            'user', 'tenant',
+        ]
         read_only_fields = ['created_by', 'created_at', 'updated_at', 'last_visit', 'loyalty_points', 'user', 'tenant']
 
     def validate(self, attrs):

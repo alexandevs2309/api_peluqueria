@@ -49,6 +49,9 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
         release=env('SENTRY_RELEASE', default='1.0.0'),
     )
 
+SUPPORT_EMAIL = env('SUPPORT_EMAIL', default='soporte@auron-suite.com')
+SUPPORT_URL = env('SUPPORT_URL', default='https://auron-suite.com/soporte')
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)
 
@@ -156,7 +159,7 @@ MIDDLEWARE = [
 # Rate limiting configuration by environment
 if DEBUG:
     THROTTLE_RATES = {
-        'user': '1000/hour',
+        'user': '10000/hour',
         'anon': '200/hour', 
         'login': '10/min',
         'register': '5/hour',
@@ -198,10 +201,16 @@ REST_FRAMEWORK = {
 }
 
 # Stripe configuration
-STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY')
-STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY')
+STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')
+STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')
+PAYPAL_CLIENT_ID = env('PAYPAL_CLIENT_ID', default='')
+PAYPAL_SECRET = env('PAYPAL_SECRET', default='')
+PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX', default=True)
+PAYPAL_WEBHOOK_ID = env('PAYPAL_WEBHOOK_ID', default='')
 
 GEO_LOCK_ENABLED = env.bool('GEO_LOCK_ENABLED', default=False)
+
+JWT_SIGNING_KEY = env('JWT_SIGNING_KEY', default=SECRET_KEY)
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
@@ -210,7 +219,7 @@ SIMPLE_JWT = {
     'ROTATE_REFRESH_TOKENS': True,
     'BLACKLIST_AFTER_ROTATION': True,
     'ALGORITHM': 'HS256',
-    'SIGNING_KEY': SECRET_KEY,
+    'SIGNING_KEY': JWT_SIGNING_KEY,
     'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
     'TOKEN_BLACKLIST_ENABLED': True,
     'TOKEN_OBTAIN_SERIALIZER': 'apps.auth_api.serializers.CustomTokenObtainPairSerializer',
@@ -494,6 +503,11 @@ if "pytest" in sys.modules:
     CELERY_TASK_ALWAYS_EAGER = True
     CELERY_TASK_EAGER_PROPAGATES = True
     EMAIL_BACKEND = "django.core.mail.backends.locmem.EmailBackend"
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
 else:
     # Email configuration (Resend SMTP / SendGrid / fallback console)
     SENDGRID_API_KEY = env('SENDGRID_API_KEY', default='')
@@ -583,7 +597,7 @@ LOGGING = {
         },
         '': {
             'handlers': ['console'],
-            'level': 'DEBUG' if DEBUG else 'INFO',
+            'level': env('LOG_LEVEL', default='DEBUG' if DEBUG else 'INFO'),
         },
     },
 }
@@ -606,24 +620,44 @@ if not DEBUG:
             return True
         return any(v.startswith(p) or v == p for p in _PLACEHOLDER_PREFIXES)
 
-    _required_prod_vars = [
-        'SECRET_KEY',
-        'STRIPE_SECRET_KEY',
-        'STRIPE_PUBLISHABLE_KEY',
-        'STRIPE_WEBHOOK_SECRET',
-    ]
+    _required_prod_vars = ['SECRET_KEY']
     for _var in _required_prod_vars:
         if _is_placeholder(env(_var, default='')):
             raise RuntimeError(
                 'Variable requerida en produccion no definida o con placeholder: ' + _var
             )
 
-    # Stripe test mode en produccion: warning, no error
-    if env('STRIPE_SECRET_KEY', default='').startswith('sk_test_'):
+    _stripe_enabled_in_env = bool(STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY)
+    _paypal_enabled_in_env = bool(PAYPAL_CLIENT_ID and PAYPAL_SECRET)
+
+    if not (_stripe_enabled_in_env or _paypal_enabled_in_env):
+        raise RuntimeError(
+            'No hay proveedor de pagos configurado para produccion. '
+            'Define Stripe o PayPal antes de aceptar cobros reales.'
+        )
+
+    if _stripe_enabled_in_env:
+        for _var in ['STRIPE_SECRET_KEY', 'STRIPE_PUBLISHABLE_KEY', 'STRIPE_WEBHOOK_SECRET']:
+            if _is_placeholder(env(_var, default='')):
+                raise RuntimeError(
+                    'Variable requerida para Stripe en produccion no definida o con placeholder: ' + _var
+                )
+
+    STRIPE_LIVE_MODE_CONFIRMED = env.bool('STRIPE_LIVE_MODE_CONFIRMED', default=False)
+    _using_stripe_test_keys = STRIPE_SECRET_KEY.startswith('sk_test_')
+
+    if _stripe_enabled_in_env and _using_stripe_test_keys and not STRIPE_LIVE_MODE_CONFIRMED:
+        raise RuntimeError(
+            'STRIPE_SECRET_KEY comienza con sk_test_ y DEBUG=False. '
+            'Usa claves live en produccion o define STRIPE_LIVE_MODE_CONFIRMED=True '
+            'solo para staging con claves test.'
+        )
+
+    if _stripe_enabled_in_env and _using_stripe_test_keys and STRIPE_LIVE_MODE_CONFIRMED:
         import warnings
         warnings.warn(
-            'STRIPE_SECRET_KEY es clave de test (sk_test_). '
-            'Reemplazar con clave live antes de aceptar pagos reales.',
+            'Stripe esta en modo TEST con STRIPE_LIVE_MODE_CONFIRMED=True. '
+            'Solo aceptable en staging; produccion real debe usar sk_live_.',
             RuntimeWarning,
             stacklevel=2,
         )

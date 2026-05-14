@@ -2,100 +2,120 @@ from django.core.management.base import BaseCommand
 
 from apps.subscriptions_api.models import SubscriptionPlan
 
-
 class Command(BaseCommand):
     help = 'Update existing subscription plans to new structure'
 
     def handle(self, *args, **options):
         updates = {
             'basic': {
-                'description': 'Para barberias pequenas que necesitan ordenar citas, cobros y seguimiento de clientes sin complicarse.',
-                'price': 29.99,
-                'max_employees': 8,
-                'max_users': 16,
+                'description': 'Entrada seria para barberias pequenas que necesitan citas, caja, clientes y reportes sin complicarse.',
+                'price': 29.00,
+                'max_employees': 5,
+                'max_users': 10,
                 'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': False,
-                    'advanced_reports': False,
+                    
                     'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
-                    'Ideal para empezar a operar con orden',
-                    'Sin limite de tiempo y listo para uso diario'
+                    'Entrada seria para operar con orden',
+                    'Ideal para equipos pequenos'
                 ]
             },
             'standard': {
-                'description': 'El plan recomendado para negocios en crecimiento que necesitan mas control, visibilidad y operacion multi-sucursal.',
-                'price': 69.99,
-                'max_employees': 25,
-                'max_users': 50,
-                'allows_multiple_branches': True,
+                'description': 'El plan recomendado para negocios en crecimiento que necesitan inventario, reportes avanzados y mas capacidad.',
+                'price': 59.00,
+                'max_employees': 15,
+                'max_users': 30,
+                'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    'advanced_reports': True,
-                    'multi_location': True,
+                    
+                    'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
-                    'La mejor relacion valor-precio para crecer',
-                    'Mas control operativo para equipos y sucursales'
+                    'Plan recomendado para la mayoria de barberias',
+                    'Mas control operativo sin dar un salto grande de precio'
                 ]
             },
             'premium': {
-                'description': 'Para operaciones grandes que necesitan crecer sin topes fijos, reforzar su marca y recibir atencion prioritaria.',
-                'price': 129.99,
-                'max_employees': 0,
-                'max_users': 0,
+                'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
+                'price': 99.00,
+                'max_employees': 50,
+                'max_users': 100,
                 'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    'advanced_reports': True,
+                    
                     'multi_location': True,
                     'role_permissions': True,
                     'api_access': True,
                     'custom_branding': True
                 },
                 'commercial_benefits': [
-                    'Atencion prioritaria',
-                    'Acompanamiento comercial',
-                    'Escala sin limite de empleados ni usuarios'
+                    'Pensado para operaciones con varias areas o sucursales',
+                    'Permisos avanzados, branding y mas capacidad'
+                ]
+            },
+            'enterprise': {
+                'description': 'Para cadenas y operaciones que necesitan escala ilimitada, soporte prioritario y acompanamiento.',
+                'price': 149.00,
+                'max_employees': 0,
+                'max_users': 0,
+                'allows_multiple_branches': True,
+                'features': {
+                    'appointments': True,
+                    'reports': True,
+                    'cash_register': True,
+                    'client_history': True,
+                    'inventory': True,
+                    
+                    'multi_location': True,
+                    'role_permissions': True,
+                    'api_access': True,
+                    'custom_branding': True,
+                    'priority_support': True
+                },
+                'commercial_benefits': [
+                    'Escala sin limite de empleados ni usuarios',
+                    'Soporte prioritario y acompanamiento comercial',
+                    'Ideal para cadenas y operaciones con necesidades custom'
                 ]
             }
         }
 
-        try:
-            enterprise = SubscriptionPlan.objects.get(name='enterprise')
-            enterprise.is_active = False
-            enterprise.save()
-            self.stdout.write(self.style.WARNING('Desactivado plan: enterprise'))
-        except SubscriptionPlan.DoesNotExist:
-            pass
-
         for plan_name, data in updates.items():
-            try:
-                plan = SubscriptionPlan.objects.get(name=plan_name)
+            plan, created = SubscriptionPlan.objects.get_or_create(
+                name=plan_name,
+                defaults={**data, 'duration_month': 1, 'is_active': True, 'is_public': True}
+            )
+            if not created:
                 for key, value in data.items():
                     setattr(plan, key, value)
+                plan.is_active = True
+                plan.is_public = True
                 plan.save()
                 self.stdout.write(self.style.SUCCESS(f'Actualizado plan: {plan.get_name_display()}'))
-            except SubscriptionPlan.DoesNotExist:
-                self.stdout.write(self.style.ERROR(f'Plan no encontrado: {plan_name}'))
+            else:
+                self.stdout.write(self.style.SUCCESS(f'Creado plan: {plan.get_name_display()}'))
 
         self.stdout.write(self.style.SUCCESS('Planes actualizados correctamente'))

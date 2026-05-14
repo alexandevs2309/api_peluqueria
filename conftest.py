@@ -11,6 +11,7 @@ import pytest
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from faker import Faker
+from apps.auth_api.factories import UserFactory as _UserFactory
 from apps.clients_api.models import Client
 from apps.services_api.models import Service
 from apps.roles_api.models import Role
@@ -29,7 +30,7 @@ def client_factory():
     class ClientFactory:
         @staticmethod
         def create(**kwargs):
-            user = User.objects.create_user(email=faker.email(), password='testpass123')
+            user = _UserFactory()
             defaults = {
                 'user': user,
                 'full_name': faker.name(),
@@ -57,10 +58,7 @@ def api_client():
 @pytest.fixture
 def authenticated_user(api_client):
     """Crea y autentica un usuario para pruebas."""
-    user = User.objects.create_user(
-        email=faker.email(),
-        password='testpass123'
-    )
+    user = _UserFactory()
     api_client.force_authenticate(user=user)
     return user, api_client
 
@@ -84,11 +82,7 @@ def service_factory():
 @pytest.fixture
 def stylist():
     """Crea y retorna un usuario estilista y su empleado asociado."""
-    user = User.objects.create_user(
-        email=faker.email(),
-        password='testpass123',
-        is_staff=True
-    )
+    user = _UserFactory(is_staff=True)
     return user, None  # Assuming employee object is not needed or created elsewhere
 
 
@@ -101,11 +95,11 @@ def stylist_role():
 
 @pytest.fixture
 def user(db):
-    return User.objects.create_user(email="test@example.com", password="pass")
+    return _UserFactory(email="test@example.com")
 
 @pytest.fixture
 def another_user(db):
-    return User.objects.create_user(email="other@example.com", password="pass")
+    return _UserFactory(email="other@example.com")
 
 @pytest.fixture
 def user_subscription(user):
@@ -121,8 +115,11 @@ def ensure_test_owner(db):
     """Garantiza que exista al menos un usuario en la BD para servir como owner de Tenants en tests."""
     if not User.objects.exists():
         try:
-            User.objects.create_user(email='test-tenant-owner@example.com', password='pass')
+            User.objects.create_user(
+                email='test-tenant-owner@example.com',
+                password='pass',
+                is_superuser=True,
+            )
         except Exception:
-            # Si la tabla de usuarios aún no está disponible durante migraciones, ignorar
             pass
     return None

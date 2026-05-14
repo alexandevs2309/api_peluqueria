@@ -6,7 +6,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
 def mark_expired_appointments(self):
     """Mark appointments as no_show if they passed and are still scheduled"""
     try:
@@ -26,7 +26,6 @@ def mark_expired_appointments(self):
             logger.info("No expired appointments to mark as no_show")
             return "Marked 0 appointments as no_show"
 
-        # Snapshot for notifications before bulk update.
         expired_data = list(expired_appointments)
         appointment_ids = [appt.id for appt in expired_data]
 
@@ -57,7 +56,7 @@ def mark_expired_appointments(self):
         logger.error(f"Error marking expired appointments: {str(e)}")
         raise self.retry(exc=e)
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
 def send_daily_appointment_reminders(self):
     """Send reminders for appointments scheduled for today"""
     try:
@@ -88,7 +87,7 @@ def send_daily_appointment_reminders(self):
         logger.error(f"Error sending daily reminders: {str(e)}")
         raise self.retry(exc=e)
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
 def notify_upcoming_appointments(self):
     """Notify about appointments starting in 1 hour"""
     try:

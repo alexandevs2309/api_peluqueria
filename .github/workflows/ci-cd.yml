@@ -146,9 +146,63 @@ jobs:
     environment: production
     
     steps:
-    - name: Deploy to production
+    - name: Trigger Render deploy
       run: |
-        echo "🚀 Deploying to production..."
-        # Aquí irían los comandos específicos de deployment
-        # Por ejemplo: kubectl, docker-compose, etc.
-        echo "✅ Deployment completed"
+        RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+          -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+        echo "Render response: $RESPONSE"
+        if [ "$RESPONSE" != "200" ] && [ "$RESPONSE" != "201" ]; then
+          echo "Deploy hook failed with status $RESPONSE"
+          exit 1
+        fi
+        echo "Deploy triggered"
+
+    - name: Wait for deploy to complete
+      run: |
+        echo "Waiting 90s for Render to build and start..."
+        sleep 90
+
+    - name: Smoke test health check
+      run: |
+        MAX_RETRIES=10
+        RETRY_DELAY=15
+        API_URL="${{ secrets.PRODUCTION_API_URL }}"
+
+        for i in $(seq 1 $MAX_RETRIES); do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 10 "${API_URL}/healthz/")
+          echo "Attempt $i: HTTP $HTTP_STATUS"
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "Health check passed"
+            exit 0
+          fi
+          sleep $RETRY_DELAY
+        done
+
+        echo "Health check failed after $MAX_RETRIES attempts"
+        exit 1
+
+    - name: Smoke test API schema
+      run: |
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          --max-time 10 \
+          "${{ secrets.PRODUCTION_API_URL }}/schema/")
+        if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "403" ]; then
+          echo "API schema endpoint reachable (HTTP $HTTP_STATUS)"
+        else
+          echo "API schema unreachable (HTTP $HTTP_STATUS)"
+          exit 1
+        fi
+
+    - name: Notify on success
+      if: success()
+      run: |
+        echo "Deploy SUCCESS - $(date -u '+%Y-%m-%d %H:%M UTC')"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref_name }}"
+
+    - name: Notify on failure
+      if: failure()
+      run: |
+        echo "Deploy FAILED - manual intervention required"
+        echo "Last commit: ${{ github.sha }}"

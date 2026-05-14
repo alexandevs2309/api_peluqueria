@@ -10,7 +10,7 @@ class InAppNotificationSerializer(serializers.ModelSerializer):
 class NotificationTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationTemplate
-        fields = '__all__'
+        fields = ['id', 'name', 'type', 'notification_type', 'subject', 'body', 'is_html', 'is_active', 'available_variables']
 
 class NotificationSerializer(serializers.ModelSerializer):
     template_name = serializers.CharField(source='template.name', read_only=True)
@@ -28,7 +28,11 @@ class NotificationSerializer(serializers.ModelSerializer):
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationPreference
-        fields = '__all__'
+        fields = ['id', 'email_enabled', 'sms_enabled', 'push_enabled',
+                  'appointment_reminders', 'payment_notifications',
+                  'earnings_notifications', 'system_notifications',
+                  'marketing_notifications', 'quiet_hours_start', 'quiet_hours_end',
+                  'timezone']
 
 class NotificationLogSerializer(serializers.ModelSerializer):
     notification_subject = serializers.CharField(source='notification.subject', read_only=True)

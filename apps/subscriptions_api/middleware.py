@@ -20,12 +20,32 @@ BILLING_ACCESS_PATHS = [
     '/api/subscriptions/renew/',
 ]
 
+PAYWALL_SAFE_PREFIXES = [
+    '/api/subscriptions/me/entitlements/',
+    '/api/subscriptions/renew/',
+    '/api/tenants/current/',
+    '/api/tenants/locale/',
+    '/api/tenants/subscription-status/',
+]
+
+PAYWALL_SAFE_READONLY_PREFIXES = [
+    '/api/notifications/',
+]
+
 class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
     Middleware para validar estado de suscripción y expiración de planes
     """
     
     def process_request(self, request):
+        if any(request.path.startswith(prefix) for prefix in PAYWALL_SAFE_PREFIXES):
+            return None
+
+        if request.method in ('GET', 'HEAD', 'OPTIONS'):
+            for prefix in PAYWALL_SAFE_READONLY_PREFIXES:
+                if request.path.startswith(prefix):
+                    return None
+
         for exempt_path in BILLING_WEBHOOK_PATHS:
             if request.path.startswith(exempt_path):
                 return None
@@ -181,6 +201,9 @@ class APIRateLimitMiddleware(MiddlewareMixin):
         '/api/subscriptions/me/entitlements/',
         '/api/subscriptions/renew/',
         '/api/settings/barbershop/',
+        '/api/tenants/locale/',
+        '/api/tenants/current/',
+        '/api/auth/verify/',
     ]
     
     def process_request(self, request):

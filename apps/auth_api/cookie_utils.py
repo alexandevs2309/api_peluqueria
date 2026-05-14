@@ -6,9 +6,9 @@ from django.conf import settings
 
 
 def auth_cookie_samesite() -> str:
-    # Cross-origin frontend/backend deployments require SameSite=None so
-    # browsers will attach the JWT cookies on subsequent API requests.
-    return 'Lax' if settings.DEBUG else 'None'
+    # In debug (HTTP localhost), use Lax — browsers reject SameSite=None without Secure.
+    # In production (HTTPS cross-origin), None is required so cookies are sent cross-site.
+    return 'None' if not settings.DEBUG else 'Lax'
 
 
 def auth_cookie_secure() -> bool:

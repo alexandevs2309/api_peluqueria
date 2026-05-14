@@ -1,3 +1,4 @@
+import stripe
 from rest_framework import viewsets, permissions, status, serializers
 import logging
 logger = logging.getLogger(__name__)
@@ -8,7 +9,7 @@ from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
 from django.db.models import Sum, Q
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from apps.core.permissions import IsSuperAdmin
 from apps.settings_api.barbershop_models import BarbershopSettings
 from django.conf import settings
@@ -36,6 +37,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         'print_receipt': 'pos_api.view_sale',
         'search_sales': 'pos_api.view_sale',
         'validate_stock': 'pos_api.add_sale',
+        'create_payment_intent': 'pos_api.add_sale',
     }
 
     def _get_business_info(self, request):
@@ -357,6 +359,46 @@ class SaleViewSet(viewsets.ModelViewSet):
                 total=total_with_discount
             )
 
+            # Loyalty: Redimir puntos (descuento por canje)
+            from apps.clients_api.models import LoyaltyTransaction
+            redeem_points = int(self.request.data.get('redeem_points', 0))
+            if redeem_points > 0:
+                if not sale.client:
+                    raise serializers.ValidationError("Debe seleccionar un cliente para canjear puntos")
+                if sale.client.loyalty_points < redeem_points:
+                    raise serializers.ValidationError("Puntos insuficientes")
+                redeem_rate = Decimal(str(getattr(settings, 'POS_LOYALTY_REDEEM_RATE', 10)))
+                discount_from_points = Decimal(str(redeem_points)) / redeem_rate
+                discount_from_points = discount_from_points.quantize(Decimal('0.01'), rounding=ROUND_DOWN)
+                sale.client.loyalty_points -= redeem_points
+                sale.client.save(update_fields=['loyalty_points'])
+                LoyaltyTransaction.objects.create(
+                    client=sale.client, sale=sale, points=redeem_points,
+                    transaction_type='redeemed',
+                    description=f'Canje en compra #{sale.id}'
+                )
+                sale.points_redeemed = redeem_points
+                sale.discount += discount_from_points
+                sale.total = (sale.total - discount_from_points).quantize(Decimal('0.01'), rounding=ROUND_DOWN)
+                if sale.total < Decimal('0'):
+                    sale.total = Decimal('0')
+                sale.save(update_fields=['points_redeemed', 'discount', 'total'])
+
+            # Loyalty: Auto-earn points on purchase
+            if sale.client and sale.total > 0:
+                earn_rate = Decimal(str(getattr(settings, 'POS_LOYALTY_EARN_RATE', 100)))
+                points_earned = int(sale.total // earn_rate)
+                if points_earned > 0:
+                    sale.client.loyalty_points += points_earned
+                    sale.client.save(update_fields=['loyalty_points'])
+                    LoyaltyTransaction.objects.create(
+                        client=sale.client, sale=sale, points=points_earned,
+                        transaction_type='earned',
+                        description=f'Compra #{sale.id}'
+                    )
+                    sale.points_earned = points_earned
+                    sale.save(update_fields=['points_earned'])
+
             # Auditoría de descuentos altos
             if total > 0:
                 discount_percent = (discount / total) * Decimal('100')
@@ -473,6 +515,37 @@ class SaleViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(client__phone__icontains=client_phone)
             
         return qs
+
+    @action(detail=False, methods=['post'])
+    def create_payment_intent(self, request):
+        stripe.api_key = settings.STRIPE_SECRET_KEY
+
+        amount = request.data.get('amount')
+        currency = request.data.get('currency', 'usd')
+
+        if not amount or float(amount) <= 0:
+            return Response(
+                {'error': 'Monto inválido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            intent = stripe.PaymentIntent.create(
+                amount=int(round(float(amount) * 100)),
+                currency=currency.lower(),
+                metadata={
+                    'tenant_id': str(getattr(request, 'tenant_id', '') or ''),
+                    'user_id': str(request.user.id),
+                    'source': 'pos',
+                }
+            )
+            return Response({'client_secret': intent.client_secret, 'id': intent.id})
+        except stripe.error.StripeError as e:
+            logger.error(f"Stripe error creating payment intent: {str(e)}")
+            return Response(
+                {'error': 'Error al procesar el pago con tarjeta'},
+                status=status.HTTP_502_BAD_GATEWAY
+            )
 
     @action(detail=False, methods=['post'])
     def open_register(self, request):
@@ -1095,102 +1168,124 @@ def daily_summary(request):
 
 @api_view(['GET'])
 def dashboard_stats(request):
-    """Estadísticas para el dashboard del POS"""
+    """Estadísticas para el dashboard del POS con filtros avanzados"""
     from django.core.cache import cache
     from .models import SaleDetail
-    from django.db.models import Count, F, Sum, Case, When, DecimalField
+    from django.db.models import Count, Sum
     from datetime import datetime, timedelta
-    
-    # Cache key basado en usuario y tenant
-    cache_key = f'dashboard_stats_{request.user.id}_{getattr(request.user.tenant, "id", "none")}'
+
+    today = timezone.localdate()
+
+    start_date = request.GET.get('start_date')
+    end_date = request.GET.get('end_date')
+
+    if start_date:
+        try:
+            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+        except ValueError:
+            start_date = today.replace(day=1)
+    else:
+        start_date = today.replace(day=1)
+
+    if end_date:
+        try:
+            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            end_date = today
+    else:
+        end_date = today
+
+    cache_key = f'dashboard_stats_{request.user.id}_{getattr(request.user.tenant, "id", "none")}_{start_date}_{end_date}'
     cached_data = cache.get(cache_key)
-    
     if cached_data:
         return Response(cached_data)
-    
-    today = timezone.localdate()
-    
-    # Determinar filtro base según usuario
+
+    base_filter = Q(pk__isnull=True)
     if request.user.is_superuser:
         base_filter = Q(user=request.user) | Q(employee__user=request.user)
     elif hasattr(request, 'tenant') and request.tenant:
         base_filter = Q(tenant=request.tenant)
-    else:
-        base_filter = Q(pk__isnull=True)  # Sin acceso
-    
-    sales_today = Sale.objects.filter(base_filter, date_time__date=today)
-    all_sales = Sale.objects.filter(base_filter)
-    
-    total_sales = all_sales.aggregate(total=Sum('total'))['total'] or 0
-    total_transactions = all_sales.count()
-    avg_ticket = total_sales / total_transactions if total_transactions > 0 else 0
-    
-    # Top productos vendidos hoy usando agregación SQL - OPTIMIZADO
-    if request.user.is_superuser:
-        product_filter = Q(sale__user=request.user) | Q(sale__employee__user=request.user)
-    elif hasattr(request, 'tenant') and request.tenant:
-        product_filter = Q(sale__tenant=request.tenant)
-    else:
-        product_filter = Q(pk__isnull=True)
-    
-    # ELIMINADO LOOP N+1: Usar agregación SQL directa
+
+    range_filter = base_filter & Q(date_time__date__gte=start_date) & Q(date_time__date__lte=end_date)
+    today_filter = base_filter & Q(date_time__date=today)
+
+    all_in_range = Sale.objects.filter(range_filter)
+    sales_today = Sale.objects.filter(today_filter)
+
+    # KPIs del rango
+    revenue_range = all_in_range.aggregate(total=Sum('total'))['total'] or 0
+    transactions_range = all_in_range.count()
+    avg_ticket = revenue_range / transactions_range if transactions_range > 0 else 0
+    revenue_today = sales_today.aggregate(total=Sum('total'))['total'] or 0
+
+    # Método de pago breakdown
+    payment_breakdown = all_in_range.values('payment_method').annotate(
+        total=Sum('total'), count=Count('id')
+    ).order_by('-total')
+
+    # Top productos
     top_products = SaleDetail.objects.filter(
-        product_filter,
-        sale__date_time__date=today,
-        content_type__model='product'
+        Q(sale__in=all_in_range), content_type__model='product'
+    ).values('name').annotate(sold=Sum('quantity')).order_by('-sold')[:5]
+
+    # Top servicios
+    top_services = SaleDetail.objects.filter(
+        Q(sale__in=all_in_range), content_type__model='service'
     ).values('name').annotate(
-        sold=Sum('quantity')
-    ).order_by('-sold')[:5]
-    
-    # Ingresos mensuales usando agregación SQL - OPTIMIZADO
-    monthly_revenue = []
+        sold=Sum('quantity'), revenue=Sum('price')
+    ).order_by('-revenue')[:5]
+
+    # Ingresos diarios en el rango
+    daily_revenue = all_in_range.extra(
+        select={'day': "CAST(date_time AS DATE)"}
+    ).values('day').annotate(total=Sum('total')).order_by('day')
+
+    daily_data = []
+    for entry in daily_revenue:
+        day_str = entry['day'].strftime('%d/%m') if hasattr(entry['day'], 'strftime') else str(entry['day'])
+        daily_data.append({'day': day_str, 'revenue': float(entry['total'])})
+
+    # Ingresos mensuales (últimos 6 meses)
     current_date = today.replace(day=1)
-    
-    # Usar una sola query para todos los meses
     six_months_ago = current_date - timedelta(days=180)
-    monthly_data = all_sales.filter(
-        date_time__date__gte=six_months_ago
+    monthly_data = Sale.objects.filter(
+        base_filter, date_time__date__gte=six_months_ago
     ).extra(
-        select={'month': "DATE_TRUNC('month', date_time)"}
-    ).values('month').annotate(
-        total=Sum('total')
-    ).order_by('month')
-    
-    # Crear diccionario para lookup rápido
-    monthly_dict = {item['month'].strftime('%Y-%m'): float(item['total']) for item in monthly_data}
-    
-    for i in range(6):
-        month_start = current_date
-        month_key = month_start.strftime('%Y-%m')
-        month_total = monthly_dict.get(month_key, 0)
-        
-        month_names = {
-            1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
-            7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'
-        }
-        
-        monthly_revenue.insert(0, {
-            'month': month_names[current_date.month],
-            'revenue': month_total
-        })
-        
+        select={'month': "CAST(DATE_TRUNC('month', date_time) AS DATE)"}
+    ).values('month').annotate(total=Sum('total')).order_by('month')
+
+    monthly_dict = {}
+    for item in monthly_data:
+        m = item['month']
+        if hasattr(m, 'strftime'):
+            monthly_dict[m.strftime('%Y-%m')] = float(item['total'])
+
+    month_names = {1: 'Ene', 2: 'Feb', 3: 'Mar', 4: 'Abr', 5: 'May', 6: 'Jun',
+                   7: 'Jul', 8: 'Ago', 9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic'}
+    monthly_revenue = []
+    for _ in range(6):
+        month_total = monthly_dict.get(current_date.strftime('%Y-%m'), 0)
+        monthly_revenue.insert(0, {'month': month_names[current_date.month], 'revenue': month_total})
         if current_date.month == 1:
             current_date = current_date.replace(year=current_date.year - 1, month=12)
         else:
             current_date = current_date.replace(month=current_date.month - 1)
-    
+
     data = {
-        'total_sales': float(total_sales),
-        'total_transactions': total_transactions,
+        'revenue_range': float(revenue_range),
+        'revenue_today': float(revenue_today),
+        'transactions_range': transactions_range,
         'average_ticket': float(avg_ticket),
+        'sales_today_count': sales_today.count(),
+        'payment_breakdown': list(payment_breakdown),
         'top_products': list(top_products),
-        'hourly_data': [],
-        'monthly_revenue': monthly_revenue
+        'top_services': list(top_services),
+        'daily_revenue': daily_data,
+        'monthly_revenue': monthly_revenue,
+        'filter_range': {'start': start_date.isoformat(), 'end': end_date.isoformat()},
     }
-    
-    # Cache por 60 segundos
+
     cache.set(cache_key, data, 60)
-    
     return Response(data)
 
 @api_view(['GET'])

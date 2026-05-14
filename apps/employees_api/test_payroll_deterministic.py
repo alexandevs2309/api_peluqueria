@@ -20,10 +20,9 @@ class TestPayrollDeterministic:
     @pytest.fixture
     def setup_data(self):
         """Setup común para todos los tests"""
-        owner = User.objects.create_user(email='owner2@test.com', password='pass', full_name='Owner2')
+        owner = User.objects.create_superuser(email='owner2@test.com', password='pass', full_name='Owner2')
         tenant = Tenant.objects.create(name="Test Tenant", subdomain='test-tenant-deterministic', owner=owner)
         user = User.objects.create_user(
-            username="testuser",
             email="test@test.com",
             password="test123",
             tenant=tenant
@@ -32,9 +31,9 @@ class TestPayrollDeterministic:
         employee = Employee.objects.create(
             user=user,
             tenant=tenant,
-            payment_type='commission',
+            payment_type='mixed',
             commission_rate=Decimal('10.00'),
-            fixed_salary=Decimal('0.00')
+            fixed_salary=Decimal('2000.00')
         )
         
         period = PayrollPeriod.objects.create(
@@ -42,7 +41,11 @@ class TestPayrollDeterministic:
             period_type='biweekly',
             period_start=timezone.now().date(),
             period_end=timezone.now().date() + timedelta(days=14),
-            status='open'
+            status='open',
+            base_salary=Decimal('1000.00'),
+            commission_earnings=Decimal('0.00'),
+            gross_amount=Decimal('1000.00'),
+            net_amount=Decimal('1000.00')
         )
         
         return {
@@ -58,14 +61,14 @@ class TestPayrollDeterministic:
         
         sale = Sale.objects.create(
             employee=employee,
+            tenant=setup_data['tenant'],
+            user=setup_data['user'],
+            date_time=timezone.now(),
             total=Decimal('100.00'),
+            paid=Decimal('100.00'),
+            payment_method='cash',
             status='confirmed'
         )
-        
-        # Aplicar snapshot manualmente (en producción lo hace perform_create)
-        from apps.pos_api.services import SaleCommissionService
-        SaleCommissionService.apply_commission_snapshot(sale, employee)
-        sale.save()
         
         assert sale.commission_rate_snapshot == Decimal('10.00')
         assert sale.commission_amount_snapshot == Decimal('10.00')
@@ -77,12 +80,14 @@ class TestPayrollDeterministic:
         # Venta con comisión 10%
         sale1 = Sale.objects.create(
             employee=employee,
+            tenant=setup_data['tenant'],
+            user=setup_data['user'],
+            date_time=timezone.now(),
             total=Decimal('100.00'),
+            paid=Decimal('100.00'),
+            payment_method='cash',
             status='confirmed'
         )
-        from apps.pos_api.services import SaleCommissionService
-        SaleCommissionService.apply_commission_snapshot(sale1, employee)
-        sale1.save()
         
         original_commission = sale1.commission_amount_snapshot
         
@@ -103,16 +108,18 @@ class TestPayrollDeterministic:
         period = setup_data['period']
         user = setup_data['user']
         
-        # Crear venta con comisión
+        # Crear venta con comisión (Sale.save() auto-captura snapshot)
         sale = Sale.objects.create(
             employee=employee,
+            tenant=setup_data['tenant'],
+            user=setup_data['user'],
+            date_time=timezone.now(),
             period=period,
             total=Decimal('100.00'),
+            paid=Decimal('100.00'),
+            payment_method='cash',
             status='confirmed'
         )
-        from apps.pos_api.services import SaleCommissionService
-        SaleCommissionService.apply_commission_snapshot(sale, employee)
-        sale.save()
         
         # Simular refund
         sale.status = 'refunded'
@@ -154,15 +161,18 @@ class TestPayrollDeterministic:
         period = setup_data['period']
         
         # Crear venta con snapshot
+        # Crear venta con comisión (Sale.save() auto-captura snapshot al crear)
         sale = Sale.objects.create(
             employee=employee,
+            tenant=setup_data['tenant'],
+            user=setup_data['user'],
+            date_time=timezone.now(),
             period=period,
             total=Decimal('100.00'),
+            paid=Decimal('100.00'),
+            payment_method='cash',
             status='confirmed'
         )
-        from apps.pos_api.services import SaleCommissionService
-        SaleCommissionService.apply_commission_snapshot(sale, employee)
-        sale.save()
         
         # Cambiar tasa del empleado
         employee.commission_rate = Decimal('50.00')
@@ -220,15 +230,18 @@ class TestPayrollDeterministic:
         user = setup_data['user']
         
         # Venta con comisión
+        # Crear venta con comisión (Sale.save() auto-captura snapshot al crear)
         sale = Sale.objects.create(
             employee=employee,
+            tenant=setup_data['tenant'],
+            user=setup_data['user'],
+            date_time=timezone.now(),
             period=period,
             total=Decimal('100.00'),
+            paid=Decimal('100.00'),
+            payment_method='cash',
             status='confirmed'
         )
-        from apps.pos_api.services import SaleCommissionService
-        SaleCommissionService.apply_commission_snapshot(sale, employee)
-        sale.save()
         
         # Ajuste positivo (bono)
         CommissionAdjustment.objects.create(
@@ -267,18 +280,24 @@ class TestPayrollDeterministic:
             effective_date=timezone.now().date() - timedelta(days=1),
             payment_type='commission',
             commission_rate=Decimal('15.00'),
-            fixed_salary=Decimal('0.00'),
-            tenant=setup_data['tenant']
+            fixed_salary=Decimal('0.00')
         )
         
         # Crear venta
         sale = Sale.objects.create(
             employee=employee,
+            tenant=setup_data['tenant'],
+            user=setup_data['user'],
+            date_time=timezone.now(),
             total=Decimal('100.00'),
-            status='confirmed'
+            paid=Decimal('100.00'),
+            payment_method='cash',
+            status='draft'
         )
         from apps.pos_api.services import SaleCommissionService
         SaleCommissionService.apply_commission_snapshot(sale, employee)
+        sale.save()
+        sale.status = 'confirmed'
         sale.save()
         
         # Debe usar tasa del historial (15%), no del empleado (10%)

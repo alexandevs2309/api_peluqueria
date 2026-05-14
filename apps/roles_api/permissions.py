@@ -1,49 +1,13 @@
 from rest_framework.permissions import BasePermission
-from .models import UserRole
+from apps.roles_api.models import UserRole
 
-class RolePermission(BasePermission):
-    """
-    Verifica si el usuario tiene uno de los roles permitidos.
-    """
-    def __init__(self, allowed_roles=None):
-        self.allowed_roles = allowed_roles or []
+# Re-export unificado desde core.permissions
+from apps.core.permissions import RolePermission, role_permission_for
 
-    def has_permission(self, request, view):
-        if not request.user or not request.user.is_authenticated:
-            return False
+__all__ = ["RolePermission", "role_permission_for", "IsActiveAndRolePermission"]
 
-        if request.user.is_superuser:
-            return True
-
-        if not hasattr(request, '_cached_roles'):
-            # Filtrar roles por tenant actual usando UserRole
-            if hasattr(request, 'current_tenant') and request.current_tenant:
-                request._cached_roles = set(
-                    UserRole.objects.filter(user=request.user, tenant=request.current_tenant).values_list('role__name', flat=True)
-                )
-            else:
-                request._cached_roles = set(
-                    UserRole.objects.filter(user=request.user, tenant__isnull=True).values_list('role__name', flat=True)
-                )
-
-        return bool(set(self.allowed_roles) & request._cached_roles)
-
-def role_permission_for(roles):
-    """
-    Genera dinámicamente un permiso específico para los roles indicados.
-    """
-    return type(
-        f'RolePermissionFor{"_".join(roles)}',
-        (RolePermission,),
-        {
-            '__init__': lambda self: RolePermission.__init__(self, allowed_roles=roles)
-        }
-    )
 
 class IsActiveAndRolePermission(BasePermission):
-    """
-    Verifica que el usuario esté activo y tenga uno de los roles permitidos.
-    """
     def __init__(self, allowed_roles):
         self.allowed_roles = allowed_roles
 
@@ -52,7 +16,6 @@ class IsActiveAndRolePermission(BasePermission):
             return False
 
         if not hasattr(request, '_cached_roles'):
-            # Filtrar roles por tenant actual usando UserRole
             if hasattr(request, 'current_tenant') and request.current_tenant:
                 request._cached_roles = set(
                     UserRole.objects.filter(user=request.user, tenant=request.current_tenant).values_list('role__name', flat=True)

@@ -19,59 +19,77 @@ def _resolve_permission_tenant(request):
     return None
 
 
+def _matches_role(role_name, *candidates):
+    aliases = {
+        'Admin': 'Client-Admin',
+        'Stylist': 'Estilista',
+    }
+    normalized_role = aliases.get(role_name, role_name)
+    normalized_candidates = [aliases.get(c, c) for c in candidates]
+    return normalized_role in normalized_candidates
+
+
 class IsSuperAdmin(BasePermission):
-    """
-    Permiso que solo permite acceso a SuperAdmin.
-    Usado en endpoints administrativos globales.
-    """
     def has_permission(self, request, view):
         return request.user and request.user.is_authenticated and request.user.is_superuser
 
 
 class IsTenantAdmin(BasePermission):
-    """
-    Permiso que permite acceso a Client-Admin o SuperAdmin.
-    Usado en endpoints de gestión del tenant.
-    """
     def has_permission(self, request, view):
         user = getattr(request, 'user', None)
         if not user or not user.is_authenticated:
             return False
-        
+
         tenant = _resolve_permission_tenant(request)
         return get_effective_role_name(user, tenant=tenant) in {'SuperAdmin', 'Client-Admin'}
 
 
 class IsTenantMember(BasePermission):
-    """
-    Permiso que permite acceso a cualquier usuario con tenant asignado.
-    SuperAdmin también tiene acceso.
-    """
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
-        
+
         if request.user.is_superuser:
             return True
-        
+
         return hasattr(request.user, 'tenant') and request.user.tenant is not None
 
 
 class RolePermission(BasePermission):
     """
     Permite acceso si el usuario tiene alguno de los roles permitidos.
-    Configurar allowed_roles en la clase que hereda.
+    Usa caché en request para evitar queries repetidas.
+    Soporta alias de roles (Admin → Client-Admin, Stylist → Estilista).
     """
-    allowed_roles = ['Admin']
+
+    def __init__(self, allowed_roles=None):
+        self.allowed_roles = allowed_roles or []
 
     def has_permission(self, request, view):
         if not request.user or not request.user.is_authenticated:
             return False
 
-        tenant = _resolve_permission_tenant(request)
-        user_roles = UserRole.objects.filter(user=request.user)
-        if tenant is not None:
-            user_roles = user_roles.filter(tenant=tenant)
+        if request.user.is_superuser:
+            return True
 
-        user_roles = user_roles.values_list('role__name', flat=True)
-        return any(role in self.allowed_roles for role in user_roles)
+        if not hasattr(request, '_cached_roles'):
+            tenant = _resolve_permission_tenant(request)
+            roles_qs = UserRole.objects.filter(user=request.user)
+            if tenant is not None:
+                roles_qs = roles_qs.filter(tenant=tenant)
+            request._cached_roles = set(roles_qs.values_list('role__name', flat=True))
+
+        return any(_matches_role(role, *self.allowed_roles) for role in request._cached_roles)
+
+
+def role_permission_for(roles):
+    """
+    Genera dinámicamente un permiso específico para los roles indicados.
+    """
+    return type(
+        f'RolePermissionFor{"_".join(roles)}',
+        (RolePermission,),
+        {
+            '__init__': lambda self: RolePermission.__init__(self, allowed_roles=roles)
+        }
+    )

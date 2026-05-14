@@ -242,11 +242,39 @@ def send_trial_expired_email(tenant):
     except Exception as e:
         logger.error(f"Error sending trial expired email to {tenant.contact_email}: {str(e)}")
 
-def send_trial_warning_email(tenant, days_remaining):
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_left=None):
     """Enviar email de aviso antes de que expire el trial"""
+    if days_remaining is None:
+        days_remaining = days_left
+
+    if isinstance(tenant_id, Tenant):
+        tenant = tenant_id
+    else:
+        try:
+            tenant = Tenant.objects.select_related('owner').get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            logger.warning("send_trial_warning_email: tenant %s not found", tenant_id)
+            return
+
+    owner = tenant.owner
+    recipient = getattr(owner, 'email', None) or getattr(tenant, 'contact_email', None)
+    if not recipient:
+        logger.warning("send_trial_warning_email: tenant %s has no recipient email", tenant.id)
+        return
+
+    notification_key = f'trial_warning_{days_remaining}d'
+    if getattr(tenant, 'trial_notifications_sent', None) and tenant.trial_notifications_sent.get(notification_key):
+        logger.info(
+            "send_trial_warning_email: already sent tenant=%s days=%s",
+            tenant.subdomain,
+            days_remaining,
+        )
+        return
+
     subject = f"Tu prueba gratuita expira en {days_remaining} días - {tenant.name}"
     message = f"""
-    Hola {tenant.owner.full_name},
+    Hola {owner.full_name or owner.email},
     
     Tu prueba gratuita de {tenant.name} expira en {days_remaining} días.
     
@@ -262,7 +290,7 @@ def send_trial_warning_email(tenant, days_remaining):
     
     try:
         html_message = _build_html_email(tenant, subject, [
-            f"Hola {tenant.owner.full_name},",
+            f"Hola {owner.full_name or owner.email},",
             f"Tu prueba gratuita de {tenant.name} expira en {days_remaining} días.",
             "Para evitar suspensión, entra a configuración de suscripción y elige un plan.",
             "No esperes al último momento."
@@ -271,9 +299,14 @@ def send_trial_warning_email(tenant, days_remaining):
             subject=subject,
             message=message,
             from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[tenant.contact_email],
+            recipient_list=[recipient],
             html_message=html_message,
             fail_silently=False,
         )
+
+        if getattr(tenant, 'trial_notifications_sent', None) is not None:
+            tenant.trial_notifications_sent[notification_key] = True
+            tenant.save(update_fields=['trial_notifications_sent'])
     except Exception as e:
-        logger.error(f"Error sending trial warning email to {tenant.contact_email}: {str(e)}")
+        logger.error(f"Error sending trial warning email to {recipient}: {str(e)}")
+        raise self.retry(exc=e)

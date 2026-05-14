@@ -20,6 +20,24 @@ class ProcessedStripeEvent(models.Model):
         return f"{self.event_type} - {self.stripe_event_id}"
 
 
+class ProcessedPayPalEvent(models.Model):
+    """Registro de eventos PayPal procesados para idempotencia"""
+    paypal_event_id = models.CharField(max_length=255, unique=True, db_index=True)
+    event_type = models.CharField(max_length=100, db_index=True)
+    processed_at = models.DateTimeField(auto_now_add=True)
+    payload = models.JSONField()
+
+    class Meta:
+        ordering = ['-processed_at']
+        indexes = [
+            models.Index(fields=['paypal_event_id']),
+            models.Index(fields=['event_type', 'processed_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} - {self.paypal_event_id}"
+
+
 class ReconciliationLog(models.Model):
     """Log de reconciliaciones financieras"""
     STATUS_CHOICES = [

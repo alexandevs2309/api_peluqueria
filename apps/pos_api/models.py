@@ -28,9 +28,10 @@ class Sale(models.Model):
     period = models.ForeignKey('employees_api.PayrollPeriod', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     cash_register = models.ForeignKey('CashRegister', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     date_time = models.DateTimeField(default=timezone.now)
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    discount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    paid = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+    discount = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+    discount_reason = models.TextField(blank=True, default='', help_text='Motivo del descuento (requerido para descuentos > umbral)')
+    paid = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
     payment_method = models.CharField(max_length=50, choices=[
         ('cash', 'Cash'),
         ('card', 'Card'),
@@ -50,13 +51,17 @@ class Sale(models.Model):
         help_text='Tasa de comisión vigente al momento de la venta'
     )
     commission_amount_snapshot = models.DecimalField(
-        max_digits=10,
+        max_digits=14,
         decimal_places=2,
         null=True,
         blank=True,
         help_text='Monto de comisión calculado al momento de la venta'
     )
     
+    # Loyalty
+    points_earned = models.PositiveIntegerField(default=0, help_text='Puntos de lealtad ganados en esta venta')
+    points_redeemed = models.PositiveIntegerField(default=0, help_text='Puntos de lealtad canjeados en esta venta')
+
     # Campos de auditoría
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_updated')
@@ -100,6 +105,11 @@ class Sale(models.Model):
                 commission_rate = Decimal(str(self.employee.commission_rate)) / Decimal('100')
                 self.commission_amount_snapshot = self.total * commission_rate
             
+            return super().save(*args, **kwargs)
+        
+        # Si es partial update (update_fields), permitir cambios específicos
+        update_fields = kwargs.get('update_fields')
+        if update_fields:
             return super().save(*args, **kwargs)
         
         # Venta existente: verificar inmutabilidad
@@ -188,7 +198,7 @@ class SaleDetail(models.Model):
     # Campos para almacenar datos al momento de la venta
     name = models.CharField(max_length=255)  # Nombre del producto/servicio
     quantity = models.PositiveIntegerField(default=1)
-    price = models.DecimalField(max_digits=10, decimal_places=2)  # Precio al momento de la venta
+    price = models.DecimalField(max_digits=14, decimal_places=2)  # Precio al momento de la venta
     
 
     class Meta:
@@ -218,14 +228,16 @@ class Payment(models.Model):
             ('mixed', 'Mixed'),
             ('other', 'Other'),
         ], default='cash')
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    stripe_payment_intent_id = models.CharField(max_length=255, null=True, blank=True, help_text='Stripe PaymentIntent ID for card payments')
 
 class CashRegister(models.Model):
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='cash_registers', null=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cash_registers')
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)
-    initial_cash = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    final_cash = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    initial_cash = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+    final_cash = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
     is_open = models.BooleanField(default=True)
     
     class Meta:
@@ -233,6 +245,7 @@ class CashRegister(models.Model):
         indexes = [
             models.Index(fields=['user', 'opened_at']),
             models.Index(fields=['is_open']),
+            models.Index(fields=['tenant', 'is_open'], name='pos_api_cas_tenant__911952_idx'),
         ]
     
     def save(self, *args, **kwargs):
@@ -266,9 +279,9 @@ class CashRegister(models.Model):
 class CashCount(models.Model):
     """Arqueo de caja - conteo físico de dinero"""
     cash_register = models.ForeignKey(CashRegister, on_delete=models.CASCADE, related_name='cash_counts')
-    denomination = models.DecimalField(max_digits=10, decimal_places=2)  # 1, 5, 10, 20, 50, 100
+    denomination = models.DecimalField(max_digits=14, decimal_places=2)  # 1, 5, 10, 20, 50, 100
     count = models.IntegerField(default=0)  # cantidad de billetes/monedas
-    total = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)  # denominacion * count
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)  # denominacion * count
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -285,12 +298,13 @@ class Promotion(models.Model):
         ('combo', 'Combo Offer')
     ]
     
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='promotions', null=True, blank=True)
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     type = models.CharField(max_length=20, choices=PROMOTION_TYPES)
     conditions = models.JSONField(default=dict)  # Condiciones específicas
-    discount_value = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
-    min_amount = models.DecimalField(max_digits=10, decimal_places=2, default=0.00)
+    discount_value = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+    min_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
     start_date = models.DateTimeField()
     end_date = models.DateTimeField()
     is_active = models.BooleanField(default=True)

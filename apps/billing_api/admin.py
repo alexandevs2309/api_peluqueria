@@ -5,7 +5,7 @@ from .reconciliation_admin import *  # Import reconciliation admin classes
 
 @admin.register(Invoice)
 class InvoiceAdmin(BaseTenantAdmin):
-    tenant_lookup = "user__tenant"
+    tenant_lookup = "tenant"
     list_display = ("id", "user", "amount", "status", "is_paid", "issued_at", "due_date", "paid_at", "stripe_payment_intent_id")
     list_filter = ("status", "is_paid", "payment_method")
     search_fields = ("user__email", "stripe_payment_intent_id")

@@ -12,13 +12,26 @@ from apps.settings_api.models import SystemSettings
 User = get_user_model()
 
 
+def _setup_rbac(user, tenant):
+    from apps.roles_api.models import Role, UserRole
+    from django.contrib.auth.models import Permission
+
+    role_name = user.role or 'Client-Staff'
+    if role_name == 'SuperAdmin':
+        return
+    role, _ = Role.objects.get_or_create(name=role_name, defaults={'description': f'Test role {role_name}'})
+    perms = Permission.objects.filter(content_type__app_label='auth_api')
+    role.permissions.add(*perms)
+    UserRole.objects.get_or_create(user=user, role=role, tenant=tenant)
+
+
 class MultiTenantSecurityTests(TestCase):
     """Tests de seguridad multi-tenant"""
     
     def setUp(self):
         self.owner = User.objects.create_superuser(
             email='owner@example.com',
-            password='pass123',
+            password='pass1234',
             full_name='Test Owner',
             role='SuperAdmin'
         )
@@ -51,25 +64,28 @@ class MultiTenantSecurityTests(TestCase):
         # Crear usuarios
         self.admin_a = User.objects.create_user(
             email='admin@tenant-a.com',
-            password='pass123',
+            password='pass1234',
             full_name='Admin Tenant A',
             tenant=self.tenant_a,
             role='Client-Admin'
         )
+        _setup_rbac(self.admin_a, self.tenant_a)
         self.staff_a = User.objects.create_user(
             email='staff@tenant-a.com',
-            password='pass123',
+            password='pass1234',
             full_name='Staff Tenant A',
             tenant=self.tenant_a,
             role='Client-Staff'
         )
+        _setup_rbac(self.staff_a, self.tenant_a)
         self.admin_b = User.objects.create_user(
             email='admin@tenant-b.com',
-            password='pass123',
+            password='pass1234',
             full_name='Admin Tenant B',
             tenant=self.tenant_b,
             role='Client-Admin'
         )
+        _setup_rbac(self.admin_b, self.tenant_b)
         
         self.client = APIClient()
     
@@ -77,7 +93,7 @@ class MultiTenantSecurityTests(TestCase):
         """Login de cliente debe fallar sin tenant explícito."""
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
-            'password': 'pass123'
+            'password': 'pass1234'
         })
         self.assertEqual(response.status_code, 400)
         self.assertIn('tenant', str(response.data))
@@ -89,7 +105,7 @@ class MultiTenantSecurityTests(TestCase):
             '/api/auth/login/',
             {
                 'email': 'admin@tenant-a.com',
-                'password': 'pass123'
+                'password': 'pass1234'
             },
             HTTP_HOST='api-peluqueria-p25h.onrender.com'
         )
@@ -101,17 +117,18 @@ class MultiTenantSecurityTests(TestCase):
         """Login debe aceptar tenant como campo explícito principal."""
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
-            'password': 'pass123',
+            'password': 'pass1234',
             'tenant': 'tenant-a'
         })
         self.assertEqual(response.status_code, 200)
+        print(f"LOGIN_DEBUG: {response.status_code} {response.data}", flush=True)
         self.assertEqual(response.data['tenant']['subdomain'], 'tenant-a')
     
     def test_login_with_wrong_tenant_fails(self):
         """Login con email correcto pero tenant incorrecto debe fallar"""
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
-            'password': 'pass123',
+            'password': 'pass1234',
             'tenant_subdomain': 'tenant-b'  # ⚠️ Tenant incorrecto
         })
         self.assertEqual(response.status_code, 400)
@@ -121,7 +138,7 @@ class MultiTenantSecurityTests(TestCase):
         """Login con tenant correcto debe funcionar"""
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
-            'password': 'pass123',
+            'password': 'pass1234',
             'tenant_subdomain': 'tenant-a'
         })
         self.assertEqual(response.status_code, 200)
@@ -143,7 +160,7 @@ class MultiTenantSecurityTests(TestCase):
         # Login en tenant A
         response_a = self.client.post('/api/auth/login/', {
             'email': 'staff@tenant-a.com',
-            'password': 'pass123',
+            'password': 'pass1234',
             'tenant_subdomain': 'tenant-a'
         })
         self.assertEqual(response_a.status_code, 200)
@@ -168,7 +185,7 @@ class MultiTenantSecurityTests(TestCase):
         response = self.client.post('/api/auth/users/', {
             'email': 'hacker@tenant-a.com',
             'full_name': 'Hacker',
-            'password': 'pass123',
+            'password': 'pass1234',
             'role': 'SuperAdmin'  # ⚠️ Intento de escalada
         })
         self.assertEqual(response.status_code, 403)
@@ -180,7 +197,7 @@ class MultiTenantSecurityTests(TestCase):
         response = self.client.post('/api/auth/users/', {
             'email': 'newstaff@tenant-a.com',
             'full_name': 'New Staff',
-            'password': 'pass123',
+            'password': 'pass1234',
             'role': 'Client-Staff'
         })
         self.assertEqual(response.status_code, 201)
@@ -214,7 +231,7 @@ class MultiTenantSecurityTests(TestCase):
         response = self.client.post('/api/auth/users/', {
             'email': 'unauthorized@tenant-a.com',
             'full_name': 'Unauthorized',
-            'password': 'pass123',
+            'password': 'pass1234',
             'role': 'Client-Staff'
         })
         self.assertEqual(response.status_code, 403)
@@ -223,7 +240,7 @@ class MultiTenantSecurityTests(TestCase):
         """JWT debe contener tenant_id en claims"""
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
-            'password': 'pass123',
+            'password': 'pass1234',
             'tenant_subdomain': 'tenant-a'
         })
         self.assertEqual(response.status_code, 200)
@@ -232,7 +249,8 @@ class MultiTenantSecurityTests(TestCase):
         import jwt
         from django.conf import settings
         token = response.data['access']
-        decoded = jwt.decode(token, settings.SECRET_KEY, algorithms=['HS256'])
+        signing_key = getattr(settings, 'JWT_SIGNING_KEY', settings.SECRET_KEY)
+        decoded = jwt.decode(token, signing_key, algorithms=['HS256'])
         
         self.assertIn('tenant_id', decoded)
         self.assertEqual(decoded['tenant_id'], self.tenant_a.id)
@@ -245,7 +263,7 @@ class RoleHierarchyTests(TestCase):
     def setUp(self):
         self.owner = User.objects.create_superuser(
             email='role-owner@example.com',
-            password='pass123',
+            password='pass1234',
             full_name='Role Test Owner',
             role='SuperAdmin'
         )
@@ -263,25 +281,27 @@ class RoleHierarchyTests(TestCase):
         
         self.superadmin = User.objects.create_user(
             email='super@admin.com',
-            password='pass123',
+            password='pass1234',
             full_name='Super Admin',
             is_superuser=True,
             role='SuperAdmin'
         )
         self.client_admin = User.objects.create_user(
             email='admin@test.com',
-            password='pass123',
+            password='pass1234',
             full_name='Client Admin',
             tenant=self.tenant,
             role='Client-Admin'
         )
+        _setup_rbac(self.client_admin, self.tenant)
         self.staff = User.objects.create_user(
             email='staff@test.com',
-            password='pass123',
+            password='pass1234',
             full_name='Client Staff',
             tenant=self.tenant,
             role='Client-Staff'
         )
+        _setup_rbac(self.staff, self.tenant)
         
         self.client = APIClient()
     
@@ -291,13 +311,15 @@ class RoleHierarchyTests(TestCase):
         
         roles = ['SuperAdmin', 'Client-Admin', 'Client-Staff']
         for role in roles:
-            response = self.client.post('/api/auth/users/', {
+            data = {
                 'email': f'{role.lower()}@test.com',
                 'full_name': f'Test {role}',
-                'password': 'pass123',
+                'password': 'pass1234',
                 'role': role,
-                'tenant': self.tenant.id if role != 'SuperAdmin' else None
-            })
+            }
+            if role != 'SuperAdmin':
+                data['tenant'] = self.tenant.id
+            response = self.client.post('/api/auth/users/', data)
             self.assertIn(response.status_code, [200, 201], 
                          f'SuperAdmin should create {role}')
     
@@ -307,7 +329,7 @@ class RoleHierarchyTests(TestCase):
         response = self.client.post('/api/auth/users/', {
             'email': 'another-admin@test.com',
             'full_name': 'Another Admin',
-            'password': 'pass123',
+            'password': 'pass1234',
             'role': 'Client-Admin'
         })
         self.assertEqual(response.status_code, 403)
@@ -321,7 +343,7 @@ class RoleHierarchyTests(TestCase):
             response = self.client.post('/api/auth/users/', {
                 'email': f'{role.lower()}@test.com',
                 'full_name': f'Test {role}',
-                'password': 'pass123',
+                'password': 'pass1234',
                 'role': role
             })
             self.assertEqual(response.status_code, 201,

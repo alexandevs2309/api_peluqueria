@@ -28,4 +28,22 @@ class Client(models.Model):
 
     def __str__(self):
         return self.full_name
+
+class LoyaltyTransaction(models.Model):
+    TRANSACTION_TYPES = [
+        ('earned', 'Earned'),
+        ('redeemed', 'Redeemed'),
+    ]
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='loyalty_transactions')
+    sale = models.ForeignKey('pos_api.Sale', on_delete=models.SET_NULL, null=True, blank=True, related_name='loyalty_transactions')
+    points = models.PositiveIntegerField()
+    transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
+    description = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.client.full_name} - {self.transaction_type}: {self.points} pts"
   

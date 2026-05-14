@@ -5,6 +5,7 @@ from rest_framework import status
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from apps.tenants_api.models import Tenant
+from apps.auth_api.factories import UserFactory as _UserFactory
 from apps.tenants_api.subscription_lifecycle import (
     activate_subscription,
     archive_tenant,
@@ -35,7 +36,7 @@ def admin_user():
 
 @pytest.fixture
 def regular_user():
-    return User.objects.create_user(
+    return _UserFactory(
         email="user@test.com", 
         password="testpass123", 
         full_name="Regular User"
@@ -86,9 +87,7 @@ class TestTenantViewSet:
         url = reverse("tenant-list")
         response = api_client.get(url)
         
-        assert response.status_code == status.HTTP_200_OK
-        # Regular users should only see tenants they own
-        assert len(response.data) == 0
+        assert response.status_code == status.HTTP_403_FORBIDDEN
     
     def test_create_tenant_as_admin(self, api_client, admin_user, tenant_data):
         api_client.force_authenticate(user=admin_user)
@@ -133,7 +132,7 @@ class TestTenantViewSet:
         response = api_client.delete(url)
         
         assert response.status_code == status.HTTP_204_NO_CONTENT
-        assert not Tenant.objects.filter(pk=tenant.pk).exists()
+        assert not Tenant.objects.filter(pk=tenant.pk, deleted_at__isnull=True).exists()
     
     def test_activate_tenant(self, api_client, admin_user, tenant):
         tenant.is_active = False

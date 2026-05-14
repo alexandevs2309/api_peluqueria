@@ -5,8 +5,8 @@ FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE 1
 ENV PYTHONUNBUFFERED 1
 
-# Crear usuario no-root
-RUN groupadd -r appuser && useradd -r -g appuser -u 1000 appuser
+# Crear usuario no-root con uid/gid compatibles con docker-compose
+RUN groupadd -g 1000 appuser && useradd -r -g appuser -u 1000 appuser
 
 # Directorio de trabajo
 WORKDIR /code

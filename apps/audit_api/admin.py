@@ -4,7 +4,7 @@ from .models import AuditLog
 
 @admin.register(AuditLog)
 class AuditLogAdmin(BaseTenantAdmin):
-    tenant_lookup = 'user__tenant'
+    tenant_lookup = 'tenant'
     list_display = ('timestamp', 'user', 'action', 'source', 'object_id')  # <-- no usamos model_name
     list_filter = ('action', 'source', 'user')
     search_fields = ('user__email', 'description', 'object_id')

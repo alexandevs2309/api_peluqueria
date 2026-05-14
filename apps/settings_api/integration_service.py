@@ -145,8 +145,29 @@ class IntegrationService:
         if not IntegrationService.is_twilio_enabled():
             raise Exception("Twilio no esta habilitado")
 
-        logger.info("SMS send requested to phone=%s", phone)
-        return True
+        system_settings = IntegrationService.get_system_settings()
+        account_sid = system_settings.twilio_account_sid or os.getenv('TWILIO_ACCOUNT_SID')
+        auth_token = system_settings.twilio_auth_token or os.getenv('TWILIO_AUTH_TOKEN')
+        from_number = system_settings.twilio_phone_number or os.getenv('TWILIO_PHONE_NUMBER')
+
+        if not all([account_sid, auth_token, from_number]):
+            raise Exception("Twilio no está completamente configurado")
+
+        try:
+            from twilio.rest import Client
+            client = Client(account_sid, auth_token)
+            resp = client.messages.create(
+                body=message,
+                from_=from_number,
+                to=phone
+            )
+            logger.info("SMS sent to %s: sid=%s", phone, resp.sid)
+            return resp.sid
+        except Exception as e:
+            logger.error("Error sending SMS to %s: %s", phone, str(e))
+            from apps.audit_api.views import AuditLogViewSet
+            AuditLogViewSet.log_integration_error('Twilio', f"Error enviando SMS: {str(e)}")
+            raise Exception(f"Error enviando SMS: {str(e)}")
 
     @staticmethod
     def send_email(to_email, subject, message):

@@ -5,6 +5,8 @@ from rest_framework.test import APIClient
 from .models import Service
 from .serializers import ServiceSerializer
 from apps.roles_api.models import Role
+from apps.auth_api.factories import UserFactory
+from apps.tenants_api.models import Tenant
 from faker import Faker
 
 faker = Faker('es_ES')
@@ -14,25 +16,35 @@ def api_client():
     return APIClient()
 
 @pytest.fixture
-def authenticated_user(api_client, django_user_model):
-    user = django_user_model.objects.create_user(
+def test_tenant():
+    return Tenant.objects.create(
+        name=faker.company(),
+        subdomain=faker.slug()
+    )
+
+@pytest.fixture
+def authenticated_user(api_client, test_tenant):
+    user = UserFactory(
         email=faker.email(),
-        password='testpass123'
+        password='testpass123',
+        tenant=test_tenant
     )
     api_client.force_authenticate(user=user)
     return user, api_client
 
 @pytest.fixture
-def admin_user(api_client, django_user_model):
-    user = django_user_model.objects.create_superuser(
+def admin_user(api_client, test_tenant):
+    user = UserFactory(
         email=faker.email(),
-        password='testpass123'
+        password='testpass123',
+        is_superuser=True,
+        tenant=test_tenant
     )
     api_client.force_authenticate(user=user)
     return user, api_client
 
 @pytest.fixture
-def service_factory():
+def service_factory(test_tenant):
     class ServiceFactory:
         @staticmethod
         def create(**kwargs):
@@ -41,6 +53,7 @@ def service_factory():
                 'description': faker.text(),
                 'price': float(faker.pydecimal(left_digits=4, right_digits=2, positive=True)),
                 'is_active': True,
+                'tenant': test_tenant,
             }
             defaults.update(kwargs)
             service = Service.objects.create(**defaults)

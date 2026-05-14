@@ -110,10 +110,12 @@ class Command(BaseCommand):
         plans_data = [
             {
                 'name': 'basic',
-                'description': 'Plan básico para peluquerías pequeñas',
-                'price': 29.99,
+                'description': 'Plan Basic para barberias pequenas',
+                'price': 29.00,
                 'duration_month': 1,
                 'max_employees': 5,
+                'max_users': 10,
+                'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
                     'clients': True,
@@ -124,10 +126,12 @@ class Command(BaseCommand):
             },
             {
                 'name': 'standard',
-                'description': 'Plan estándar para peluquerías medianas',
-                'price': 59.99,
+                'description': 'Plan Pro recomendado para barberias en crecimiento',
+                'price': 59.00,
                 'duration_month': 1,
                 'max_employees': 15,
+                'max_users': 30,
+                'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
                     'clients': True,
@@ -139,10 +143,12 @@ class Command(BaseCommand):
             },
             {
                 'name': 'premium',
-                'description': 'Plan premium para peluquerías grandes',
-                'price': 99.99,
+                'description': 'Plan Business para equipos grandes',
+                'price': 99.00,
                 'duration_month': 1,
                 'max_employees': 50,
+                'max_users': 100,
+                'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
                     'clients': True,
@@ -152,10 +158,30 @@ class Command(BaseCommand):
                     'reports': 'premium',
                     'support': '24/7'
                 }
+            },
+            {
+                'name': 'enterprise',
+                'description': 'Plan Enterprise para cadenas y operaciones custom',
+                'price': 149.00,
+                'duration_month': 1,
+                'max_employees': 0,
+                'max_users': 0,
+                'allows_multiple_branches': True,
+                'features': {
+                    'appointments': True,
+                    'clients': True,
+                    'pos': True,
+                    'inventory': True,
+                    'multi_branch': True,
+                    'reports': 'enterprise',
+                    'api_access': True,
+                    'custom_branding': True,
+                    'support': 'priority'
+                }
             }
         ]
 
-        mutable_fields = ['description', 'price', 'duration_month', 'max_employees', 'features']
+        mutable_fields = ['description', 'price', 'duration_month', 'max_employees', 'max_users', 'allows_multiple_branches', 'features']
 
         for plan_data in plans_data:
             plan, created = SubscriptionPlan.objects.get_or_create(

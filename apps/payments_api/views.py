@@ -32,7 +32,12 @@ class PaymentViewSet(viewsets.ModelViewSet):
     }
     
     def get_queryset(self):
-        return Payment.objects.filter(user=self.request.user)
+        if self.request.user.is_superuser:
+            return Payment.objects.all()
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        if not tenant:
+            return Payment.objects.none()
+        return Payment.objects.filter(user__tenant=tenant)
 
     def create(self, request, *args, **kwargs):
         return Response(

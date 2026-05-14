@@ -6,7 +6,7 @@ from .models import Product, StockMovement, Supplier, ProductCategory
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
-        fields = '__all__'
+        fields = ['id', 'name', 'phone', 'email']
 
 
 class ProductCategorySerializer(serializers.ModelSerializer):
@@ -102,5 +102,5 @@ class ProductSerializer(serializers.ModelSerializer):
 class StockMovementSerializer(serializers.ModelSerializer):
     class Meta:
         model = StockMovement
-        fields = '__all__'
+        fields = ['id', 'product', 'quantity', 'reason', 'created_at']
         read_only_fields = ['created_at']

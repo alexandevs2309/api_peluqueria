@@ -532,6 +532,58 @@ def test_renew_subscription_auto_renew_returns_requires_action(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_renew_subscription_paypal_create_order_infers_provider_from_paypal_action(monkeypatch):
+    user, tenant = _make_tenant_user("paypal-create")
+    plan, _ = SubscriptionPlan.objects.get_or_create(
+        name="standard", defaults={"price": 25, "duration_month": 1}
+    )
+
+    class FakePaypalResponse:
+        status_code = 201
+
+        def json(self):
+            return {
+                "id": "ORDER-123",
+                "links": [
+                    {"rel": "approve", "href": "https://paypal.test/approve/ORDER-123"}
+                ],
+            }
+
+        @property
+        def text(self):
+            return '{"id":"ORDER-123"}'
+
+    def fake_paypal_token(self):
+        return ({
+            "token": "paypal-token",
+            "config": {
+                "sandbox": True,
+                "base_url": "https://api.sandbox.paypal.com",
+            },
+        }, None)
+
+    def fake_requests_post(*args, **kwargs):
+        return FakePaypalResponse()
+
+    monkeypatch.setattr(subscription_views.RenewSubscriptionView, "_get_paypal_access_token", fake_paypal_token)
+    monkeypatch.setattr(subscription_views.requests, "post", fake_requests_post)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    response = client.post(reverse("renew-subscription"), {
+        "paypal_action": "create_order",
+        "plan_id": plan.id,
+        "months": 1,
+        "auto_renew": False,
+    }, format="json")
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.data["provider"] == "paypal"
+    assert response.data["order_id"] == "ORDER-123"
+    assert "approve_url" in response.data
+
+
+@pytest.mark.django_db
 def test_user_subscription_change_plan_allows_unlimited_target_plan():
     user, tenant = _make_tenant_user("unlimited-user-sub")
     premium_plan = SubscriptionPlan.objects.create(

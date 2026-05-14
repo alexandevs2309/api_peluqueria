@@ -16,14 +16,14 @@ urlpatterns = [
     path('client-analytics/', views.client_analytics, name='client-analytics'),
     
     # Advanced Analytics
-    path('analytics/', analytics_views.advanced_analytics, name='advanced-analytics'),
-    path('business-intelligence/', analytics_views.business_intelligence, name='business-intelligence'),
-    path('predictive/', analytics_views.predictive_analytics, name='predictive-analytics'),
+    path('analytics/', analytics_views.AdvancedAnalyticsView.as_view(), name='advanced-analytics'),
+    path('business-intelligence/', analytics_views.BusinessIntelligenceView.as_view(), name='business-intelligence'),
+    path('predictive/', analytics_views.PredictiveAnalyticsView.as_view(), name='predictive-analytics'),
     
     # Real-time Metrics
-    path('realtime/', realtime_views.realtime_metrics, name='realtime-metrics'),
-    path('live-dashboard/', realtime_views.live_dashboard_data, name='live-dashboard'),
-    path('alerts/', realtime_views.performance_alerts, name='performance-alerts'),
+    path('realtime/', realtime_views.RealtimeMetricsView.as_view(), name='realtime-metrics'),
+    path('live-dashboard/', realtime_views.LiveDashboardView.as_view(), name='live-dashboard'),
+    path('alerts/', realtime_views.PerformanceAlertsView.as_view(), name='performance-alerts'),
     
     # SuperAdmin reports
     path('admin/', views.AdminReportsView.as_view(), name='admin-reports'),

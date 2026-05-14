@@ -37,8 +37,8 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
     
     @action(detail=False, methods=['get'])
     def low_stock(self, request):
-        """Obtener productos con stock bajo"""
-        products = Product.objects.filter(
+        """Obtener productos con stock bajo (filtrado por tenant vía TenantScopedViewSet)"""
+        products = self.get_queryset().filter(
             stock__lte=F('min_stock'),
             is_active=True
         )
@@ -79,16 +79,17 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
     
     @action(detail=False, methods=['get'])
     def stock_report(self, request):
-        """Reporte general de inventario"""
+        """Reporte general de inventario (filtrado por tenant)"""
         from django.db.models import Sum, Count
         
-        total_products = Product.objects.filter(is_active=True).count()
-        low_stock_count = Product.objects.filter(
+        qs = self.get_queryset().filter(is_active=True)
+        
+        total_products = qs.count()
+        low_stock_count = qs.filter(
             stock__lte=F('min_stock'),
-            is_active=True
         ).count()
         
-        total_value = Product.objects.filter(is_active=True).aggregate(
+        total_value = qs.aggregate(
             total=Sum(F('stock') * F('price'))
         )['total'] or 0
         
@@ -123,14 +124,23 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
 @api_view(['GET'])
 @permission_classes([tenant_permission('inventory_api.view_product')])
 def low_stock_alerts(request):
-    """API endpoint para alertas de stock bajo"""
-    products = Product.objects.filter(
+    """API endpoint para alertas de stock bajo (filtrado por tenant)"""
+    from apps.tenants_api.models import Tenant
+    
+    qs = Product.objects.filter(
         stock__lte=F('min_stock'),
         is_active=True
     )
-    data = ProductSerializer(products, many=True).data
+    if not request.user.is_superuser:
+        tenant = getattr(request, 'tenant', None) or request.user.tenant
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        else:
+            qs = Product.objects.none()
+    
+    data = ProductSerializer(qs, many=True).data
     return Response({
-        'count': products.count(),
+        'count': qs.count(),
         'products': data
     })
 

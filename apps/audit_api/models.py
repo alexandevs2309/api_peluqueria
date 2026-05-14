@@ -9,6 +9,14 @@ User = get_user_model()
 class AuditLog(models.Model):
     """Modelo unificado para todos los logs de auditoría del sistema"""
     
+    tenant = models.ForeignKey(
+        'tenants_api.Tenant',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        help_text="Tenant al que pertenece este log"
+    )
+    
     ACTION_CHOICES = [
         ('CREATE', 'Creación'),
         ('UPDATE', 'Actualización'),

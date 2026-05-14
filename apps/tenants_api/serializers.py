@@ -19,7 +19,14 @@ class TenantSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Tenant
-        fields = "__all__"
+        fields = [
+            "id", "name", "subdomain", "owner", "owner_name",
+            "country", "locale", "currency", "date_format", "time_zone",
+            "plan_type", "subscription_plan", "subscription_plan_details",
+            "subscription_status", "trial_end_date", "access_until",
+            "max_employees", "max_users",
+            "is_active", "created_at", "updated_at", "deleted_at",
+        ]
         read_only_fields = ("id", "created_at", "updated_at", "owner", "locale", "currency", "date_format", "time_zone")
     
     def update(self, instance, validated_data):

@@ -4,7 +4,6 @@ from apps.auth_api.models import User
 from apps.subscriptions_api.models import Subscription, SubscriptionPlan, UserSubscription
 from apps.tenants_api.models import Tenant
 
-
 class Command(BaseCommand):
     help = 'Reset all tenants and subscription plans (DESTRUCTIVE)'
 
@@ -39,19 +38,19 @@ class Command(BaseCommand):
         plans = [
             {
                 'name': 'basic',
-                'description': 'Plan Profesional para barberias pequenas',
-                'price': 29.99,
+                'description': 'Entrada seria para barberias pequenas',
+                'price': 29.00,
                 'duration_month': 1,
-                'max_employees': 8,
-                'max_users': 16,
+                'max_employees': 5,
+                'max_users': 10,
                 'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': False,
-                    'advanced_reports': False,
+                    
                     'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
@@ -62,20 +61,20 @@ class Command(BaseCommand):
             },
             {
                 'name': 'standard',
-                'description': 'Plan Negocio para barberias en crecimiento',
-                'price': 69.99,
+                'description': 'Plan Pro recomendado para barberias en crecimiento',
+                'price': 59.00,
                 'duration_month': 1,
-                'max_employees': 25,
-                'max_users': 50,
-                'allows_multiple_branches': True,
+                'max_employees': 15,
+                'max_users': 30,
+                'allows_multiple_branches': False,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    'advanced_reports': True,
-                    'multi_location': True,
+                    
+                    'multi_location': False,
                     'role_permissions': False,
                     'api_access': False,
                     'custom_branding': False
@@ -85,27 +84,54 @@ class Command(BaseCommand):
             },
             {
                 'name': 'premium',
-                'description': 'Plan Premium para operaciones grandes',
-                'price': 129.99,
+                'description': 'Plan Business para equipos grandes',
+                'price': 99.00,
                 'duration_month': 1,
-                'max_employees': 0,
-                'max_users': 0,
+                'max_employees': 50,
+                'max_users': 100,
                 'allows_multiple_branches': True,
                 'features': {
                     'appointments': True,
-                    'basic_reports': True,
+                    'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    'advanced_reports': True,
+                    
                     'multi_location': True,
                     'role_permissions': True,
                     'api_access': True,
                     'custom_branding': True
                 },
                 'commercial_benefits': [
-                    'Atencion prioritaria',
-                    'Acompanamiento comercial'
+                    'Permisos avanzados',
+                    'Branding y multi-sucursal'
+                ],
+                'is_active': True
+            },
+            {
+                'name': 'enterprise',
+                'description': 'Plan Enterprise para cadenas y operaciones custom',
+                'price': 149.00,
+                'duration_month': 1,
+                'max_employees': 0,
+                'max_users': 0,
+                'allows_multiple_branches': True,
+                'features': {
+                    'appointments': True,
+                    'reports': True,
+                    'cash_register': True,
+                    'client_history': True,
+                    'inventory': True,
+                    
+                    'multi_location': True,
+                    'role_permissions': True,
+                    'api_access': True,
+                    'custom_branding': True,
+                    'priority_support': True
+                },
+                'commercial_benefits': [
+                    'Escala ilimitada',
+                    'Soporte prioritario'
                 ],
                 'is_active': True
             }

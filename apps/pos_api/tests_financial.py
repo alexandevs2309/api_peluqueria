@@ -18,7 +18,7 @@ class FinancialIntegrityTests(TestCase):
     
     def setUp(self):
         # Setup mínimo
-        self.owner = User.objects.create_user(email='owner@testsalon.com', password='pass', full_name='Owner')
+        self.owner = User.objects.create_user(email='owner@testsalon.com', password='pass', full_name='Owner', is_superuser=True)
         self.tenant = Tenant.objects.create(name='Test Salon', subdomain='test', owner=self.owner)
         self.user = User.objects.create_user(
             email='admin@test.com',
@@ -95,7 +95,7 @@ class FinancialIntegrityTests(TestCase):
         # Simular refund (debe crear adjustment)
         adjustment = CommissionAdjustment.objects.create(
             employee=self.employee,
-            period=period,
+            payroll_period=period,
             sale=sale,
             amount=Decimal('-40.00'),
             reason='refund',
@@ -176,14 +176,14 @@ class FinancialIntegrityTests(TestCase):
                 f"Comisión incorrecta para total={total}, rate={rate}"
             )
             
-            sale.delete()  # Limpiar para siguiente test
+            Sale.objects.filter(id=sale.id).delete()
 
 
 class ReportsIntegrityTests(TestCase):
     """Tests que validan que reportes NO alteran datos"""
     
     def setUp(self):
-        self.owner = User.objects.create_user(email='owner@reports.com', password='pass', full_name='Owner')
+        self.owner = User.objects.create_user(email='owner@reports.com', password='pass', full_name='Owner', is_superuser=True)
         self.tenant = Tenant.objects.create(name='Test Salon', subdomain='test', owner=self.owner)
         self.user = User.objects.create_user(
             email='admin@test.com',

@@ -1,3 +1,5 @@
+import os
+import requests
 from rest_framework import viewsets
 import logging
 from rest_framework.response import Response
@@ -13,6 +15,7 @@ from django.utils import timezone
 from .utils import get_user_active_subscription, log_subscription_event
 from django.db import transaction
 from django.conf import settings
+from django.core.cache import cache
 from stripe.error import StripeError
 import stripe
 from dateutil.relativedelta import relativedelta
@@ -23,6 +26,7 @@ from rest_framework.throttling import UserRateThrottle
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
 from apps.core.permissions import IsSuperAdmin
 from apps.auth_api.role_utils import get_effective_role_name
+from apps.settings_api.integration_service import IntegrationService
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 logger = logging.getLogger(__name__)
@@ -298,7 +302,7 @@ class SubscriptionAuditLogViewSet(viewsets.ModelViewSet):
     
 
 class MyActiveSubscriptionView(APIView):
-    permission_classes = [tenant_permission('subscriptions_api.view_usersubscription')]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         subscription = get_user_active_subscription(request.user)
@@ -309,7 +313,7 @@ class MyActiveSubscriptionView(APIView):
         return Response(serializer.data)
 
 class MyEntitlementsView(APIView):
-    permission_classes = [tenant_permission('subscriptions_api.view_usersubscription')]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request):
         # Para Super-Admin, devolver entitlements limitados (no exponer capacidades)
@@ -556,8 +560,11 @@ class RenewSubscriptionView(APIView):
         tenant.trial_end_date = None
         tenant.is_active = True
         tenant.access_until = access_until
+        if plan:
+            tenant.plan_type = plan.name
         tenant.save(update_fields=[
             'subscription_plan',
+            'plan_type',
             'subscription_status',
             'trial_end_date',
             'is_active',
@@ -578,6 +585,266 @@ class RenewSubscriptionView(APIView):
             auto_renew=auto_renew
         )
         return access_until
+
+    def _get_paypal_config(self):
+        system_settings = IntegrationService.get_system_settings()
+        client_id = (
+            system_settings.paypal_client_id
+            or os.getenv('PAYPAL_CLIENT_ID')
+            or getattr(settings, 'PAYPAL_CLIENT_ID', '')
+        )
+        client_secret = (
+            system_settings.paypal_client_secret
+            or os.getenv('PAYPAL_SECRET')
+            or getattr(settings, 'PAYPAL_SECRET', '')
+        )
+        sandbox = getattr(system_settings, 'paypal_sandbox', True)
+        if not client_id or not client_secret:
+            return None
+
+        base_url = 'https://api.sandbox.paypal.com' if sandbox else 'https://api.paypal.com'
+        return {
+            'client_id': client_id,
+            'client_secret': client_secret,
+            'sandbox': sandbox,
+            'base_url': base_url,
+        }
+
+    def _paypal_order_cache_key(self, order_id):
+        return f'paypal:subscription:order:{order_id}'
+
+    def _paypal_capture_cache_key(self, order_id):
+        return f'paypal:subscription:capture:{order_id}'
+
+    def _get_paypal_access_token(self):
+        config = self._get_paypal_config()
+        if not config:
+            return None, Response({
+                'error': 'PayPal no configurado',
+                'message': 'Configura PAYPAL_CLIENT_ID y PAYPAL_SECRET antes de cobrar con PayPal.'
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            auth_response = requests.post(
+                f"{config['base_url']}/v1/oauth2/token",
+                headers={
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en_US',
+                },
+                data='grant_type=client_credentials',
+                auth=(config['client_id'], config['client_secret']),
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal auth request failed')
+            return None, Response({
+                'error': 'PayPal unavailable',
+                'message': str(exc),
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        if auth_response.status_code != 200:
+            logger.warning('PayPal auth failed status=%s body=%s', auth_response.status_code, auth_response.text)
+            return None, Response({
+                'error': 'PayPal authentication failed',
+                'message': f'PayPal respondio con estado {auth_response.status_code}.',
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        token = auth_response.json().get('access_token')
+        if not token:
+            return None, Response({
+                'error': 'PayPal authentication failed',
+                'message': 'PayPal no devolvio access_token.',
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        return {'token': token, 'config': config}, None
+
+    def _create_paypal_order(self, request, tenant, plan, months, auto_renew):
+        if auto_renew:
+            return Response({
+                'error': 'PayPal auto-renew no disponible',
+                'message': 'Por ahora PayPal solo esta habilitado para pagos manuales por periodo.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        paypal_auth, error_response = self._get_paypal_access_token()
+        if error_response:
+            return error_response
+
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        total_amount = f"{plan.price * months:.2f}"
+        payload = {
+            'intent': 'CAPTURE',
+            'purchase_units': [{
+                'reference_id': f"tenant-{tenant.id}",
+                'description': f"Suscripcion {plan.get_name_display()} x{months}m",
+                'custom_id': f"user:{request.user.id}|tenant:{tenant.id}|plan:{plan.id}|months:{months}",
+                'amount': {
+                    'currency_code': 'USD',
+                    'value': total_amount,
+                },
+            }],
+            'application_context': {
+                'brand_name': 'Auron Suite',
+                'landing_page': 'LOGIN',
+                'user_action': 'PAY_NOW',
+                'return_url': f"{frontend_url}/client/checkout?paypal=success",
+                'cancel_url': f"{frontend_url}/client/checkout?paypal=cancelled",
+            },
+        }
+
+        try:
+            create_response = requests.post(
+                f"{paypal_auth['config']['base_url']}/v2/checkout/orders",
+                headers={
+                    'Authorization': f"Bearer {paypal_auth['token']}",
+                    'Content-Type': 'application/json',
+                },
+                json=payload,
+                timeout=25,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal order creation failed')
+            return Response({
+                'error': 'PayPal unavailable',
+                'message': str(exc),
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        if create_response.status_code not in {200, 201}:
+            logger.warning('PayPal order creation failed status=%s body=%s', create_response.status_code, create_response.text)
+            return Response({
+                'error': 'No se pudo crear la orden PayPal',
+                'message': create_response.text,
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        order_data = create_response.json()
+        order_id = order_data.get('id')
+        approve_url = next((link.get('href') for link in order_data.get('links', []) if link.get('rel') == 'approve'), None)
+
+        if not order_id or not approve_url:
+            return Response({
+                'error': 'Respuesta invalida de PayPal',
+                'message': 'No se recibio id de orden o enlace de aprobacion.',
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        cache.set(
+            self._paypal_order_cache_key(order_id),
+            {
+                'user_id': request.user.id,
+                'tenant_id': tenant.id,
+                'plan_id': plan.id,
+                'months': months,
+                'auto_renew': auto_renew,
+                'amount': total_amount,
+            },
+            timeout=60 * 60 * 24,
+        )
+
+        return Response({
+            'provider': 'paypal',
+            'order_id': order_id,
+            'approve_url': approve_url,
+            'sandbox': paypal_auth['config']['sandbox'],
+        })
+
+    def _capture_paypal_order(self, request, tenant, order_id):
+        if not order_id:
+            return Response({'error': 'PayPal order ID required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cached_completion = cache.get(self._paypal_capture_cache_key(order_id))
+        if cached_completion:
+            return Response(cached_completion)
+
+        cached_order = cache.get(self._paypal_order_cache_key(order_id))
+        if not cached_order:
+            return Response({
+                'error': 'PayPal order expired',
+                'message': 'La orden no existe o expiro. Inicia el checkout nuevamente.'
+            }, status=status.HTTP_410_GONE)
+
+        if cached_order.get('user_id') != request.user.id or cached_order.get('tenant_id') != tenant.id:
+            return Response({
+                'error': 'PayPal order mismatch',
+                'message': 'La orden PayPal no pertenece a esta cuenta.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        paypal_auth, error_response = self._get_paypal_access_token()
+        if error_response:
+            return error_response
+
+        try:
+            capture_response = requests.post(
+                f"{paypal_auth['config']['base_url']}/v2/checkout/orders/{order_id}/capture",
+                headers={
+                    'Authorization': f"Bearer {paypal_auth['token']}",
+                    'Content-Type': 'application/json',
+                },
+                timeout=25,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal capture failed order_id=%s', order_id)
+            return Response({
+                'error': 'PayPal unavailable',
+                'message': str(exc),
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        if capture_response.status_code not in {200, 201}:
+            logger.warning('PayPal capture failed status=%s body=%s', capture_response.status_code, capture_response.text)
+            return Response({
+                'error': 'No se pudo capturar la orden PayPal',
+                'message': capture_response.text,
+            }, status=status.HTTP_502_BAD_GATEWAY)
+
+        capture_data = capture_response.json()
+        capture_status = capture_data.get('status')
+        purchase_units = capture_data.get('purchase_units') or []
+        capture_entry = (((purchase_units[0] if purchase_units else {}).get('payments') or {}).get('captures') or [None])[0]
+
+        if capture_status != 'COMPLETED' or not capture_entry or capture_entry.get('status') != 'COMPLETED':
+            return Response({
+                'error': 'PayPal capture incomplete',
+                'message': f'Estado actual: {capture_status or "unknown"}',
+            }, status=status.HTTP_409_CONFLICT)
+
+        try:
+            plan = SubscriptionPlan.objects.get(id=cached_order['plan_id'], is_active=True)
+        except SubscriptionPlan.DoesNotExist:
+            return Response({'error': 'Invalid plan'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.billing_api.models import Invoice
+
+        with transaction.atomic():
+            access_until = self._apply_paid_access(
+                tenant,
+                request.user,
+                plan,
+                cached_order['months'],
+                auto_renew=False,
+            )
+
+            Invoice.objects.create(
+                user=request.user,
+                amount=plan.price * cached_order['months'],
+                due_date=timezone.now(),
+                is_paid=True,
+                paid_at=timezone.now(),
+                payment_method='paypal',
+                status='paid',
+                description=f"Subscription renewal - {plan.get_name_display()} x{cached_order['months']}m (PayPal {order_id})"
+            )
+
+        response_payload = {
+            'message': 'Subscription renewed successfully',
+            'provider': 'paypal',
+            'plan': plan.name,
+            'status': tenant.subscription_status,
+            'access_level': tenant.get_access_level(),
+            'months': cached_order['months'],
+            'access_until': access_until,
+            'order_id': order_id,
+            'capture_id': capture_entry.get('id'),
+        }
+        cache.set(self._paypal_capture_cache_key(order_id), response_payload, timeout=60 * 60 * 24 * 7)
+        cache.delete(self._paypal_order_cache_key(order_id))
+        return Response(response_payload)
 
     def _handle_auto_renew_payment(self, tenant, user, plan, payment_method_id, customer_id):
         # Adjuntar método de pago y establecerlo por defecto para cobros automáticos.
@@ -722,28 +989,55 @@ class RenewSubscriptionView(APIView):
         tenant = request.user.tenant
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
-        
+
+        raw_paypal_action = request.data.get('paypal_action')
+        has_paypal_intent = bool(raw_paypal_action or request.data.get('paypal_order_id') or request.data.get('order_id'))
+        payment_provider = str(
+            request.data.get('payment_provider') or ('paypal' if has_paypal_intent else 'stripe')
+        ).strip().lower()
+        paypal_action = str(raw_paypal_action or 'create_order').strip().lower()
         plan_id = request.data.get('plan_id')
         payment_method_id = request.data.get('payment_method_id')
         payment_intent_id = request.data.get('payment_intent_id')
+        paypal_order_id = request.data.get('paypal_order_id') or request.data.get('order_id')
         months = self._parse_months(request.data.get('months'))
         auto_renew_raw = request.data.get('auto_renew', False)
         auto_renew = str(auto_renew_raw).lower() in {'1', 'true', 'yes', 'on'}
-        
-        if not plan_id:
-            return Response({'error': 'Plan ID required'}, status=400)
-        
-        if not payment_method_id and not payment_intent_id:
-            return Response({'error': 'Payment method or payment intent required'}, status=400)
+
+        if payment_provider not in {'stripe', 'paypal'}:
+            return Response({
+                'error': 'Unsupported payment provider',
+                'message': f'Proveedor no soportado: {payment_provider}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        if payment_provider == 'paypal' and paypal_action == 'capture_order':
+            return self._capture_paypal_order(request, tenant, paypal_order_id)
+
         if months is None:
             return Response({'error': 'Months must be an integer between 1 and 24'}, status=400)
         if auto_renew and months != 1:
             return Response({'error': 'Auto-renew currently supports only 1 month per cycle'}, status=400)
+        if not plan_id:
+            return Response({'error': 'Plan ID required'}, status=400)
         
         try:
             plan = SubscriptionPlan.objects.get(id=plan_id, is_active=True)
         except SubscriptionPlan.DoesNotExist:
             return Response({'error': 'Invalid plan'}, status=400)
+
+        if payment_provider == 'paypal':
+            logger.info(
+                'PayPal renewal request user=%s tenant=%s plan=%s months=%s action=%s',
+                request.user.id,
+                tenant.id,
+                plan.id,
+                months,
+                paypal_action,
+            )
+            return self._create_paypal_order(request, tenant, plan, months, auto_renew)
+
+        if not payment_method_id and not payment_intent_id:
+            return Response({'error': 'Payment method or payment intent required'}, status=400)
         
         # En desarrollo permitimos activación manual para no bloquear onboarding.
         # Producción siempre requiere Stripe.

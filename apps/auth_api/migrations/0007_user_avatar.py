@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('auth_api', '0006_email_unique_per_tenant'),
+        ('auth_api', '0006_add_tenant_constraint_and_unique_email'),
     ]
 
     operations = [

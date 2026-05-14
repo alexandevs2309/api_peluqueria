@@ -26,6 +26,27 @@ services:
       # CSRF_TRUSTED_ORIGINS=https://miapp.pages.dev
       # Si usas Render Disk: MEDIA_ROOT=/var/data/media
 
+  # ─── Staging Web Service (Django + Gunicorn) ───────────────────────────────
+  - type: web
+    name: auron-api-staging
+    runtime: python
+    buildCommand: "./build.sh"
+    startCommand: "gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --threads 2 --worker-class gthread --timeout 120"
+    healthCheckPath: /api/healthz/
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: DEBUG
+        value: "False"
+      - key: DJANGO_SETTINGS_MODULE
+        value: backend.settings
+      - key: SENTRY_ENVIRONMENT
+        value: staging
+      # Variables sensibles a setear manualmente en Render:
+      # SECRET_KEY, DATABASE_URL de staging, REDIS_URL, STRIPE_SECRET_KEY test,
+      # STRIPE_PUBLISHABLE_KEY test, STRIPE_WEBHOOK_SECRET test,
+      # ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS, FRONTEND_URL.
+
   # ─── Celery Worker ──────────────────────────────────────────────────────────
   - type: worker
     name: auron-celery-worker
