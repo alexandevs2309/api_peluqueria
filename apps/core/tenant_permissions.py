@@ -4,9 +4,13 @@ DRF permission classes con filtrado por tenant.
 Usa UserRole + Role.permissions con aislamiento multi-tenant.
 La autorizacion es deny-by-default y solo acepta permisos explicitos en BD.
 """
+import logging
+
 from rest_framework.permissions import BasePermission
 
 from apps.roles_api.models import UserRole
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_request_tenant(request):
@@ -36,6 +40,11 @@ def _check_permission_in_db(user, tenant, app_label, codename):
         ).exists():
             return True
 
+    role_names = list(user_roles.values_list('role__name', flat=True))
+    logger.warning(
+        "Permiso denegado user=%s tenant=%s perm=%s.%s roles=%s",
+        user.id, tenant.id, app_label, codename, role_names,
+    )
     return False
 
 

@@ -1,8 +1,12 @@
+import logging
+
 from django.contrib.auth.backends import BaseBackend
 from django.contrib.auth import get_user_model
 from .models import UserRole
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
+
 
 class RoleBasedPermissionBackend(BaseBackend):
     """
@@ -50,7 +54,12 @@ class RoleBasedPermissionBackend(BaseBackend):
                 codename=codename
             ).exists():
                 return True
-                
+
+        role_names = list(user_roles.values_list('role__name', flat=True))
+        logger.warning(
+            "Backend: permiso denegado user=%s perm=%s.%s roles=%s",
+            user_obj.id, app_label, codename, role_names,
+        )
         return False
     
     def has_module_perms(self, user_obj, app_label):

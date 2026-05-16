@@ -94,32 +94,6 @@ PERMISSION_CAPABILITIES = {
     }
 }
 
-# Configuración de roles predefinidos
-ROLE_PERMISSIONS = {
-    'Super-Admin': 'ALL',  # Todos los permisos
-    
-    'Client-Admin': [
-        'add_appointment', 'change_appointment', 'delete_appointment', 'view_appointment',
-        'add_client', 'change_client', 'view_client',
-        'add_employee', 'change_employee', 'view_employee',
-        'view_reports',
-        'add_product', 'change_product', 'view_product'
-    ],
-    
-    'Manager': [
-        'add_appointment', 'change_appointment', 'view_appointment',
-        'add_client', 'change_client', 'view_client',
-        'view_employee',
-        'view_reports'
-    ],
-    
-    'Client-Staff': [
-        'add_appointment', 'view_appointment',
-        'view_client',
-        'view_employee'
-    ],
-    
-    'Soporte': [
-        'view_appointment', 'view_client', 'view_employee', 'view_reports'
-    ]
-}
+# Compatibilidad para código antiguo que importe ROLE_PERMISSIONS desde aquí.
+# La fuente de verdad vive en default_permissions.py.
+from apps.roles_api.default_permissions import ROLE_PERMISSIONS  # noqa: E402,F401

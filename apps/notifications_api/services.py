@@ -2,6 +2,7 @@ import logging
 from django.conf import settings
 from django.template import Template, Context
 from django.utils import timezone
+from django.db.models import Q
 from .models import Notification, NotificationLog, NotificationPreference
 
 logger = logging.getLogger(__name__)
@@ -230,7 +231,7 @@ class NotificationService:
 
         return queryset.aggregate(
             total=Count('id'),
-            sent=Count('id', filter=models.Q(status='sent')),
-            failed=Count('id', filter=models.Q(status='failed')),
-            pending=Count('id', filter=models.Q(status='pending')),
+            sent=Count('id', filter=Q(status='sent')),
+            failed=Count('id', filter=Q(status='failed')),
+            pending=Count('id', filter=Q(status='pending')),
         )

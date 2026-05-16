@@ -196,7 +196,7 @@ class TenantViewSet(viewsets.ModelViewSet):
         serializer = TenantLocaleSerializer(request.tenant)
         return response.Response(serializer.data)
     
-    @decorators.action(detail=False, methods=["get"])
+    @decorators.action(detail=False, methods=["get"], url_path="subscription-status")
     def subscription_status(self, request):
         """Check subscription status - will trigger middleware validation"""
         if request.user.tenant:

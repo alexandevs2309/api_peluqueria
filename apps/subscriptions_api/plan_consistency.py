@@ -6,6 +6,12 @@ from typing import Any
 
 PLAN_SETTINGS_FEATURES_KEY = "plan_features"
 
+FEATURE_ALIASES = {
+    "cash_register": ("pos", "pos_system"),
+    "pos": ("cash_register", "pos_system"),
+    "pos_system": ("cash_register", "pos"),
+}
+
 
 def collect_plan_feature_keys(plans) -> list[str]:
     keys: set[str] = set()
@@ -31,7 +37,14 @@ def normalize_features_dict(raw_features: Any, expected_keys: list[str] | tuple[
 def get_feature_value(features: Any, feature_name: str, default: bool = False) -> bool:
     if not isinstance(features, dict):
         return default
-    return bool(features.get(feature_name, default))
+    if feature_name in features:
+        return bool(features.get(feature_name, default))
+
+    for alias in FEATURE_ALIASES.get(feature_name, ()):
+        if alias in features:
+            return bool(features.get(alias, default))
+
+    return default
 
 
 def is_unlimited_limit(limit: Any) -> bool:

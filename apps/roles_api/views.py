@@ -43,6 +43,8 @@ def ensure_canonical_roles() -> None:
                 changed = True
             if changed:
                 role.save(update_fields=['scope', 'description'])
+        from apps.roles_api.default_permissions import ensure_role_default_permissions
+        ensure_role_default_permissions(role)
 
 @extend_schema_view(
     list=extend_schema(description="Lista todos los roles disponibles."),

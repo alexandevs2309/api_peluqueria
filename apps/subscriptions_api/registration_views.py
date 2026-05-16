@@ -8,7 +8,8 @@ from django.db import transaction
 from django.utils import timezone
 from apps.tenants_api.models import Tenant
 from apps.roles_api.models import Role, UserRole
-from apps.settings_api.models import Branch, Setting
+from apps.roles_api.default_permissions import ensure_role_default_permissions
+from apps.settings_api.models import Branch, Setting, SystemSettings
 import uuid
 import secrets
 import string
@@ -119,13 +120,15 @@ def register_with_plan(request):
 
             client_admin_role = Role.objects.filter(name='Client-Admin').first()
             if client_admin_role:
+                ensure_role_default_permissions(client_admin_role)
                 UserRole.objects.get_or_create(
                     user=user,
                     role=client_admin_role,
                     tenant=tenant
                 )
 
-            trial_end = timezone.now() + timezone.timedelta(days=7)
+            trial_days = SystemSettings.get_settings().trial_days or 7
+            trial_end = timezone.now() + timezone.timedelta(days=trial_days)
             if tenant.trial_end_date:
                 trial_end = timezone.make_aware(
                     datetime.combine(tenant.trial_end_date, time.max)

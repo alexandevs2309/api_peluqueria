@@ -3,11 +3,14 @@
 Contiene:
 - StructuredLoggingMiddleware: Logging JSON estructurado con request_id
 - SlowQueryMiddleware: Detección de queries lentas >200ms
+- MaintenanceMiddleware: Modo mantenimiento vía env var
 """
 import logging
 import json
 import time
 import uuid
+import os
+from django.http import JsonResponse
 from django.utils.deprecation import MiddlewareMixin
 
 logger = logging.getLogger('api.requests')

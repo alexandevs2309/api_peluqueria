@@ -6,6 +6,8 @@ from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
 from apps.settings_api.models import Branch, Setting
 from apps.billing_api.models import Invoice
+from apps.roles_api.models import Role, UserRole
+from apps.roles_api.default_permissions import ensure_role_default_permissions
 import secrets
 import string
 
@@ -69,6 +71,14 @@ class Command(BaseCommand):
             user.tenant = tenant
             user.role = 'Client-Admin'
             user.save(skip_validation=True)
+
+            client_admin_role = Role.objects.get(name='Client-Admin')
+            ensure_role_default_permissions(client_admin_role)
+            UserRole.objects.get_or_create(
+                user=user,
+                role=client_admin_role,
+                tenant=tenant
+            )
 
             # Crear suscripción activa (30 días)
             user_subscription = UserSubscription.objects.create(

@@ -1,6 +1,7 @@
 import stripe
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import send_mail
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -230,13 +231,18 @@ def send_reconciliation_alert(reconciliation):
     
     logger.critical(message)
     
-    # TODO: Integrar con Sentry
-    # sentry_sdk.capture_message(message, level='error')
+    try:
+        import sentry_sdk
+        sentry_sdk.capture_message(message, level='error')
+    except ImportError:
+        pass
     
-    # TODO: Enviar email a finance team
-    # send_mail(
-    #     subject='[CRITICAL] Financial Reconciliation Alert',
-    #     message=message,
-    #     from_email=settings.DEFAULT_FROM_EMAIL,
-    #     recipient_list=settings.FINANCE_ALERT_EMAILS,
-    # )
+    finance_emails = getattr(settings, 'FINANCE_ALERT_EMAILS', None)
+    if finance_emails:
+        send_mail(
+            subject='[CRITICAL] Financial Reconciliation Alert',
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=finance_emails,
+            fail_silently=True,
+        )

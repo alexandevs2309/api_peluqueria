@@ -928,6 +928,9 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         'close': 'pos_api.change_cashregister',
         'cash_count': 'pos_api.change_cashregister',
     }
+
+    def _get_request_tenant(self):
+        return getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
     
     def get_queryset(self):
         user = self.request.user
@@ -937,21 +940,24 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
             return CashRegister.objects.all()
         
         # Usuario sin tenant: sin acceso
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+        tenant = self._get_request_tenant()
+        if not tenant:
             return CashRegister.objects.none()
         
         # Filtrar por tenant del request
-        return CashRegister.objects.filter(user__tenant=self.request.tenant)
+        return CashRegister.objects.filter(tenant=tenant)
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        serializer.save(user=self.request.user, tenant=self._get_request_tenant())
 
     @action(detail=False, methods=['get'])
     def current(self, request):
         """Obtener la caja abierta actual del usuario"""
         today = timezone.localdate()
+        tenant = self._get_request_tenant()
         register = CashRegister.objects.filter(
-            user=request.user, 
+            tenant=tenant,
+            user=request.user,
             is_open=True,
             opened_at__date=today
         ).first()
@@ -1090,7 +1096,8 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
             
-@api_view(['GET'])  
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def daily_summary(request):
         today = timezone.localdate()
         
@@ -1167,6 +1174,7 @@ def daily_summary(request):
 
 
 @api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def dashboard_stats(request):
     """Estadísticas para el dashboard del POS con filtros avanzados"""
     from django.core.cache import cache
@@ -1289,6 +1297,7 @@ def dashboard_stats(request):
     return Response(data)
 
 @api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def active_promotions(request):
     """Promociones activas - placeholder"""
     promotions = [
@@ -1315,6 +1324,7 @@ def active_promotions(request):
     ))
 
 @api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def pos_categories(request):
     """Categorías para filtros del POS"""
     try:
@@ -1373,6 +1383,7 @@ def debug_sale_data(request):
     })
 
 @api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
 def pos_config(request):
     """Configuración del POS (colores, iconos, denominaciones)"""
     config = {

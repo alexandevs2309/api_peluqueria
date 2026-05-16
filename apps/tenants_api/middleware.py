@@ -128,7 +128,6 @@ class TenantMiddleware(MiddlewareMixin):
         admin_paths = [
             '/api/settings/admin/',
             '/api/system-settings/',
-            '/api/tenants/subscription-status/',
         ]
         for admin_path in admin_paths:
             if request.path.startswith(admin_path):

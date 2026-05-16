@@ -9,7 +9,7 @@ from apps.subscriptions_api.models import UserSubscription, Subscription
 from apps.settings_api.policy_utils import should_auto_suspend_expired
 import logging
 import stripe
-from stripe.error import StripeError
+from stripe import StripeError
 from html import escape
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)

@@ -26,8 +26,7 @@ class AdminUserManagementViewSet(viewsets.ModelViewSet):
             return User.objects.exclude(
                 roles__name='Super-Admin'
             ).select_related('tenant').prefetch_related('roles')
-        except:
-            # Fallback si hay problemas con roles
+        except Exception:
             return User.objects.filter(
                 role__in=['ClientAdmin', 'ClientStaff', 'Employee']
             ).select_related('tenant')

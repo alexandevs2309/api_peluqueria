@@ -1,7 +1,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import views, status
-from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
+from apps.core.tenant_permissions import tenant_permission
 from apps.core.permissions import IsSuperAdmin
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
@@ -18,10 +18,9 @@ from apps.settings_api.policy_utils import (
 )
 
 @api_view(['GET'])
-@permission_classes([TenantPermissionByAction])
+@permission_classes([tenant_permission('reports_api.view_employee_reports')])
 @requires_feature('reports')
 def employee_report(request):
-    employee_report.permission_map = {'get': 'reports_api.view_employee_reports'}
     """Reporte básico de empleados"""
     from apps.employees_api.models import Employee
     from apps.pos_api.models import Sale
@@ -64,10 +63,9 @@ def employee_report(request):
     })
 
 @api_view(['GET'])
-@permission_classes([TenantPermissionByAction])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
 @requires_feature('reports')
 def sales_report(request):
-    sales_report.permission_map = {'get': 'reports_api.view_sales_reports'}
     """Reporte básico de ventas"""
     from apps.pos_api.models import Sale, SaleDetail
     from django.utils import timezone
@@ -431,10 +429,9 @@ def appointments_calendar_data(request):
     return Response(events)
 
 @api_view(['GET'])
-@permission_classes([TenantPermissionByAction])
+@permission_classes([tenant_permission('reports_api.view_kpi_dashboard')])
 @requires_feature('reports')
 def kpi_dashboard(request):
-    kpi_dashboard.permission_map = {'get': 'reports_api.view_kpi_dashboard'}
     """KPIs principales para dashboard"""
     from django.core.cache import cache
     from apps.clients_api.models import Client

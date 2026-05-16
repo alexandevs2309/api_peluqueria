@@ -16,12 +16,13 @@ from .utils import get_user_active_subscription, log_subscription_event
 from django.db import transaction
 from django.conf import settings
 from django.core.cache import cache
-from stripe.error import StripeError
+from stripe import StripeError
 import stripe
 from dateutil.relativedelta import relativedelta
 from apps.tenants_api.models import Tenant
 from apps.auth_api.models import User
 from apps.roles_api.models import Role, UserRole
+from apps.roles_api.default_permissions import ensure_role_default_permissions
 from rest_framework.throttling import UserRateThrottle
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
 from apps.core.permissions import IsSuperAdmin
@@ -452,7 +453,7 @@ class OnboardingView(APIView):
                 email=data['owner_email'],
                 full_name=data['owner_name'],
                 tenant=tenant,
-                role='ClientAdmin',
+                role='Client-Admin',
                 is_active=True,
                 stripe_customer_id=customer.id  # ✅ Guardar customer_id
             )
@@ -500,7 +501,8 @@ class OnboardingView(APIView):
 
             # 6. Asignar rol ClientAdmin
             admin_role = Role.objects.get(name='Client-Admin')
-            UserRole.objects.create(user=user, role=admin_role)
+            ensure_role_default_permissions(admin_role)
+            UserRole.objects.create(user=user, role=admin_role, tenant=tenant)
 
             return Response({
                 'detail': 'Onboarding completado exitosamente.',

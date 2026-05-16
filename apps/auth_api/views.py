@@ -37,6 +37,7 @@ from rest_framework.decorators import action
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan
 from apps.roles_api.models import Role, UserRole
+from apps.roles_api.default_permissions import ensure_role_default_permissions
 import re
 from html import escape
 from datetime import timedelta
@@ -226,6 +227,7 @@ class RegisterView(generics.CreateAPIView):
             # Asignar rol Client-Admin
             try:
                 client_admin_role = Role.objects.get(name='Client-Admin')
+                ensure_role_default_permissions(client_admin_role)
                 UserRole.objects.create(
                     user=user,
                     role=client_admin_role,
@@ -1027,6 +1029,8 @@ class UserViewSet(viewsets.ModelViewSet):
                 if requested_role != 'SuperAdmin':
                     try:
                         role = Role.objects.get(name=requested_role)
+                        from apps.roles_api.default_permissions import ensure_role_default_permissions
+                        ensure_role_default_permissions(role)
                         UserRole.objects.get_or_create(
                             user=user,
                             role=role,

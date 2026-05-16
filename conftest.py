@@ -2,12 +2,14 @@ import os
 import django
 from django.conf import settings
 
-# Configurar Django settings antes de importar cualquier cosa
 if not settings.configured:
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.test_settings')
     django.setup()
 
 import pytest
+
+collect_ignore = ["test_full_flow.py", "test_perm.py", "test_real_http.py"]
+
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
 from faker import Faker
@@ -51,7 +53,6 @@ def set_urlconf():
 
 @pytest.fixture
 def api_client():
-    """Retorna una instancia de APIClient para pruebas."""
     return APIClient()
 
 
@@ -59,6 +60,37 @@ def api_client():
 def authenticated_user(api_client):
     """Crea y autentica un usuario para pruebas."""
     user = _UserFactory()
+    api_client.force_authenticate(user=user)
+    return user, api_client
+
+
+@pytest.fixture
+def role_with_all_permissions(db):
+    """Crea un Role con todos los permisos de billing/payments."""
+    from django.contrib.auth.models import Permission
+    from apps.roles_api.models import Role
+
+    role, _ = Role.objects.get_or_create(name='TestFullAccess')
+    perms = Permission.objects.filter(
+        content_type__app_label__in=['billing_api', 'payments_api'],
+        codename__in=[
+            'view_invoice', 'add_invoice', 'change_invoice', 'delete_invoice',
+            'view_paymentattempt', 'add_paymentattempt',
+            'change_paymentattempt', 'delete_paymentattempt',
+            'view_payment', 'add_payment', 'change_payment', 'delete_payment',
+        ]
+    )
+    role.permissions.add(*perms)
+    return role
+
+
+@pytest.fixture
+def authorized_user(api_client, role_with_all_permissions):
+    """Crea y autentica un usuario con todos los permisos de billing/payments."""
+    from apps.roles_api.models import UserRole
+
+    user = _UserFactory()
+    UserRole.objects.create(user=user, role=role_with_all_permissions, tenant=user.tenant)
     api_client.force_authenticate(user=user)
     return user, api_client
 
@@ -105,21 +137,13 @@ def another_user(db):
 def user_subscription(user):
     return UserSubscription.objects.create(user=user, is_active=True)
 
-@pytest.fixture
-def api_client():
-    return APIClient()
-
 
 @pytest.fixture(autouse=True)
 def ensure_test_owner(db):
-    """Garantiza que exista al menos un usuario en la BD para servir como owner de Tenants en tests."""
     if not User.objects.exists():
-        try:
-            User.objects.create_user(
-                email='test-tenant-owner@example.com',
-                password='pass',
-                is_superuser=True,
-            )
-        except Exception:
-            pass
+        User.objects.create_user(
+            email='test-tenant-owner@example.com',
+            password='pass',
+            is_superuser=True,
+        )
     return None

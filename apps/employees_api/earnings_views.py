@@ -1,3 +1,4 @@
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,6 +10,8 @@ from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSeria
 from django.db import transaction
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.auth_api.role_utils import get_effective_role_name
+
+logger = logging.getLogger(__name__)
 
 class PayrollViewSet(viewsets.ViewSet):
     """ViewSet para gestión de nómina"""
@@ -247,8 +250,8 @@ Equipo de Nómina'''
             period.notification_sent = True
             period.notification_sent_at = timezone.now()
             period.save()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Error sending payment notification for period %s: %s", period.id, e)
     
     def _send_approval_notification(self, period):
         """Enviar notificación de aprobación"""
@@ -278,8 +281,8 @@ Equipo de Nómina'''
                 recipient_list=[employee_email],
                 fail_silently=True
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Error sending approval notification for period %s: %s", period.id, e)
     
     def _send_rejection_notification(self, period):
         """Enviar notificación de rechazo"""
@@ -309,8 +312,8 @@ Equipo de Nómina'''
                 recipient_list=[employee_email],
                 fail_silently=True
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Error sending rejection notification for period %s: %s", period.id, e)
     
     @action(detail=False, methods=['get'], url_path='payments/(?P<payment_id>[^/.]+)/receipt')
     def get_receipt(self, request, payment_id=None):

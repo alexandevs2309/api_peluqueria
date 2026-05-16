@@ -115,11 +115,13 @@ class OnboardingService:
             
             # 5. Asignar rol Client-Admin
             from apps.roles_api.models import Role, UserRole
+            from apps.roles_api.default_permissions import ensure_role_default_permissions
             client_admin_role = Role.objects.get(name='Client-Admin')
+            ensure_role_default_permissions(client_admin_role)
             UserRole.objects.get_or_create(
                 user=user,
                 role=client_admin_role,
-                defaults={'tenant': tenant}
+                tenant=tenant
             )
             
             return {
@@ -135,17 +137,67 @@ class NotificationService:
     @staticmethod
     def send_welcome_email(user, tenant):
         """Enviar email de bienvenida"""
-        # TODO: Implementar con servicio de email
-        logger.info("Welcome email queued user_id=%s tenant_id=%s", user.id, tenant.id)
+        from apps.notifications_api.models import NotificationTemplate, Notification
+        template = NotificationTemplate.objects.filter(
+            notification_type='welcome', type='email', is_active=True
+        ).first()
+        if template:
+            notification = Notification.objects.create(
+                recipient=user,
+                template=template,
+                subject=template.subject or f"¡Bienvenido a Auron Suite!",
+                message=template.body,
+                metadata={'tenant_id': str(tenant.id), 'user_name': user.full_name or user.email}
+            )
+            notification.send()
+            logger.info("Welcome email sent user_id=%s tenant_id=%s notification_id=%s", user.id, tenant.id, notification.id)
+        else:
+            logger.warning("No active welcome email template found")
     
     @staticmethod
     def send_payment_confirmation(user, payment):
         """Enviar confirmación de pago"""
-        # TODO: Implementar con servicio de email
-        logger.info("Payment confirmation queued user_id=%s payment_id=%s", user.id, payment.id)
+        from apps.notifications_api.models import NotificationTemplate, Notification
+        template = NotificationTemplate.objects.filter(
+            notification_type='payment_received', type='email', is_active=True
+        ).first()
+        if template:
+            notification = Notification.objects.create(
+                recipient=user,
+                template=template,
+                subject=template.subject or "Pago recibido",
+                message=template.body,
+                metadata={
+                    'payment_id': str(payment.id),
+                    'amount': str(payment.amount),
+                    'user_name': user.full_name or user.email
+                }
+            )
+            notification.send()
+            logger.info("Payment confirmation sent user_id=%s payment_id=%s notification_id=%s", user.id, payment.id, notification.id)
+        else:
+            logger.warning("No active payment_received email template found")
     
     @staticmethod
     def send_subscription_expiry_warning(user, subscription):
         """Enviar advertencia de expiración"""
-        # TODO: Implementar con servicio de email
-        logger.info("Subscription expiry warning queued user_id=%s subscription_id=%s", user.id, subscription.id)
+        from apps.notifications_api.models import NotificationTemplate, Notification
+        template = NotificationTemplate.objects.filter(
+            notification_type='subscription_expiring', type='email', is_active=True
+        ).first()
+        if template:
+            notification = Notification.objects.create(
+                recipient=user,
+                template=template,
+                subject=template.subject or "Suscripción próxima a vencer",
+                message=template.body,
+                metadata={
+                    'subscription_id': str(subscription.id),
+                    'plan_name': subscription.plan.name if subscription.plan else 'N/A',
+                    'user_name': user.full_name or user.email
+                }
+            )
+            notification.send()
+            logger.info("Subscription expiry warning sent user_id=%s subscription_id=%s notification_id=%s", user.id, subscription.id, notification.id)
+        else:
+            logger.warning("No active subscription_expiring email template found")

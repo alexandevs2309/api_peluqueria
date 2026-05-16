@@ -57,14 +57,14 @@ DEBUG = env('DEBUG', default=False)
 
 ALLOWED_HOSTS = env.list(
     'ALLOWED_HOSTS',
-    default=['127.0.0.1', 'localhost', 'api-peluqueria-p25h.onrender.com']
+    default=['127.0.0.1', 'localhost']
 )
 if DEBUG:
     ALLOWED_HOSTS.extend(['web', 'api_peluqueria-web-1', 'testserver'])
 
 FRONTEND_URL = env(
     'FRONTEND_URL',
-    default='https://frontend-app.auron-suites.workers.dev'
+    default=''
 ).strip()
 
 
@@ -120,7 +120,7 @@ INSTALLED_APPS = [
 # Apps personalizadas (auth_api PRIMERO)
     'apps.auth_api',
     'apps.tenants_api',
-    'apps.roles_api',
+    'apps.roles_api.apps.RolesApiConfig',
     'apps.appointments_api',
     'apps.clients_api',
     'apps.employees_api',
@@ -230,7 +230,6 @@ CORS_ALLOWED_ORIGINS = env.list(
     default=_merge_origin_lists(
         LOCAL_DEV_ORIGIN_DEFAULTS,
         _frontend_origin_defaults(),
-        ['https://frontend-app.auron-suites.workers.dev'] if not DEBUG else []
     )
 )
 CSRF_TRUSTED_ORIGINS = env.list(
@@ -238,7 +237,6 @@ CSRF_TRUSTED_ORIGINS = env.list(
     default=_merge_origin_lists(
         LOCAL_DEV_ORIGIN_DEFAULTS,
         _frontend_origin_defaults(),
-        ['https://frontend-app.auron-suites.workers.dev'] if not DEBUG else []
     )
 )
 

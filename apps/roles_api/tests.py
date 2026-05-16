@@ -6,6 +6,8 @@ from unittest.mock import patch
 from rest_framework.test import APIClient, APIRequestFactory
 from django.urls import reverse
 from django.contrib.auth.models import Permission
+from django.contrib.contenttypes.models import ContentType
+from django.core.management import call_command
 
 from apps.roles_api.permissions import IsActiveAndRolePermission
 from apps.auth_api.factories import UserFactory
@@ -14,6 +16,7 @@ from apps.roles_api.models import Role, UserRole, AdminActionLog
 from apps.roles_api.permissions import RolePermission, role_permission_for
 from apps.auth_api.utils import get_client_ip
 from apps.roles_api.decorators import admin_action_log, permission_required
+from apps.roles_api.default_permissions import ensure_role_default_permissions
 
 
 
@@ -304,3 +307,48 @@ def test_permission_required_decorator_denies_access(db):
 
     response = dummy_view(request)
     assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.django_db
+def test_sync_roles_assigns_permissions_to_role_m2m():
+    content_type, _ = ContentType.objects.get_or_create(
+        app_label="clients_api",
+        model="client",
+    )
+    permission, _ = Permission.objects.get_or_create(
+        content_type=content_type,
+        codename="view_client",
+        defaults={"name": "Can view client"},
+    )
+    role, _ = Role.objects.get_or_create(name="Client-Admin")
+    role.permissions.clear()
+
+    call_command("sync_roles")
+
+    role.refresh_from_db()
+    assert role.permissions.filter(id=permission.id).exists()
+
+
+@pytest.mark.django_db
+def test_ensure_role_default_permissions_repairs_incomplete_client_admin_role():
+    content_type, _ = ContentType.objects.get_or_create(
+        app_label="auth_api",
+        model="user",
+    )
+    permission, _ = Permission.objects.get_or_create(
+        content_type=content_type,
+        codename="view_user",
+        defaults={"name": "Can view user"},
+    )
+    role, _ = Role.objects.get_or_create(name="Client-Admin")
+    role.permissions.clear()
+    existing_permission = Permission.objects.first()
+    if existing_permission:
+        role.permissions.add(existing_permission)
+
+    assigned = ensure_role_default_permissions(role)
+
+    assert assigned >= 1
+    assert role.permissions.filter(id=permission.id).exists()
+    if existing_permission:
+        assert role.permissions.filter(id=existing_permission.id).exists()

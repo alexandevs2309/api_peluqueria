@@ -3,6 +3,7 @@ from django.utils.crypto import get_random_string
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
 from apps.roles_api.models import Role
+from apps.roles_api.default_permissions import sync_default_role_permissions
 from apps.settings_api.models import SystemSettings
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan
@@ -104,6 +105,8 @@ class Command(BaseCommand):
             )
             if created:
                 self.stdout.write(f'✓ Rol creado: {role.name}')
+            assigned = sync_default_role_permissions(role)
+            self.stdout.write(f'✓ Permisos sincronizados para {role.name}: {assigned}')
 
     def create_subscription_plans(self, sync_defaults=False):
         """Crear planes de suscripción"""
@@ -119,7 +122,7 @@ class Command(BaseCommand):
                 'features': {
                     'appointments': True,
                     'clients': True,
-                    'pos': True,
+                    'cash_register': True,
                     'reports': 'basic',
                     'support': 'email'
                 }
@@ -135,7 +138,7 @@ class Command(BaseCommand):
                 'features': {
                     'appointments': True,
                     'clients': True,
-                    'pos': True,
+                    'cash_register': True,
                     'inventory': True,
                     'reports': 'advanced',
                     'support': 'priority'
@@ -152,7 +155,7 @@ class Command(BaseCommand):
                 'features': {
                     'appointments': True,
                     'clients': True,
-                    'pos': True,
+                    'cash_register': True,
                     'inventory': True,
                     'multi_branch': True,
                     'reports': 'premium',
@@ -170,7 +173,7 @@ class Command(BaseCommand):
                 'features': {
                     'appointments': True,
                     'clients': True,
-                    'pos': True,
+                    'cash_register': True,
                     'inventory': True,
                     'multi_branch': True,
                     'reports': 'enterprise',
