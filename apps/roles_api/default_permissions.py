@@ -78,12 +78,6 @@ ROLE_PERMISSIONS = {
         ('appointments_api', 'view_appointment'),
         ('services_api', 'view_service'),
     ],
-    'Soporte': [
-        ('appointments_api', 'view_appointment'),
-        ('clients_api', 'view_client'),
-        ('employees_api', 'view_employee'),
-        ('audit_api', 'view_auditlog'),
-    ],
 }
 
 

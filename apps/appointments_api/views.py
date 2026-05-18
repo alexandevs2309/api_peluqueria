@@ -87,7 +87,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             )
         
         try:
-            stylist = User.objects.get(id=stylist_id)
+            stylist = User.objects.get(id=stylist_id, tenant=self.request.tenant)
             target_date = datetime.fromisoformat(date).date()
         except (User.DoesNotExist, ValueError):
             return Response(

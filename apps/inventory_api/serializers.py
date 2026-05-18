@@ -26,6 +26,12 @@ class ProductSerializer(serializers.ModelSerializer):
     category = serializers.PrimaryKeyRelatedField(
         queryset=ProductCategory.objects.all(), allow_null=True, required=False
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and hasattr(request, 'tenant') and request.tenant:
+            self.fields['category'].queryset = ProductCategory.objects.filter(tenant=request.tenant)
     category_name = serializers.SerializerMethodField()
     description = serializers.CharField(default='', allow_blank=True, required=False)
     image_url = serializers.SerializerMethodField()

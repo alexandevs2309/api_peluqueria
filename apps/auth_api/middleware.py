@@ -3,6 +3,34 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from apps.tenants_api.models import Tenant
 from django.utils.deprecation import MiddlewareMixin
+from django.conf import settings
+
+class CSRFProtectionMiddleware(MiddlewareMixin):
+    """Protege endpoints mutantes contra CSRF cuando se usan cookies cross-site.
+
+    Requiere header X-Requested-With: XMLHttpRequest en POST/PUT/PATCH/DELETE
+    para producción (SameSite=None). El frontend Angular lo envía automáticamente
+    via AuthInterceptor.
+    """
+    SAFE_METHODS = ('GET', 'HEAD', 'OPTIONS', 'TRACE')
+
+    def process_view(self, request, view_func, view_args, view_kwargs):
+        if settings.DEBUG:
+            return None
+
+        if request.method in self.SAFE_METHODS:
+            return None
+
+        # Skip para login/logout (necesitan funcionar sin AJAX)
+        if request.path.startswith('/auth/'):
+            return None
+
+        x_requested_with = request.META.get('HTTP_X_REQUESTED_WITH')
+        if x_requested_with != 'XMLHttpRequest':
+            return HttpResponseForbidden("CSRF: falta header X-Requested-With.")
+
+        return None
+
 
 class TenantValidationMiddleware(MiddlewareMixin):
     def process_view(self, request, view_func, view_args, view_kwargs):

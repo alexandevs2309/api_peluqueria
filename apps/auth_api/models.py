@@ -113,8 +113,7 @@ class User(AbstractBaseUser, PermissionsMixin):
                 violation_error_message='Ya existe un superusuario con este email.'
             ),
         ]
-        # ✅ UNIQUE CONSTRAINT POR TENANT
-        unique_together = [['email', 'tenant']]
+        # La unicidad de email se maneja via UniqueConstraint arriba
 
     def clean(self):
         """Validación estructural multi-tenant"""

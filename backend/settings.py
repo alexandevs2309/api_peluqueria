@@ -144,7 +144,9 @@ MIDDLEWARE = [
     'django.middleware.locale.LocaleMiddleware',  # Soporte multiidiomas
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
+    'apps.auth_api.middleware.CSRFProtectionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.settings_api.middleware.MaintenanceModeMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',
     'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
     'apps.subscriptions_api.middleware.APIRateLimitMiddleware',  # Rate limiting por plan

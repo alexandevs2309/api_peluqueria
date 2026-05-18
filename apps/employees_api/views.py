@@ -270,7 +270,7 @@ class EmployeeViewSet(TenantScopedViewSet):
         for service_id in service_ids:
             try:
                 from apps.services_api.models import Service
-                service = Service.objects.get(id=service_id, is_active=True)
+                service = Service.objects.get(id=service_id, is_active=True, tenant=self.request.tenant)
                 EmployeeService.objects.create(employee=employee, service=service)
             except Service.DoesNotExist:
                 continue

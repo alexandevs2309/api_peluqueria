@@ -14,7 +14,7 @@ from .utils import log_admin_action
 
 CANONICAL_ROLES = [
     {'name': 'Super-Admin', 'scope': 'GLOBAL', 'description': 'Administrador del SaaS'},
-    {'name': 'Soporte', 'scope': 'GLOBAL', 'description': 'Equipo de soporte tecnico'},
+
     {'name': 'Client-Admin', 'scope': 'TENANT', 'description': 'Administrador de peluqueria'},
     {'name': 'Client-Staff', 'scope': 'TENANT', 'description': 'Empleado general'},
     {'name': 'Estilista', 'scope': 'TENANT', 'description': 'Estilista/Peluquero'},

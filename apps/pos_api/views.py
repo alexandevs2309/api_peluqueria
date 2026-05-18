@@ -287,7 +287,7 @@ class SaleViewSet(viewsets.ModelViewSet):
                         try:
                             object_id = int(detail.get('object_id'))
                             # LOCK: Bloquear fila para actualización
-                            product = Product.objects.select_for_update().get(id=object_id)
+                            product = Product.objects.select_for_update().get(id=object_id, tenant=self.request.tenant)
                             
                             if not product.is_active:
                                 raise serializers.ValidationError(f"El producto {product.name} no está activo")
@@ -460,7 +460,7 @@ class SaleViewSet(viewsets.ModelViewSet):
             if appointment_id:
                 from apps.appointments_api.models import Appointment
                 try:
-                    appointment = Appointment.objects.get(id=appointment_id)
+                    appointment = Appointment.objects.get(id=appointment_id, tenant=self.request.tenant)
                     appointment.status = "completed"
                     appointment.sale = sale  # Vincular venta con cita
                     appointment.save()
@@ -676,7 +676,7 @@ class SaleViewSet(viewsets.ModelViewSet):
                 if getattr(detail.content_type, 'model', None) == 'product':
                     from apps.inventory_api.models import Product, StockMovement
                     try:
-                        product = Product.objects.get(id=detail.object_id)
+                        product = Product.objects.get(id=detail.object_id, tenant=self.request.tenant)
                         product.stock += detail.quantity
                         product.save()
                         
@@ -879,7 +879,7 @@ class SaleViewSet(viewsets.ModelViewSet):
                         quantity = int(item.get('quantity', 1))
                         
                         # Bloquear producto para lectura
-                        product = Product.objects.select_for_update().get(id=product_id)
+                        product = Product.objects.select_for_update().get(id=product_id, tenant=self.request.tenant)
                         
                         if product.stock < quantity:
                             errors.append({
@@ -1046,7 +1046,12 @@ class PromotionViewSet(viewsets.ModelViewSet):
     }
     
     def get_queryset(self):
-        return Promotion.objects.filter(is_active=True)
+        qs = Promotion.objects.filter(is_active=True)
+        if self.request.user.is_superuser:
+            return qs
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return qs.none()
+        return qs.filter(tenant=self.request.tenant)
     
     @action(detail=True, methods=['post'])
     def apply_promotion(self, request, pk=None):
@@ -1299,28 +1304,20 @@ def dashboard_stats(request):
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
 def active_promotions(request):
-    """Promociones activas - placeholder"""
-    promotions = [
-        {
-            'id': 1,
-            'name': '2x1 en Servicios',
-            'type': 'buy_x_get_y',
-            'conditions': {'buy': 2, 'get': 1, 'category': 'service'},
-            'active': True
-        },
-        {
-            'id': 2,
-            'name': '10% desc. productos +$50',
-            'type': 'percentage',
-            'conditions': {'min_amount': 50, 'discount': 0.1},
-            'active': True
-        }
-    ]
-    
+    """Promociones activas filtradas por tenant"""
+    now = timezone.now()
+    qs = Promotion.objects.filter(is_active=True, start_date__lte=now, end_date__gte=now)
+    tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+    if tenant:
+        qs = qs.filter(tenant=tenant)
+    else:
+        qs = Promotion.objects.none()
+
+    serializer = PromotionSerializer(qs, many=True)
     from apps.utils.response_formatter import StandardResponse
     return Response(StandardResponse.list_response(
-        results=promotions,
-        count=len(promotions)
+        results=serializer.data,
+        count=len(serializer.data)
     ))
 
 @api_view(['GET'])
@@ -1331,10 +1328,14 @@ def pos_categories(request):
         from apps.inventory_api.models import Product
         
         # Obtener categorías de productos (Service no tiene category)
-        product_categories = list(Product.objects.filter(
+        qs = Product.objects.filter(
             is_active=True,
             category__isnull=False
-        ).exclude(category='').values_list('category', flat=True).distinct())
+        ).exclude(category='')
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        product_categories = list(qs.values_list('category', flat=True).distinct())
         
         # Categorías base
         categories = [{'name': 'Todas', 'value': ''}]

@@ -11,6 +11,9 @@ logger = logging.getLogger(__name__)
 
 @receiver(post_migrate, dispatch_uid='roles_api_sync_system_role_permissions')
 def sync_system_role_permissions_after_migrate(sender, **kwargs):
+    if sender.name != 'apps.roles_api':
+        return
+
     try:
         synced = sync_all_default_role_permissions()
     except Exception:

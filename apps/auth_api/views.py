@@ -376,8 +376,6 @@ class LoginView(generics.GenericAPIView):
                 'full_name': user.full_name,
                 'role': user_role,
             },
-            'access': access_token,
-            'refresh': refresh_token
         }
         
         if tenant:
@@ -761,6 +759,7 @@ class MFADisableView(APIView):
 class MFALoginVerifyView(APIView):
     permission_classes = [AllowAny]
 
+    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
         if not is_mfa_globally_enabled():
             return Response({"error": "MFA está deshabilitado por configuración del sistema."}, status=status.HTTP_400_BAD_REQUEST)
@@ -833,8 +832,6 @@ class MFALoginVerifyView(APIView):
                 'full_name': user.full_name,
                 'role': user_role,
             },
-            'access': access_token,
-            'refresh': refresh_token,
             'message': 'Inicio de sesión con MFA exitoso'
         }
 

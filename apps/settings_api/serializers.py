@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Setting, Branch, SystemSettings
+from .models import Setting, Branch, SystemSettings, SECRET_FIELDS
 
 
 class BranchSerializer(serializers.ModelSerializer):
@@ -130,14 +130,21 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        secret_fields = [
-            "smtp_password",
-            "stripe_secret_key",
-            "webhook_secret",
-            "paypal_client_secret",
-            "twilio_auth_token",
-        ]
-        for field in secret_fields:
+        for field in SECRET_FIELDS:
             if data.get(field):
                 data[field] = self.masked_value
         return data
+
+    def to_internal_value(self, data):
+        # track which secret fields were sent as sentinel
+        self._secret_sentinels = {}
+        for field in SECRET_FIELDS:
+            if field in data and data[field] == self.masked_value:
+                self._secret_sentinels[field] = True
+        return super().to_internal_value(data)
+
+    def update(self, instance, validated_data):
+        for field in SECRET_FIELDS:
+            if field in validated_data and field in getattr(self, '_secret_sentinels', {}):
+                validated_data.pop(field)
+        return super().update(instance, validated_data)

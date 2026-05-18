@@ -9,7 +9,6 @@ ROLE_ALIASES = {
 
 LEGACY_TO_BUSINESS_ROLE = {
     'SuperAdmin': 'internal_support',
-    'Soporte': 'internal_support',
     'Client-Admin': 'owner',
     'Manager': 'manager',
     'Cajera': 'frontdesk_cashier',

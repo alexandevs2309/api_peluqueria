@@ -1,5 +1,6 @@
 from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.core import signing
 from django.utils.translation import gettext_lazy as _
 
 # Importar modelos adicionales
@@ -57,6 +58,14 @@ class Setting(models.Model):
     def __str__(self):
         return f"{self.business_name} - {self.branch.name}"
 
+
+SECRET_FIELDS = [
+    'smtp_password',
+    'stripe_secret_key',
+    'webhook_secret',
+    'paypal_client_secret',
+    'twilio_auth_token',
+]
 
 class SystemSettings(models.Model):
     """Configuraciones globales del sistema SaaS"""
@@ -140,10 +149,38 @@ class SystemSettings(models.Model):
         verbose_name = _("Configuracion del Sistema")
         verbose_name_plural = _("Configuraciones del Sistema")
 
+    @staticmethod
+    def _encrypt(value):
+        if not value:
+            return value
+        return signing.dumps(value, salt="system_settings", compress=True)
+
+    @staticmethod
+    def _decrypt(value):
+        if not value:
+            return value
+        try:
+            return signing.loads(value, salt="system_settings")
+        except (signing.BadSignature, signing.SignatureExpired):
+            return value
+
+    @staticmethod
+    def _is_encrypted(value):
+        if not value:
+            return True
+        try:
+            signing.loads(value, salt="system_settings")
+            return True
+        except (signing.BadSignature, signing.SignatureExpired):
+            return False
+
     def save(self, *args, **kwargs):
-        # Solo permitir una instancia de configuraciones del sistema
         if not self.pk and SystemSettings.objects.exists():
             raise ValueError(_("Solo puede existir una configuracion del sistema"))
+        for field in SECRET_FIELDS:
+            value = getattr(self, field)
+            if value and not self._is_encrypted(value):
+                setattr(self, field, self._encrypt(value))
         super().save(*args, **kwargs)
 
     def __str__(self):

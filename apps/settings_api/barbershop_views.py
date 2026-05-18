@@ -56,7 +56,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         if not pos:
             return None
 
-        logger.info(f"[DEBUG] _get_pos_config_data: rnc={pos.rnc}, user_id={request.user.id}")
+        logger.debug(f"_get_pos_config_data: user_id={request.user.id}")
         
         return {
             'business_name': pos.business_name,
@@ -71,15 +71,15 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         """
         Persistir configuración POS para el usuario actual si viene en payload.
         """
-        logger.info(f"[DEBUG] _save_pos_config: pos_config_data={pos_config_data}")
+        logger.debug("_save_pos_config: user_id=%s", request.user.id)
         
         if not isinstance(pos_config_data, dict):
-            logger.warning(f"[DEBUG] pos_config_data no es dict, es: {type(pos_config_data)}")
+            logger.warning("pos_config_data no es dict, es: %s", type(pos_config_data).__name__)
             return
 
         try:
             pos, created = PosConfiguration.objects.get_or_create(user=request.user)
-            logger.info(f"[DEBUG] PosConfiguration: user_id={request.user.id}, created={created}")
+            logger.debug("PosConfiguration: user_id=%s, created=%s", request.user.id, created)
             
             # Guardar valores anteriores
             old_values = {
@@ -200,14 +200,14 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     
     def create(self, request):
         """Save barbershop settings con validaciones y auditoría"""
-        logger.info(f"[DEBUG] create() called. request.data={request.data}")
+        logger.info(f"[DEBUG] create() called. tenant={getattr(request.user, 'tenant_id', None)}")
         
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
         tenant = request.user.tenant
 
         # Campos auxiliares que no pertenecen al serializer principal.
         pos_config_data = data.pop('pos_config', None)
-        logger.info(f"[DEBUG] pos_config_data extraído: {pos_config_data}")
+        logger.info(f"[DEBUG] pos_config_data extraído (redactado)")
         confirmed_critical = bool(data.pop('confirmed_critical', False))
         data.pop('currency_locked', None)
         data.pop('currency_lock_reason', None)

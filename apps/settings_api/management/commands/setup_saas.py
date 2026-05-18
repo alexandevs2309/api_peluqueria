@@ -84,7 +84,6 @@ class Command(BaseCommand):
         roles_data = [
             # Roles globales (SaaS)
             {'name': 'Super-Admin', 'scope': 'GLOBAL', 'description': 'Administrador del SaaS'},
-            {'name': 'Soporte', 'scope': 'GLOBAL', 'description': 'Equipo de soporte técnico'},
             
             # Roles por tenant (Peluquería)
             {'name': 'Client-Admin', 'scope': 'TENANT', 'description': 'Administrador de peluquería'},

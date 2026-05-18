@@ -22,6 +22,14 @@ class EncryptedFieldMixin:
         except (signing.BadSignature, signing.SignatureExpired):
             return value  # Devuelve raw si no se puede desencriptar
 
+    @staticmethod
+    def _is_signed(value):
+        try:
+            signing.loads(value, salt="payment_provider")
+            return True
+        except (signing.BadSignature, signing.SignatureExpired):
+            return False
+
 class PaymentProvider(models.Model, EncryptedFieldMixin):
     PROVIDER_CHOICES = [
         ('stripe', 'Stripe'),
@@ -37,9 +45,9 @@ class PaymentProvider(models.Model, EncryptedFieldMixin):
                                       help_text="Encriptado automaticamente. No modificar manualmente.")
     
     def save(self, *args, **kwargs):
-        if self.api_key and not self.api_key.startswith('gAAAAA'):
+        if self.api_key and not self._is_signed(self.api_key):
             self.api_key = self.encrypt(self.api_key)
-        if self.webhook_secret and not self.webhook_secret.startswith('gAAAAA'):
+        if self.webhook_secret and not self._is_signed(self.webhook_secret):
             self.webhook_secret = self.encrypt(self.webhook_secret)
         super().save(*args, **kwargs)
     
