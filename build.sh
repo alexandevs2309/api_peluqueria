@@ -18,6 +18,9 @@ echo "[build] Migrations..."
 python scripts/fix_migration_history.py
 python manage.py migrate --noinput
 
+echo "[build] Superadmin..."
+python manage.py ensure_superadmin
+
 if [ "${RUN_SETUP_SAAS_ON_BUILD:-0}" = "1" ]; then
   echo "[build] Seed SaaS..."
   python manage.py setup_saas || true

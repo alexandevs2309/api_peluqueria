@@ -65,7 +65,6 @@ class CookieLoginView(APIView):
     permission_classes = [AllowAny]
     throttle_classes = [CookieLoginThrottle]
     
-    @method_decorator(ratelimit(key='ip', rate='10/m', method='POST', block=True))
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={'request': request})
         tenant_subdomain = get_explicit_tenant_input(request.data)
@@ -296,6 +295,9 @@ class CookieRefreshView(APIView):
             access = token.access_token
             access.set_exp(lifetime=timedelta(minutes=get_jwt_expiry_minutes()))
             new_access_token = str(access)
+
+            # ROTATE_REFRESH_TOKENS=True: generar nuevo refresh y blacklistear el anterior
+            new_refresh_token = str(token)
             
             response = Response({
                 'message': 'Token refreshed successfully'
@@ -304,10 +306,13 @@ class CookieRefreshView(APIView):
             return set_auth_cookies(
                 response,
                 access_token=new_access_token,
+                refresh_token=new_refresh_token,
                 access_max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
+                refresh_max_age=_jwt_cookie_max_age('REFRESH_TOKEN_LIFETIME'),
             )
             
-        except Exception as e:
-            return Response({
+        except Exception:
+            response = Response({
                 'error': 'Invalid refresh token'
             }, status=status.HTTP_401_UNAUTHORIZED)
+            return clear_auth_cookies(response)

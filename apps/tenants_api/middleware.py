@@ -36,6 +36,10 @@ class TenantMiddleware(MiddlewareMixin):
     def _is_superadmin(user) -> bool:
         if not getattr(user, 'is_authenticated', False):
             return False
+        # is_superuser es la fuente de verdad para el dueño del SaaS.
+        # No depender de roles que pueden no existir en una DB nueva.
+        if getattr(user, 'is_superuser', False):
+            return True
         return get_effective_role_name(user) == 'SuperAdmin'
 
     @staticmethod
