@@ -5,7 +5,7 @@ from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_decode
 from django.utils.encoding import force_str
-from django.core.exceptions import MultipleObjectsReturned
+from django.core.exceptions import MultipleObjectsReturned  # noqa: F401 kept for compatibility
 from .models import ActiveSession
 from .role_utils import (
     get_business_role_display,
@@ -109,11 +109,8 @@ class LoginSerializer(serializers.Serializer):
 
         # Login sin tenant es intencional y exclusivo para usuarios globales.
         if not tenant_input:
-            try:
-                superadmin = User.objects.get(email=email, is_superuser=True, tenant__isnull=True)
-            except (User.DoesNotExist, MultipleObjectsReturned):
-                pass
-            else:
+            superadmin = User.objects.filter(email=email, is_superuser=True, tenant__isnull=True).first()
+            if superadmin:
                 if not superadmin.check_password(password):
                     raise serializers.ValidationError("Credenciales inválidas.")
                 if not superadmin.is_active:
