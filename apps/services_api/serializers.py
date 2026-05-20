@@ -1,5 +1,6 @@
 import json
 
+from django.db import IntegrityError
 from rest_framework import serializers
 from .models import Service, ServiceCategory
 from apps.roles_api.models import Role
@@ -38,7 +39,7 @@ class ServiceCategoryIdsField(serializers.ListField):
 
 class ServiceSerializer(serializers.ModelSerializer):
     allowed_roles = serializers.PrimaryKeyRelatedField(
-        queryset=Role.objects.all(),
+        queryset=lambda: Role.objects.all(),
         many=True,
         required=False,
         allow_empty=True,
@@ -52,9 +53,26 @@ class ServiceSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'image', 'image_url', 'categories', 'price', 'duration', 'is_active', 'allowed_roles', 'created_at', 'updated_at']
         read_only_fields = ['id', 'image_url', 'created_at', 'updated_at']
 
+    def validate_name(self, value):
+        request = self.context.get('request')
+        if request and hasattr(request, 'tenant') and request.tenant:
+            qs = Service.objects.filter(name__iexact=value, tenant=request.tenant)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    f"Ya existe un servicio con el nombre '{value}' en este establecimiento."
+                )
+        return value
+
     def create(self, validated_data):
         categories = validated_data.pop('categories', None)
-        instance = super().create(validated_data)
+        try:
+            instance = super().create(validated_data)
+        except IntegrityError:
+            raise serializers.ValidationError(
+                "Error de concurrencia: ya existe un servicio con ese nombre. Intenta de nuevo."
+            )
         if categories is not None:
             instance.categories.set(categories)
         return instance
@@ -77,7 +95,12 @@ class ServiceSerializer(serializers.ModelSerializer):
     def validate_categories(self, value):
         if not value:
             return value
-        existing = set(ServiceCategory.objects.filter(id__in=value).values_list('id', flat=True))
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        qs = ServiceCategory.objects.filter(id__in=value)
+        if tenant:
+            qs = qs.filter(tenant=tenant)
+        existing = set(qs.values_list('id', flat=True))
         missing = set(value) - existing
         if missing:
             raise serializers.ValidationError(f"Categorías no encontradas: {missing}")
