@@ -515,6 +515,26 @@ class SystemMonitorView(views.APIView):
 
 @api_view(['POST'])
 @permission_classes([IsSuperAdmin])
+def sync_role_permissions(request):
+    """Sincroniza permisos de todos los roles desde default_permissions.py"""
+    from apps.roles_api.default_permissions import sync_all_default_role_permissions
+    try:
+        stats = sync_all_default_role_permissions()
+        total = sum(stats.values())
+        return response.Response({
+            'success': True,
+            'message': f'{len(stats)} roles sincronizados, {total} permisos asignados',
+            'details': stats
+        })
+    except Exception as e:
+        return response.Response({
+            'success': False,
+            'message': str(e)
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsSuperAdmin])
 def test_integration_service(request):
     """Endpoint para probar servicios específicos"""
     service_type = request.data.get('service')

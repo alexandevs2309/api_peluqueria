@@ -1,9 +1,12 @@
 import json
+import logging
 
 from django.db import IntegrityError
 from rest_framework import serializers
 from .models import Service, ServiceCategory
 from apps.roles_api.models import Role
+
+logger = logging.getLogger(__name__)
 
 
 class ServiceCategorySerializer(serializers.ModelSerializer):
@@ -67,6 +70,7 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         categories = validated_data.pop('categories', None)
+        image_file = validated_data.pop('image', None)
         try:
             instance = super().create(validated_data)
         except IntegrityError:
@@ -75,14 +79,26 @@ class ServiceSerializer(serializers.ModelSerializer):
             )
         if categories is not None:
             instance.categories.set(categories)
+        if image_file:
+            self._save_image(instance, image_file)
         return instance
 
     def update(self, instance, validated_data):
         categories = validated_data.pop('categories', None)
+        image_file = validated_data.pop('image', None)
         instance = super().update(instance, validated_data)
         if categories is not None:
             instance.categories.set(categories)
+        if image_file:
+            self._save_image(instance, image_file)
         return instance
+
+    def _save_image(self, instance, image_file):
+        try:
+            instance.image = image_file
+            instance.save(update_fields=['image'])
+        except Exception as e:
+            logger.warning("No se pudo guardar la imagen del servicio %s: %s", instance.id, e)
 
     def get_image_url(self, obj):
         if obj.image:

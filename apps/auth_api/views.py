@@ -1122,6 +1122,8 @@ class UserViewSet(viewsets.ModelViewSet):
                     UserRole.objects.filter(user=user).delete()
                     try:
                         role = Role.objects.get(name=role_name)
+                        from apps.roles_api.default_permissions import ensure_role_default_permissions
+                        ensure_role_default_permissions(role)
                         UserRole.objects.get_or_create(
                             user=user,
                             role=role,

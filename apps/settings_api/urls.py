@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .integration_views import IntegrationStatusView, IntegrationTestView
-from .admin_views import SaasMetricsView, SystemMonitorView, test_integration_service
+from .admin_views import SaasMetricsView, SystemMonitorView, test_integration_service, sync_role_permissions
 from .contact_views import demo_request, newsletter_signup
 from .barbershop_views import BarbershopSettingsViewSet
 from .views import PublicBrandingSettingsView
@@ -19,6 +19,7 @@ urlpatterns = [
     path('admin/metrics/', SaasMetricsView.as_view(), name='admin-saas-metrics'),
     path('admin/system-monitor/', SystemMonitorView.as_view(), name='admin-system-monitor'),
     path('admin/test-service/', test_integration_service, name='admin-test-service'),
+    path('admin/sync-permissions/', sync_role_permissions, name='admin-sync-permissions'),
     
     # Contact endpoints
     path('contact/demo/', demo_request, name='demo-request'),

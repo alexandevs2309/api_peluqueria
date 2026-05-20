@@ -85,6 +85,8 @@ class AdminUserManagementViewSet(viewsets.ModelViewSet):
             
             # Remover roles actuales y asignar nuevo
             UserRole.objects.filter(user=user).delete()
+            from apps.roles_api.default_permissions import ensure_role_default_permissions
+            ensure_role_default_permissions(new_role)
             UserRole.objects.create(user=user, role=new_role)
             
             # Actualizar campo role del usuario
