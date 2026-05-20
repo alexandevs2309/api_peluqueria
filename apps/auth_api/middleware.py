@@ -21,8 +21,10 @@ class CSRFProtectionMiddleware(MiddlewareMixin):
         if request.method in self.SAFE_METHODS:
             return None
 
-        # Skip para login/logout (necesitan funcionar sin AJAX)
+        # Skip para login/logout y admin (necesitan funcionar sin AJAX)
         if request.path.startswith('/auth/'):
+            return None
+        if request.path.startswith('/admin/'):
             return None
 
         x_requested_with = request.META.get('HTTP_X_REQUESTED_WITH')
