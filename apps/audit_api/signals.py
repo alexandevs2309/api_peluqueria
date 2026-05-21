@@ -8,6 +8,13 @@ from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
+# Solo auditar modelos de negocio críticos
+AUDITED_APPS = {
+    'clients_api', 'pos_api', 'payments_api', 'inventory_api',
+    'appointments_api', 'employees_api', 'services_api',
+    'subscriptions_api', 'tenants_api', 'roles_api', 'auth_api',
+}
+
 
 def _safe_instance_label(instance):
     try:
@@ -25,8 +32,8 @@ def audit_log_on_save(sender, instance, created, **kwargs):
     if any(cmd in sys.argv for cmd in ['makemigrations', 'migrate', 'collectstatic', 'test', 'flush']):
         return
 
-    # Saltar modelos del sistema y el propio modelo de auditoría
-    if sender._meta.app_label in ['auth', 'admin', 'contenttypes', 'sessions', 'audit_api']:
+    # Solo auditar modelos de negocio explícitamente listados
+    if sender._meta.app_label not in AUDITED_APPS:
         return
     
     # Para User model, diferir auditoría hasta después del commit para evitar validaciones prematuras
@@ -91,7 +98,7 @@ def audit_log_on_delete(sender, instance, **kwargs):
     if any(cmd in sys.argv for cmd in ['makemigrations', 'migrate', 'collectstatic', 'test', 'flush']):
         return
 
-    if sender._meta.app_label in ['auth', 'admin', 'contenttypes', 'sessions', 'audit_api']:
+    if sender._meta.app_label not in AUDITED_APPS:
         return
     
     user = None

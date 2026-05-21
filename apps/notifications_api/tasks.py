@@ -118,6 +118,16 @@ def notify_upcoming_appointments(self):
         logger.error(f"Error notifying upcoming appointments: {str(e)}")
         raise self.retry(exc=e)
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600)
+def send_sms(self, phone, message):
+    """Send SMS asynchronously via Twilio"""
+    try:
+        from apps.settings_api.integration_service import IntegrationService
+        IntegrationService.send_sms(phone=phone, message=message)
+    except Exception as e:
+        logger.error("Error sending SMS to %s: %s", phone, str(e))
+        raise self.retry(exc=e)
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def cleanup_old_notifications(self):
     """Delete read notifications older than 30 days"""

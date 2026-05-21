@@ -1,0 +1,153 @@
+# ============================================================
+# FIX 6: .github/workflows/deploy.yml — Deploy real con Render
+# PROBLEMA: El job "deploy" solo hace echo "Deploying..." y
+#            echo "Deployment completed". No despliega nada.
+#            No hay smoke test post-deploy. No hay rollback.
+#
+# SOLUCIÓN: Deploy via Render Deploy Hook + smoke test real.
+# PRERREQUISITO: En Render Dashboard → Service → Settings →
+#                Deploy Hook → copiar la URL y guardarla como
+#                RENDER_DEPLOY_HOOK_URL en GitHub Secrets.
+# ============================================================
+
+name: Deploy to Production
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  deploy:
+    needs: [test, security, build]   # Los jobs existentes de ci-cd.yml
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    environment: production
+
+    steps:
+      - name: Trigger Render deploy
+        run: |
+          RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
+          echo "Render response: $RESPONSE"
+          if [ "$RESPONSE" != "200" ] && [ "$RESPONSE" != "201" ]; then
+            echo "❌ Deploy hook failed with status $RESPONSE"
+            exit 1
+          fi
+          echo "✅ Deploy triggered"
+
+      - name: Wait for deploy to complete
+        run: |
+          echo "Waiting 90s for Render to build and start..."
+          sleep 90
+
+      - name: Smoke test — health check
+        run: |
+          MAX_RETRIES=10
+          RETRY_DELAY=15
+          API_URL="${{ secrets.PRODUCTION_API_URL }}"
+
+          for i in $(seq 1 $MAX_RETRIES); do
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 10 "${API_URL}/healthz/")
+            echo "Attempt $i: HTTP $HTTP_STATUS"
+            if [ "$HTTP_STATUS" = "200" ]; then
+              echo "✅ Health check passed"
+              exit 0
+            fi
+            echo "Waiting ${RETRY_DELAY}s before retry..."
+            sleep $RETRY_DELAY
+          done
+
+          echo "❌ Health check failed after $MAX_RETRIES attempts"
+          exit 1
+
+      - name: Smoke test — API schema available
+        run: |
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 10 \
+            "${{ secrets.PRODUCTION_API_URL }}/schema/")
+          if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "403" ]; then
+            echo "✅ API schema endpoint reachable (HTTP $HTTP_STATUS)"
+          else
+            echo "❌ API schema unreachable (HTTP $HTTP_STATUS)"
+            exit 1
+          fi
+
+      - name: Notify on success
+        if: success()
+        run: |
+          echo "🚀 Deploy SUCCESS — $(date -u '+%Y-%m-%d %H:%M UTC')"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref_name }}"
+          # Opcional: curl -X POST ${{ secrets.SLACK_WEBHOOK_URL }} \
+          #   -H 'Content-type: application/json' \
+          #   -d '{"text":"✅ Auron Suite deployed successfully"}'
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "❌ Deploy FAILED — manual intervention required"
+          echo "Last commit: ${{ github.sha }}"
+          # Opcional: notificar por Slack/email aquí
+
+
+# ============================================================
+# FIX 6b: Agregar PRODUCTION_API_URL a GitHub Secrets
+# ============================================================
+# GitHub → Settings → Secrets and variables → Actions → New:
+#   RENDER_DEPLOY_HOOK_URL  = https://api.render.com/deploy/srv-xxx?key=yyy
+#   PRODUCTION_API_URL      = https://api.auron-suite.com
+
+
+# ============================================================
+# FIX 6c: Health check view — ops/monitoring/health_views.py
+# Verificar que el endpoint /api/healthz/ verifica DB + Redis
+# ============================================================
+
+# apps/utils/views.py — health check completo (si no existe ya)
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
+from django.db import connection
+from django.core.cache import cache
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def health_check(request):
+    """
+    Health check completo: DB + Redis + app status.
+    Retorna 200 si todo está OK, 503 si algo falla.
+    Usado por Render health check y smoke tests de CI/CD.
+    """
+    checks = {}
+    all_ok = True
+
+    # 1. Base de datos
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        checks['database'] = 'ok'
+    except Exception as e:
+        checks['database'] = f'error: {str(e)}'
+        all_ok = False
+
+    # 2. Redis / cache
+    try:
+        cache.set('healthz_ping', 'pong', timeout=5)
+        val = cache.get('healthz_ping')
+        checks['cache'] = 'ok' if val == 'pong' else 'error: unexpected value'
+        if val != 'pong':
+            all_ok = False
+    except Exception as e:
+        checks['cache'] = f'error: {str(e)}'
+        all_ok = False
+
+    # 3. App status
+    checks['app'] = 'ok'
+
+    status_code = 200 if all_ok else 503
+    return Response(
+        {'status': 'healthy' if all_ok else 'degraded', 'checks': checks},
+        status=status_code
+    )

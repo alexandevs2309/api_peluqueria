@@ -206,7 +206,7 @@ class ActiveSession(models.Model):
     ip_address = models.GenericIPAddressField(blank=True, null=True)
     user_agent = models.CharField(max_length=255, blank=True, null=True) 
     token_jti = models.TextField(unique=True)
-    refresh_token = models.TextField(unique=True)
+    refresh_token = models.TextField(unique=True)  # Almacena hash del refresh_token
     created_at = models.DateTimeField(auto_now_add=True)
     last_seen = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)

@@ -1,6 +1,10 @@
 import sys
 import logging
 import uuid
+import hashlib
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -346,7 +350,7 @@ class LoginView(generics.GenericAPIView):
             ip_address=get_client_ip(request),
             user_agent=get_user_agent(request)[:255],
             token_jti=jti,
-            refresh_token=refresh_token,
+            refresh_token=hash_token(refresh_token),
             is_active=True,
             tenant=tenant
         )
@@ -427,7 +431,7 @@ class LogoutView(APIView):
                 
                 # Try to find and expire session
                 try:
-                    session = ActiveSession.objects.get(refresh_token=refresh_token)
+                    session = ActiveSession.objects.get(refresh_token=hash_token(refresh_token))
                     session.expire_session()
                     
                     # Log successful logout if we have a user
@@ -802,7 +806,7 @@ class MFALoginVerifyView(APIView):
             ip_address=get_client_ip(request),
             user_agent=get_user_agent(request)[:255],
             token_jti=jti,
-            refresh_token=refresh_token,
+            refresh_token=hash_token(refresh_token),
             is_active=True,
             tenant=tenant
         )

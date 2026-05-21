@@ -24,9 +24,9 @@ class Sale(models.Model):
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='sales', null=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales', null=True, blank=True)
     employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
-    client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
-    period = models.ForeignKey('employees_api.PayrollPeriod', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
-    cash_register = models.ForeignKey('CashRegister', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
+    client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales', db_index=True)
+    period = models.ForeignKey('employees_api.PayrollPeriod', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales', db_index=True)
+    cash_register = models.ForeignKey('CashRegister', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales', db_index=True)
     date_time = models.DateTimeField(default=timezone.now)
     total = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
     discount = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
@@ -183,11 +183,11 @@ class Sale(models.Model):
         return super().delete(*args, **kwargs)
 
 class SaleDetail(models.Model):
-    sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='details')
+    sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='details', db_index=True)
     
     # GenericForeignKey para referenciar Product o Service
-    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=False, validators=[])
-    object_id = models.PositiveIntegerField(null=False, blank=False)
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=False, validators=[], db_index=True)
+    object_id = models.PositiveIntegerField(null=False, blank=False, db_index=True)
     content_object = GenericForeignKey('content_type', 'object_id')
 
     def clean(self):

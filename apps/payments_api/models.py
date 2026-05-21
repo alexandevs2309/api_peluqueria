@@ -76,11 +76,12 @@ class Payment(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        help_text="Tenant al que pertenece este pago"
+        help_text="Tenant al que pertenece este pago",
+        db_index=True,
     )
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
-    subscription = models.ForeignKey(UserSubscription, on_delete=models.SET_NULL, null=True, blank=True)
-    provider = models.ForeignKey(PaymentProvider, on_delete=models.PROTECT)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, db_index=True)
+    subscription = models.ForeignKey(UserSubscription, on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
+    provider = models.ForeignKey(PaymentProvider, on_delete=models.PROTECT, db_index=True)
     
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     currency = models.CharField(max_length=3, default='USD')
@@ -104,7 +105,7 @@ class Payment(models.Model):
         return f"Payment {self.id} - {self.user.email} - {self.status}"
 
 class WebhookEvent(models.Model):
-    provider = models.ForeignKey(PaymentProvider, on_delete=models.CASCADE)
+    provider = models.ForeignKey(PaymentProvider, on_delete=models.CASCADE, db_index=True)
     event_id = models.CharField(max_length=255, unique=True)
     event_type = models.CharField(max_length=100)
     processed = models.BooleanField(default=False)

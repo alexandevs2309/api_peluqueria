@@ -198,6 +198,11 @@ def calendar_events(request):
         end_date = datetime.fromisoformat(end.replace('Z', '+00:00'))
     except ValueError:
         return Response({'error': 'Formato de fecha inválido'}, status=400)
+
+    # Limitar rango a 3 meses para evitar queries masivos
+    max_range = timedelta(days=90)
+    if end_date - start_date > max_range:
+        end_date = start_date + max_range
     
     base_filter = Q(date_time__gte=start_date, date_time__lte=end_date)
 
@@ -207,7 +212,7 @@ def calendar_events(request):
             return Response([], status=200)
         base_filter &= Q(client__tenant=request.tenant)
 
-    appointments = Appointment.objects.filter(base_filter)
+    appointments = Appointment.objects.filter(base_filter).select_related('client', 'stylist', 'service')
 
     events = []
     for apt in appointments:

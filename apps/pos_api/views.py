@@ -1371,14 +1371,16 @@ def pos_categories(request):
             count=len(categories)
         ))
 
-@api_view(['POST'])
-@permission_classes([IsSuperAdmin])
+@api_view(['GET', 'POST'])
+@permission_classes([permissions.IsAdminUser])
 def debug_sale_data(request):
-    """Endpoint temporal para debug de datos de venta"""
+    """Endpoint temporal para debug de datos de venta — solo admin, solo DEBUG"""
+    if not settings.DEBUG:
+        return Response({"error": "Not available"}, status=status.HTTP_404_NOT_FOUND)
     logger.info("debug_sale_data called by user_id=%s", request.user.id if request.user.is_authenticated else None)
     
     return Response({
-        'received_data': request.data,
+        'received_data': request.data if request.method == 'POST' else None,
         'user': str(request.user),
         'authenticated': request.user.is_authenticated
     })

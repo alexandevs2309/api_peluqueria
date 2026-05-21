@@ -25,7 +25,7 @@ class ProductCategory(models.Model):
 
 class Supplier(models.Model):
     name = models.CharField(max_length=255)
-    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='suppliers')
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='suppliers', db_index=True)
     phone = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
 
@@ -42,9 +42,9 @@ class Product(models.Model):
     min_stock = models.PositiveIntegerField(default=1)
     unit = models.CharField(max_length=50, default='unidad')
     is_active = models.BooleanField(default=True)
-    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
     description = models.TextField(blank=True, default='')
-    category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='products')
+    category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', db_index=True)
     image = models.ImageField(upload_to='', blank=True, null=True)
 
     class Meta:
@@ -68,7 +68,7 @@ class Product(models.Model):
         return self.name
 
 class StockMovement(models.Model):
-    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='movements')
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='movements', db_index=True)
     quantity = models.IntegerField()  # negativo si es salida
     reason = models.CharField(max_length=255)
     created_at = models.DateTimeField(auto_now_add=True)
