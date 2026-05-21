@@ -79,6 +79,14 @@ LOCAL_DEV_ORIGIN_DEFAULTS = [
     'http://127.0.0.1:4200',
 ]
 
+PUBLIC_FRONTEND_ORIGIN_DEFAULTS = [
+    'https://auron-suite.netlify.app',
+    'https://auronsuite.com',
+    'https://www.auronsuite.com',
+    'https://auron-suite.com',
+    'https://www.auron-suite.com',
+]
+
 
 def _merge_origin_lists(*origin_lists):
     merged = []
@@ -227,18 +235,24 @@ SIMPLE_JWT = {
     'TOKEN_OBTAIN_SERIALIZER': 'apps.auth_api.serializers.CustomTokenObtainPairSerializer',
 }
 
-CORS_ALLOWED_ORIGINS = env.list(
-    'CORS_ALLOWED_ORIGINS',
-    default=_merge_origin_lists(
-        LOCAL_DEV_ORIGIN_DEFAULTS,
-        _frontend_origin_defaults(),
+CORS_ALLOWED_ORIGINS = _merge_origin_lists(
+    PUBLIC_FRONTEND_ORIGIN_DEFAULTS,
+    env.list(
+        'CORS_ALLOWED_ORIGINS',
+        default=_merge_origin_lists(
+            LOCAL_DEV_ORIGIN_DEFAULTS,
+            _frontend_origin_defaults(),
+        )
     )
 )
-CSRF_TRUSTED_ORIGINS = env.list(
-    'CSRF_TRUSTED_ORIGINS',
-    default=_merge_origin_lists(
-        LOCAL_DEV_ORIGIN_DEFAULTS,
-        _frontend_origin_defaults(),
+CSRF_TRUSTED_ORIGINS = _merge_origin_lists(
+    PUBLIC_FRONTEND_ORIGIN_DEFAULTS,
+    env.list(
+        'CSRF_TRUSTED_ORIGINS',
+        default=_merge_origin_lists(
+            LOCAL_DEV_ORIGIN_DEFAULTS,
+            _frontend_origin_defaults(),
+        )
     )
 )
 
