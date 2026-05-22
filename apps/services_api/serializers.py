@@ -101,6 +101,11 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     def _save_image(self, instance, image_file):
         try:
+            original_name = getattr(image_file, 'name', '')
+            if len(original_name) > 80:
+                import os
+                name, ext = os.path.splitext(original_name)
+                image_file.name = name[:75] + ext
             instance.image = image_file
             instance.save(update_fields=['image'])
         except Exception as e:

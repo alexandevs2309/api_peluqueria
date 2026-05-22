@@ -38,7 +38,7 @@ class Service(models.Model):
         )
 
     description = models.TextField(blank=True, null=True)
-    image = models.ImageField(upload_to='services/', blank=True, null=True)
+    image = models.ImageField(upload_to='services/', blank=True, null=True, max_length=500)
     categories = models.ManyToManyField(ServiceCategory, blank=True, related_name='services')
     duration = models.PositiveIntegerField(default=30, help_text="Duración en minutos")
     allowed_roles = models.ManyToManyField(Role, blank=True, related_name='services')
