@@ -45,14 +45,15 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         'partial_update': 'subscriptions_api.change_subscriptionplan',
         'destroy': 'subscriptions_api.delete_subscriptionplan',
         'deactivate_plan': 'subscriptions_api.change_subscriptionplan',
+        'public_catalog': 'subscriptions_api.view_subscriptionplan',
     }
     filterset_fields = ['is_active']
     search_fields = ['name', ]
     ordering_fields = ['price', 'duration_month']
     
     def get_permissions(self):
-        # Permitir acceso público para listar planes
-        if self.action == 'list':
+        # Permitir acceso público para listar planes y catálogo público
+        if self.action in ['list', 'public_catalog']:
             from rest_framework.permissions import AllowAny
             return [AllowAny()]
         # Solo SuperAdmin puede crear/eliminar/modificar planes

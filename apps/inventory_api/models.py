@@ -45,7 +45,7 @@ class Product(models.Model):
     supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
     description = models.TextField(blank=True, default='')
     category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', db_index=True)
-    image = models.ImageField(upload_to='', blank=True, null=True)
+    image = models.ImageField(upload_to='products/', blank=True, null=True)
 
     class Meta:
         permissions = [

@@ -1031,7 +1031,7 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         return cash_sales
 # Nuevos ViewSets
 class PromotionViewSet(viewsets.ModelViewSet):
-    queryset = Promotion.objects.all()
+    queryset = Promotion.objects.none()
     serializer_class = PromotionSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'cash_register'
@@ -1096,7 +1096,13 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
     }
     
     def get_queryset(self):
-        return PosConfiguration.objects.filter(user=self.request.user)
+        user = self.request.user
+        if user.is_superuser:
+            return PosConfiguration.objects.all()
+        tenant = getattr(self.request, 'tenant', None) or getattr(user, 'tenant', None)
+        if not tenant:
+            return PosConfiguration.objects.none()
+        return PosConfiguration.objects.filter(user__tenant=tenant)
     
     def perform_create(self, serializer):
         serializer.save(user=self.request.user)
@@ -1108,7 +1114,7 @@ def daily_summary(request):
         
         # Determinar filtro base según usuario
         if request.user.is_superuser:
-            base_filter = Q(user=request.user) | Q(employee__user=request.user)
+            base_filter = Q()
         elif hasattr(request, 'tenant') and request.tenant:
             base_filter = Q(tenant=request.tenant)
         else:

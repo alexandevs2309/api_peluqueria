@@ -85,6 +85,7 @@ PUBLIC_FRONTEND_ORIGIN_DEFAULTS = [
     'https://www.auronsuite.com',
     'https://auron-suite.com',
     'https://www.auron-suite.com',
+    'https://frontend-app.auron-suites.workers.dev',
 ]
 
 

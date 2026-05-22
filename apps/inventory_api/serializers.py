@@ -32,6 +32,8 @@ class ProductSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and hasattr(request, 'tenant') and request.tenant:
             self.fields['category'].queryset = ProductCategory.objects.filter(tenant=request.tenant)
+        if 'image' in self.fields:
+            self.fields['image'].error_messages['invalid_image'] = 'El archivo debe ser una imagen válida (JPEG, PNG, WebP, GIF).'
     category_name = serializers.SerializerMethodField()
     description = serializers.CharField(default='', allow_blank=True, required=False)
     image_url = serializers.SerializerMethodField()
@@ -42,6 +44,22 @@ class ProductSerializer(serializers.ModelSerializer):
                   'unit', 'is_active', 'description', 'category', 'category_name', 
                   'image', 'image_url']
         read_only_fields = ['id', 'category_name', 'image_url']
+
+    def validate_image(self, value):
+        if value:
+            allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+            if value.content_type not in allowed_types:
+                raise serializers.ValidationError('Tipo de archivo no permitido. Use JPEG, PNG, WebP o GIF.')
+
+            max_size = 2 * 1024 * 1024
+            if value.size > max_size:
+                raise serializers.ValidationError('La imagen no puede superar los 2MB.')
+
+            ext = value.name.split('.')[-1].lower()
+            allowed_exts = {'jpg', 'jpeg', 'png', 'webp', 'gif'}
+            if ext not in allowed_exts:
+                raise serializers.ValidationError('Extensión de archivo no permitida.')
+        return value
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None

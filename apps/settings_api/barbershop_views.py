@@ -324,14 +324,38 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
 
         if 'logo' not in request.FILES:
             return Response({'error': 'No logo file provided'}, status=400)
-        
+
+        logo_file = request.FILES['logo']
+
+        allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
+        if logo_file.content_type not in allowed_types:
+            return Response(
+                {'error': 'Tipo de archivo no permitido. Use JPEG, PNG, WebP o GIF.'},
+                status=400
+            )
+
+        max_size = 1 * 1024 * 1024
+        if logo_file.size > max_size:
+            return Response(
+                {'error': 'El logo no puede superar 1MB.'},
+                status=400
+            )
+
+        ext = logo_file.name.split('.')[-1].lower()
+        allowed_exts = {'jpg', 'jpeg', 'png', 'webp', 'gif'}
+        if ext not in allowed_exts:
+            return Response(
+                {'error': 'Extensión de archivo no permitida.'},
+                status=400
+            )
+
         settings, created = BarbershopSettings.objects.get_or_create(
             tenant=tenant
         )
-        
-        settings.logo = request.FILES['logo']
+
+        settings.logo = logo_file
         settings.save()
-        
+
         return Response({
             'logo_url': settings.logo.url,
             'message': 'Logo uploaded successfully'
