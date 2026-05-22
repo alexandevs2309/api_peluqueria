@@ -1,3 +1,4 @@
+import logging
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -7,6 +8,8 @@ from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.core.tenant_permissions import TenantPermissionByAction
 from .models import Service, ServiceCategory
 from .serializers import ServiceSerializer, ServiceCategorySerializer
+
+logger = logging.getLogger(__name__)
 
 class ServiceCategoryViewSet(TenantScopedViewSet):
     queryset = ServiceCategory.objects.filter(is_active=True)
@@ -40,6 +43,22 @@ class ServiceViewSet(AuditLoggingMixin, TenantScopedViewSet):
         'assign_employees': 'services_api.assign_employees',
         'set_employee_price': 'services_api.set_employee_price',
     }
+
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except Exception as e:
+            logger.error("ServiceViewSet.update — error: %s | data keys: %s | FILES: %s | method: %s",
+                          e, list(request.data.keys()), bool(request.FILES), request.method)
+            raise
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as e:
+            logger.error("ServiceViewSet.create — error: %s | data keys: %s | FILES: %s",
+                          e, list(request.data.keys()), bool(request.FILES))
+            raise
 
     filter_backends = [
         DjangoFilterBackend,

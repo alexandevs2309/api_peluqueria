@@ -86,7 +86,13 @@ class ServiceSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         categories = validated_data.pop('categories', None)
         image_file = validated_data.pop('image', None)
-        instance = super().update(instance, validated_data)
+        logger.debug("ServiceSerializer.update — validated_data keys: %s, has_image: %s, has_categories: %s",
+                      validated_data.keys(), bool(image_file), categories is not None)
+        try:
+            instance = super().update(instance, validated_data)
+        except Exception as e:
+            logger.error("ServiceSerializer.update — super().update failed: %s", e, exc_info=True)
+            raise
         if categories is not None:
             instance.categories.set(categories)
         if image_file:
