@@ -316,3 +316,17 @@ class CookieRefreshView(APIView):
                 'error': 'Invalid refresh token'
             }, status=status.HTTP_401_UNAUTHORIZED)
             return clear_auth_cookies(response)
+
+
+class LookupSubdomainView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        from apps.tenants_api.models import Tenant
+        email = (request.data.get('email') or '').strip().lower()
+        if not email:
+            return Response({'error': 'Email requerido'}, status=400)
+        tenant = Tenant.objects.filter(contact_email=email, deleted_at__isnull=True).first()
+        if not tenant:
+            return Response({'error': 'No encontrado'}, status=404)
+        return Response({'subdomain': tenant.subdomain, 'name': tenant.name})

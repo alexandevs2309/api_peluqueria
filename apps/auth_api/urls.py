@@ -4,7 +4,7 @@ from .views import (
     RegisterView, LoginView, LogoutView,
     ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView, MFADisableView, UserViewSet, VerifyAuthView
 )
-from .cookie_views import CookieLoginView, CookieLogoutView, CookieRefreshView
+from .cookie_views import CookieLoginView, CookieLogoutView, CookieRefreshView, LookupSubdomainView
 from .permissions_check import UserPermissionsView
 
 router = DefaultRouter()
@@ -19,6 +19,7 @@ urlpatterns = [
     path('cookie-logout/', CookieLogoutView.as_view(), name='cookie-logout'),
     path('cookie-refresh/', CookieRefreshView.as_view(), name='cookie-refresh'),
     path('verify/', VerifyAuthView.as_view(), name='verify-auth'),
+    path('lookup-subdomain/', LookupSubdomainView.as_view(), name='lookup-subdomain'),
     path('change-password/', ChangePasswordView.as_view(), name='change-password'),
     path('reset-password/', PasswordResetRequestView.as_view(), name='password-reset'),
     path('reset-password-confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
