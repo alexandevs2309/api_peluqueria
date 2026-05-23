@@ -23,6 +23,7 @@ ROLE_PERMISSIONS = {
     'SuperAdmin': '__all__',
     'Client-Admin': '__tenant_admin__',
     'Manager': [
+        ('auth_api', 'view_user'),
         ('appointments_api', 'view_appointment'),
         ('appointments_api', 'add_appointment'),
         ('appointments_api', 'change_appointment'),
@@ -51,6 +52,7 @@ ROLE_PERMISSIONS = {
         ('notifications_api', 'view_inappnotification'),
     ],
     'Client-Staff': [
+        ('auth_api', 'view_user'),
         ('employees_api', 'view_employee'),
         ('appointments_api', 'view_appointment'),
         ('appointments_api', 'add_appointment'),
@@ -67,6 +69,7 @@ ROLE_PERMISSIONS = {
         ('notifications_api', 'view_inappnotification'),
     ],
     'Cajera': [
+        ('auth_api', 'view_user'),
         ('employees_api', 'view_employee'),
         ('appointments_api', 'view_appointment'),
         ('appointments_api', 'add_appointment'),
@@ -89,6 +92,7 @@ ROLE_PERMISSIONS = {
         ('notifications_api', 'view_inappnotification'),
     ],
     'Estilista': [
+        ('auth_api', 'view_user'),
         ('employees_api', 'view_employee'),
         ('appointments_api', 'view_appointment'),
         ('appointments_api', 'change_appointment'),
@@ -119,6 +123,7 @@ ROLE_PERMISSIONS = {
     # Business roles (nuevo sistema RBAC)
     'owner': '__tenant_admin__',
     'frontdesk_cashier': [
+        ('auth_api', 'view_user'),
         ('employees_api', 'view_employee'),
         ('appointments_api', 'view_appointment'),
         ('appointments_api', 'add_appointment'),
@@ -141,6 +146,7 @@ ROLE_PERMISSIONS = {
         ('notifications_api', 'view_inappnotification'),
     ],
     'professional': [
+        ('auth_api', 'view_user'),
         ('employees_api', 'view_employee'),
         ('appointments_api', 'view_appointment'),
         ('appointments_api', 'change_appointment'),
@@ -160,6 +166,7 @@ ROLE_PERMISSIONS = {
         ('notifications_api', 'view_inappnotification'),
     ],
     'internal_support': [
+        ('auth_api', 'view_user'),
         ('employees_api', 'view_employee'),
         ('appointments_api', 'view_appointment'),
         ('services_api', 'view_service'),
