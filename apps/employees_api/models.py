@@ -24,10 +24,25 @@ class Employee(models.Model):
         ('commission', 'Comisión'),
         ('mixed', 'Mixto (Sueldo + Comisión)')
     ]
-    
+
+    SPECIALTY_CHOICES = [
+        ('barber', 'Barbero (Corte caballero)'),
+        ('stylist', 'Estilista (Corte dama)'),
+        ('manicurist', 'Manicurista'),
+        ('pedicurist', 'Pedicurista'),
+        ('colorist', 'Colorista'),
+        ('braider', 'Trencista'),
+        ('eyebrow', 'Cejas / Pestañas'),
+        ('makeup', 'Maquilladora'),
+        ('massage', 'Masajista'),
+        ('barber_stylist', 'Barbero / Estilista'),
+        ('general', 'General / Multipropósito'),
+        ('other', 'Otro'),
+    ]
+
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')
-    specialty = models.CharField(max_length=100, blank=True)
+    specialty = models.CharField(max_length=100, choices=SPECIALTY_CHOICES, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     hire_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)

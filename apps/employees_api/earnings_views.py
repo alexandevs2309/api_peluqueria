@@ -18,6 +18,8 @@ class PayrollViewSet(viewsets.ViewSet):
     permission_classes = [TenantPermissionByAction]
     permission_map = {
         'list_periods': 'employees_api.view_employee_payroll',
+        'my_earnings': 'employees_api.view_employee_payroll',
+        'my_summary': 'employees_api.view_employee_payroll',
         'get_receipt': 'employees_api.view_employee_payroll',
         'register_payment': 'employees_api.approve_payroll',
         'recalculate_period': 'employees_api.change_employee_payroll',
@@ -71,6 +73,70 @@ class PayrollViewSet(viewsets.ViewSet):
             })
         
         return Response({'periods': periods_data})
+
+    @action(detail=False, methods=['get'], url_path='client/payroll/my-earnings')
+    def my_earnings(self, request):
+        """Mis períodos de nómina (filtrado por empleado logueado)"""
+        try:
+            employee = request.user.employee_profile
+        except AttributeError:
+            return Response({'error': 'No tienes perfil de empleado'}, status=403)
+
+        periods = PayrollPeriod.objects.filter(
+            employee=employee,
+            employee__tenant=request.user.tenant
+        ).select_related('employee__user').order_by('-period_start')
+
+        periods_data = []
+        for period in periods:
+            status = period.status
+            if status == 'ready':
+                status = 'approved'
+            periods_data.append({
+                'id': period.id,
+                'period_display': period.period_display,
+                'status': status,
+                'gross_amount': float(period.gross_amount),
+                'net_amount': float(period.net_amount),
+                'deductions_total': float(period.deductions_total),
+                'period_start': period.period_start.isoformat(),
+                'period_end': period.period_end.isoformat(),
+                'can_pay': period.can_pay,
+                'pay_block_reason': period.pay_block_reason,
+                'payment_method': period.get_payment_method_display() if period.payment_method else None,
+                'paid_at': period.paid_at.isoformat() if period.paid_at else None,
+            })
+
+        return Response({'periods': periods_data})
+
+    @action(detail=False, methods=['get'], url_path='client/payroll/my-summary')
+    def my_summary(self, request):
+        """Resumen de ingresos del empleado logueado"""
+        try:
+            employee = request.user.employee_profile
+        except AttributeError:
+            return Response({'error': 'No tienes perfil de empleado'}, status=403)
+
+        periods = PayrollPeriod.objects.filter(
+            employee=employee,
+            employee__tenant=request.user.tenant
+        )
+
+        total_gross = sum(float(p.gross_amount) for p in periods)
+        total_net = sum(float(p.net_amount) for p in periods)
+        total_deductions = sum(float(p.deductions_total) for p in periods)
+        paid_periods = periods.filter(status='paid').count()
+        pending_periods = periods.filter(status__in=['open', 'pending_approval', 'approved']).count()
+
+        return Response({
+            'total_gross': round(total_gross, 2),
+            'total_net': round(total_net, 2),
+            'total_deductions': round(total_deductions, 2),
+            'paid_periods': paid_periods,
+            'pending_periods': pending_periods,
+            'payment_type': employee.get_payment_type_display(),
+            'commission_rate': float(employee.commission_rate),
+        })
     
     @action(detail=False, methods=['post'], url_path='client/payroll/register_payment')
     def register_payment(self, request):
