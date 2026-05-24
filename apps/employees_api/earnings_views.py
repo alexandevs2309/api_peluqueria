@@ -48,8 +48,12 @@ class PayrollViewSet(viewsets.ViewSet):
         """Endpoint compatible con frontend: GET /payroll/client/payroll/"""
         periods = self.get_queryset().select_related('employee__user')
         
-        # ELIMINADO: No recalcular automáticamente en GET
-        # El cálculo solo se hace al cerrar/aprobar o por acción explícita
+        # Recalcular períodos abiertos si el desglose no coincide con el bruto
+        for period in periods:
+            if period.status == 'open' and not period.is_finalized:
+                if period.base_salary + period.commission_earnings != period.gross_amount:
+                    period.calculate_amounts()
+                    period.save(update_fields=['base_salary', 'commission_earnings', 'gross_amount', 'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason'])
         
         periods_data = []
         for period in periods:
@@ -63,6 +67,8 @@ class PayrollViewSet(viewsets.ViewSet):
                 'employee_name': period.employee.user.full_name or period.employee.user.email,
                 'period_display': period.period_display,
                 'status': status,
+                'base_salary': float(period.base_salary),
+                'commission_earnings': float(period.commission_earnings),
                 'gross_amount': float(period.gross_amount),
                 'net_amount': float(period.net_amount),
                 'deductions_total': float(period.deductions_total),
@@ -96,6 +102,8 @@ class PayrollViewSet(viewsets.ViewSet):
                 'id': period.id,
                 'period_display': period.period_display,
                 'status': status,
+                'base_salary': float(period.base_salary),
+                'commission_earnings': float(period.commission_earnings),
                 'gross_amount': float(period.gross_amount),
                 'net_amount': float(period.net_amount),
                 'deductions_total': float(period.deductions_total),
