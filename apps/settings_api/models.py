@@ -198,7 +198,7 @@ class SystemSettings(models.Model):
                 'trial_days': 7,
                 'default_currency': 'USD',
                 'platform_domain': '',
-                'supported_languages': ['es', 'en'],
+                'supported_languages': ['es', 'en', 'fr', 'pt', 'de'],
                 'platform_commission_rate': 5.00,
                 'basic_plan_max_employees': 5,
                 'premium_plan_max_employees': 25,
