@@ -25,7 +25,7 @@ def employee_report(request):
     from apps.employees_api.models import Employee
     from apps.pos_api.models import Sale
     
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     
     # Estadísticas básicas
     total_employees = Employee.objects.filter(tenant=tenant).count()
@@ -71,7 +71,7 @@ def sales_report(request):
     from django.utils import timezone
     from datetime import datetime, timedelta
     
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     now = timezone.now()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
@@ -132,13 +132,13 @@ def dashboard_stats(request):
     from apps.appointments_api.models import Appointment
     
     # Cache key basado en tenant
-    cache_key = f'dashboard_stats_{getattr(request.user.tenant, "id", "none")}'
+    cache_key = f'dashboard_stats_{getattr(getattr(request, 'tenant', request.user.tenant), "id", "none")}'
     cached_data = cache.get(cache_key)
     
     if cached_data:
         return Response(cached_data)
     
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     # Estadísticas básicas que sabemos que funcionan
@@ -173,7 +173,7 @@ def dashboard_stats(request):
 def reports_by_type(request):
     """Reportes por tipo (appointments, sales, etc.)"""
     report_type = request.GET.get('type', 'general')
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     
     if report_type == 'appointments':
         from apps.appointments_api.models import Appointment
@@ -390,7 +390,7 @@ def appointments_calendar_data(request):
         return Response({'error': 'Formato de fecha inválido'}, status=400)
     
     appointments = Appointment.objects.filter(
-        client__tenant=request.user.tenant,
+        client__tenant=getattr(request, 'tenant', request.user.tenant),
         date_time__gte=start,
         date_time__lte=end
     ).select_related('client', 'stylist', 'service')
@@ -441,13 +441,13 @@ def kpi_dashboard(request):
     from django.db.models import Sum, Count, Avg
     
     # Cache key basado en tenant
-    cache_key = f'kpi_dashboard_{getattr(request.user.tenant, "id", "none")}'
+    cache_key = f'kpi_dashboard_{getattr(getattr(request, 'tenant', request.user.tenant), "id", "none")}'
     cached_data = cache.get(cache_key)
     
     if cached_data:
         return Response(cached_data)
     
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     today = timezone.now().date()
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
@@ -514,7 +514,7 @@ def services_performance(request):
     from apps.services_api.models import Service
     from django.db.models import Sum, Count
     
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     days = int(request.GET.get('days', 30))
     start_date = timezone.now() - timedelta(days=days)
     
@@ -552,7 +552,7 @@ def client_analytics(request):
     from apps.appointments_api.models import Appointment
     from django.db.models import Count, Q
     
-    tenant = request.user.tenant
+    tenant = getattr(request, 'tenant', request.user.tenant)
     
     # Clientes por género
     gender_stats = Client.objects.filter(tenant=tenant, is_active=True).values('gender').annotate(

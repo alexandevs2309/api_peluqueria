@@ -334,14 +334,14 @@ class MyEntitlementsView(APIView):
             # Usuario sin suscripción - verificar si tiene tenant con plan
             employee_count = 0
             try:
-                if hasattr(request.user, "tenant") and request.user.tenant is not None:
+                if hasattr(request.user, "tenant") and getattr(request, 'tenant', request.user.tenant) is not None:
                     from apps.employees_api.models import Employee
-                    employee_count = Employee.objects.filter(tenant=request.user.tenant).count()
+                    employee_count = Employee.objects.filter(tenant=getattr(request, 'tenant', request.user.tenant)).count()
                     
                     # Si el tenant tiene un plan, usar ese plan
-                    if request.user.tenant.subscription_plan:
-                        plan = request.user.tenant.subscription_plan
-                        tenant = request.user.tenant
+                    if getattr(request, 'tenant', request.user.tenant).subscription_plan:
+                        plan = getattr(request, 'tenant', request.user.tenant).subscription_plan
+                        tenant = getattr(request, 'tenant', request.user.tenant)
                         
                         # Calcular días restantes de trial
                         trial_days_remaining = None
@@ -377,9 +377,9 @@ class MyEntitlementsView(APIView):
         # Calcula usage de empleados
         employee_count = 0
         try:
-            if hasattr(request.user, "tenant") and request.user.tenant is not None:
+            if hasattr(request.user, "tenant") and getattr(request, 'tenant', request.user.tenant) is not None:
                 from apps.employees_api.models import Employee
-                employee_count = Employee.objects.filter(tenant=request.user.tenant).count()
+                employee_count = Employee.objects.filter(tenant=getattr(request, 'tenant', request.user.tenant)).count()
         except Exception:
             employee_count = 0
         
@@ -390,7 +390,7 @@ class MyEntitlementsView(APIView):
             "max_employees": plan.max_employees,  # 0 = ilimitado
         }
         # Información del tenant para trial
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         trial_days_remaining = None
         if tenant and tenant.subscription_status == 'trial' and tenant.trial_end_date:
             trial_days_remaining = (tenant.trial_end_date - timezone.now().date()).days
@@ -961,7 +961,7 @@ class RenewSubscriptionView(APIView):
                 'is_superadmin': True
             }, status=200)
             
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
         
@@ -989,7 +989,7 @@ class RenewSubscriptionView(APIView):
         if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
             return Response({'error': 'SuperAdmin does not need subscription renewal'}, status=400)
             
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
 

@@ -54,9 +54,12 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
         return InAppNotification.objects.filter(recipient=user)
 
 class NotificationTemplateListView(generics.ListAPIView):
-    queryset = NotificationTemplate.objects.filter(is_active=True)
     serializer_class = NotificationTemplateSerializer
     permission_classes = [tenant_permission('notifications_api.view_notificationtemplate')]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, 'tenant', getattr(self.request.user, 'tenant', None))
+        return NotificationTemplate.objects.filter(tenant=tenant, is_active=True)
 
 
 

@@ -86,7 +86,7 @@ def create_test_data():
     except User.DoesNotExist:
         user = User.objects.create_superuser(
             email="chaos@test.com",
-            password="chaos123",
+            password=os.environ.get("CHAOS_TEST_PASSWORD", "chaos123"),
             full_name="Chaos User"
         )
     

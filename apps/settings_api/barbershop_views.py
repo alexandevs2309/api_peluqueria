@@ -50,8 +50,8 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         Obtener configuración POS priorizando usuario actual y con fallback al tenant.
         """
         pos = PosConfiguration.objects.filter(user=request.user).first()
-        if not pos and hasattr(request.user, 'tenant') and request.user.tenant:
-            pos = PosConfiguration.objects.filter(user__tenant=request.user.tenant).first()
+        if not pos and hasattr(request.user, 'tenant') and getattr(request, 'tenant', request.user.tenant):
+            pos = PosConfiguration.objects.filter(user__tenant=getattr(request, 'tenant', request.user.tenant)).first()
 
         if not pos:
             return None
@@ -114,12 +114,12 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         Solo campos necesarios para operación diaria.
         """
         try:
-            settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
+            settings = BarbershopSettings.objects.get(tenant=getattr(request, 'tenant', request.user.tenant))
             serializer = BarbershopPublicSerializer(settings)
             data = serializer.data
             
             data['pos_config'] = self._get_pos_config_data(request)
-            data['currency_locked'] = self._is_currency_locked(request.user.tenant)
+            data['currency_locked'] = self._is_currency_locked(getattr(request, 'tenant', request.user.tenant))
             data['currency_lock_reason'] = (
                 'No se puede cambiar la moneda porque existen transacciones registradas.'
                 if data['currency_locked'] else ''
@@ -147,10 +147,10 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'address': ''
                 },
                 'pos_config': self._get_pos_config_data(request),
-                'currency_locked': self._is_currency_locked(request.user.tenant),
+                'currency_locked': self._is_currency_locked(getattr(request, 'tenant', request.user.tenant)),
                 'currency_lock_reason': (
                     'No se puede cambiar la moneda porque existen transacciones registradas.'
-                    if self._is_currency_locked(request.user.tenant) else ''
+                    if self._is_currency_locked(getattr(request, 'tenant', request.user.tenant)) else ''
                 )
             })
     
@@ -162,11 +162,11 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         Incluye campos financieros y críticos.
         """
         try:
-            settings = BarbershopSettings.objects.get(tenant=request.user.tenant)
+            settings = BarbershopSettings.objects.get(tenant=getattr(request, 'tenant', request.user.tenant))
             serializer = BarbershopAdminSerializer(settings)
             data = serializer.data
             data['pos_config'] = self._get_pos_config_data(request)
-            data['currency_locked'] = self._is_currency_locked(request.user.tenant)
+            data['currency_locked'] = self._is_currency_locked(getattr(request, 'tenant', request.user.tenant))
             data['currency_lock_reason'] = (
                 'No se puede cambiar la moneda porque existen transacciones registradas.'
                 if data['currency_locked'] else ''
@@ -203,7 +203,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         logger.info(f"[DEBUG] create() called. tenant={getattr(request.user, 'tenant_id', None)}")
         
         data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
 
         # Campos auxiliares que no pertenecen al serializer principal.
         pos_config_data = data.pop('pos_config', None)

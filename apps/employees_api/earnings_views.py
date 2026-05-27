@@ -36,11 +36,12 @@ class PayrollViewSet(viewsets.ViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        if hasattr(user, 'tenant'):
+        tenant = getattr(self.request, 'tenant', getattr(user, 'tenant', None))
+        if tenant:
             return PayrollPeriod.objects.select_related(
                 'employee__user',
                 'employee__tenant'
-            ).prefetch_related('deductions').filter(employee__tenant=user.tenant)
+            ).prefetch_related('deductions').filter(employee__tenant=tenant)
         return PayrollPeriod.objects.none()
     
     @action(detail=False, methods=['get'], url_path='client/payroll')
@@ -90,7 +91,7 @@ class PayrollViewSet(viewsets.ViewSet):
 
         periods = PayrollPeriod.objects.filter(
             employee=employee,
-            employee__tenant=request.user.tenant
+            employee__tenant=getattr(request, 'tenant', request.user.tenant)
         ).select_related('employee__user').order_by('-period_start')
 
         periods_data = []
@@ -127,7 +128,7 @@ class PayrollViewSet(viewsets.ViewSet):
 
         periods = PayrollPeriod.objects.filter(
             employee=employee,
-            employee__tenant=request.user.tenant
+            employee__tenant=getattr(request, 'tenant', request.user.tenant)
         )
 
         total_gross = sum(float(p.gross_amount) for p in periods)
@@ -163,7 +164,7 @@ class PayrollViewSet(viewsets.ViewSet):
                 # 🔒 BLOQUEO REAL DE FILA
                 period = PayrollPeriod.objects.select_for_update().get(id=period_id)
                 
-                if period.employee.tenant != request.user.tenant:
+                if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                     return Response({'error': 'No tienes permiso'}, status=403)
                 
                 if period.status == 'paid':
@@ -197,7 +198,7 @@ class PayrollViewSet(viewsets.ViewSet):
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
-            if period.employee.tenant != request.user.tenant:
+            if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                 return Response({'error': 'No tienes permiso'}, status=403)
             
             if period.status in ['approved', 'paid']:
@@ -222,7 +223,7 @@ class PayrollViewSet(viewsets.ViewSet):
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
-            if period.employee.tenant != request.user.tenant:
+            if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                 return Response({'error': 'No tienes permiso'}, status=403)
             
             if period.status != 'open':
@@ -246,7 +247,7 @@ class PayrollViewSet(viewsets.ViewSet):
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
-            if period.employee.tenant != request.user.tenant:
+            if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                 return Response({'error': 'No tienes permiso'}, status=403)
             
             period.approve(request.user)
@@ -273,7 +274,7 @@ class PayrollViewSet(viewsets.ViewSet):
         try:
             period = PayrollPeriod.objects.get(id=period_id)
             
-            if period.employee.tenant != request.user.tenant:
+            if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                 return Response({'error': 'No tienes permiso'}, status=403)
             
             period.reject(request.user, reason)
@@ -395,7 +396,7 @@ Equipo de Nómina'''
         try:
             period = PayrollPeriod.objects.select_related('employee__user', 'employee__tenant').get(id=payment_id)
             
-            if period.employee.tenant != request.user.tenant:
+            if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                 return Response({'error': 'No tienes permiso'}, status=403)
             
             deductions = [{'type': d.get_deduction_type_display(), 'amount': float(d.amount), 'description': d.description} for d in period.deductions.all()]

@@ -1,11 +1,14 @@
 from __future__ import absolute_import, unicode_literals
 import os
+import logging
 from celery import Celery
 
-# Establece el módulo de configuración de Django
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')  # ⬅️ reemplaza 'backend' si es necesario
+logger = logging.getLogger(__name__)
 
-app = Celery('backend')  # ⬅️ usa el mismo nombre del módulo raíz
+# Establece el módulo de configuración de Django
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
+
+app = Celery('backend')
 
 # Cargar configuración desde Django (prefijadas con CELERY_)
 app.config_from_object('django.conf:settings', namespace='CELERY')
@@ -15,4 +18,4 @@ app.autodiscover_tasks()
 
 @app.task(bind=True)
 def debug_task(self):
-    print(f'Request: {self.request!r}')
+    logger.debug(f'Request: {self.request!r}')
