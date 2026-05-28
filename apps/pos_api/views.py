@@ -47,9 +47,10 @@ class SaleViewSet(viewsets.ModelViewSet):
         tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
         settings = BarbershopSettings.objects.filter(tenant=tenant).first() if tenant else None
 
-        pos = PosConfiguration.objects.filter(user=request.user).first()
-        if not pos and tenant:
-            pos = PosConfiguration.objects.filter(user__tenant=tenant).first()
+        # Buscar config por tenant primero, luego por usuario
+        pos = PosConfiguration.objects.filter(tenant=tenant).first()
+        if not pos:
+            pos = PosConfiguration.objects.filter(user=request.user).first()
 
         name = ''
         address = ''
@@ -95,9 +96,10 @@ class SaleViewSet(viewsets.ModelViewSet):
             raise
 
     def _validate_cash_register(self):
-        """Validate if there's an open cash register"""
+        tenant = getattr(self.request, 'tenant', self.request.user.tenant)
         open_register = CashRegister.objects.filter(
-            user=self.request.user, 
+            user=self.request.user,
+            tenant=tenant,
             is_open=True
         ).first()
         
@@ -339,7 +341,9 @@ class SaleViewSet(viewsets.ModelViewSet):
             if employee_id:
                 from apps.employees_api.models import Employee
                 try:
-                    sale_employee = Employee.objects.get(id=employee_id, tenant=self.request.user.tenant)
+                    tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+                    if tenant:
+                        sale_employee = Employee.objects.get(id=employee_id, tenant=tenant)
                 except Employee.DoesNotExist:
                     pass
             
@@ -550,9 +554,11 @@ class SaleViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def open_register(self, request):
         today = timezone.localdate()
+        tenant = self._get_request_tenant()
         
-        # Cerrar cualquier caja abierta anterior (por seguridad)
+        # Cerrar cualquier caja abierta anterior del usuario en este tenant (por seguridad)
         CashRegister.objects.filter(
+            tenant=tenant,
             user=request.user, 
             is_open=True
         ).update(
@@ -563,6 +569,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         
         # Verificar que no hay caja abierta hoy
         open_register = CashRegister.objects.filter(
+            tenant=tenant,
             user=request.user, 
             is_open=True,
             opened_at__date=today
@@ -581,6 +588,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         
         register = CashRegister.objects.create(
             user=request.user,
+            tenant=tenant,
             initial_cash=serializer.validated_data['initial_cash']
         )
         
@@ -588,10 +596,11 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def current_register(self, request):
-        # Solo buscar cajas abiertas del día actual
+        tenant = getattr(request, 'tenant', request.user.tenant)
         today = timezone.localdate()
         register = CashRegister.objects.filter(
-            user=request.user, 
+            user=request.user,
+            tenant=tenant,
             is_open=True,
             opened_at__date=today
         ).first()
@@ -1102,10 +1111,14 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None) or getattr(user, 'tenant', None)
         if not tenant:
             return PosConfiguration.objects.none()
-        return PosConfiguration.objects.filter(user__tenant=tenant)
+        # Usar el FK directo tenant si está presente, o fallback a user__tenant
+        return PosConfiguration.objects.filter(
+            Q(tenant=tenant) | Q(tenant__isnull=True, user__tenant=tenant)
+        )
     
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        serializer.save(user=self.request.user, tenant=tenant)
             
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])
@@ -1130,6 +1143,7 @@ def daily_summary(request):
         # Obtener sesión de caja abierta
         open_register = CashRegister.objects.filter(
             user=request.user,
+            tenant=request.tenant,
             is_open=True,
             opened_at__date=today
         ).first()
@@ -1334,13 +1348,15 @@ def pos_categories(request):
         from apps.inventory_api.models import Product
         
         # Obtener categorías de productos (Service no tiene category)
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        if not tenant:
+            return Response({'categories': [{'name': 'Todas', 'value': ''}]})
+        
         qs = Product.objects.filter(
+            tenant=tenant,
             is_active=True,
             category__isnull=False
         ).exclude(category='')
-        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
-        if tenant:
-            qs = qs.filter(tenant=tenant)
         product_categories = list(qs.values_list('category', flat=True).distinct())
         
         # Categorías base

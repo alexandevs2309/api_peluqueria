@@ -35,19 +35,19 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Invoice.objects.select_related(
-            'user', 'user__tenant', 'subscription', 'subscription__plan'
+            'user', 'tenant', 'subscription', 'subscription__plan'
         )
 
         if self.request.user.is_superuser:
             tenant_id = self.request.query_params.get('tenant')
             if tenant_id:
-                return queryset.filter(user__tenant_id=tenant_id)
+                return queryset.filter(tenant_id=tenant_id)
             return queryset.all()
 
         tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         if not tenant:
             return Invoice.objects.none()
-        return queryset.filter(user__tenant=tenant)
+        return queryset.filter(tenant=tenant)
     
     def update(self, request, *args, **kwargs):
         return Response(
@@ -108,7 +108,8 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         
         serializer.save(
             user=self.request.user,
-            amount=calculated_amount
+            amount=calculated_amount,
+            tenant=getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         )
     
     @action(detail=True, methods=['post'], url_path='pay')
@@ -172,6 +173,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         invoice = Invoice.objects.create(
             user=subscription.user,
             subscription=subscription,
+            tenant=tenant,
             amount=subscription.plan.price,
             due_date=serializer.validated_data['due_date'],
             description=description or f'Factura manual de suscripción - {subscription.plan.get_name_display()}',
@@ -197,7 +199,10 @@ class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if self.request.user.is_superuser:
             return PaymentAttempt.objects.all()
-        return PaymentAttempt.objects.filter(invoice__user=self.request.user)
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        if not tenant:
+            return PaymentAttempt.objects.none()
+        return PaymentAttempt.objects.filter(invoice__tenant=tenant)
 
 class BillingStatsView(views.APIView):
     """Estadísticas de facturación para SuperAdmin"""

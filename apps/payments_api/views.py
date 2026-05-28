@@ -37,7 +37,7 @@ class PaymentViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         if not tenant:
             return Payment.objects.none()
-        return Payment.objects.filter(user__tenant=tenant)
+        return Payment.objects.filter(tenant=tenant)
 
     def create(self, request, *args, **kwargs):
         return Response(

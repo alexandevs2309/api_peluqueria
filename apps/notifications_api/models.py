@@ -3,6 +3,7 @@ from django.conf import settings
 from django.utils import timezone
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from apps.tenants_api.models import Tenant
 
 class InAppNotification(models.Model):
     """Notificaciones in-app para dashboard"""
@@ -31,7 +32,7 @@ class InAppNotification(models.Model):
 
 class NotificationTemplate(models.Model):
     """
-    Plantillas personalizables para notificaciones
+    Plantillas personalizables para notificaciones (multi-tenant)
     """
     TEMPLATE_TYPES = [
         ('email', 'Email'),
@@ -53,7 +54,8 @@ class NotificationTemplate(models.Model):
         ('system_maintenance', 'Mantenimiento del Sistema'),
     ]
 
-    name = models.CharField(max_length=100, unique=True)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, null=True, blank=True, related_name='notification_templates')
+    name = models.CharField(max_length=100)
     type = models.CharField(max_length=20, choices=TEMPLATE_TYPES)
     notification_type = models.CharField(max_length=50, choices=NOTIFICATION_TYPES)
     subject = models.CharField(max_length=255, blank=True, null=True)  # Para emails
@@ -68,10 +70,14 @@ class NotificationTemplate(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return f"{self.get_type_display()} - {self.name}"
+        prefix = f"[{self.tenant}] " if self.tenant else ""
+        return f"{prefix}{self.get_type_display()} - {self.name}"
 
     class Meta:
         ordering = ['type', 'notification_type']
+        constraints = [
+            models.UniqueConstraint(fields=['tenant', 'name'], name='unique_template_name_per_tenant')
+        ]
 
 class Notification(models.Model):
     """

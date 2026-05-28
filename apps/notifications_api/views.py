@@ -1,5 +1,6 @@
 from rest_framework import generics, permissions
 from rest_framework.response import Response
+from django.db.models import Q
 from django.utils import timezone
 from apps.core.tenant_permissions import tenant_permission
 from apps.auth_api.role_utils import get_effective_role_name
@@ -26,7 +27,7 @@ class NotificationListCreateView(generics.ListCreateAPIView):
         
         # Administradores ven todas las notificaciones
         if _can_manage_tenant_notifications(user, tenant=tenant):
-            return InAppNotification.objects.filter(recipient__tenant=user.tenant).order_by('-created_at')
+            return InAppNotification.objects.filter(recipient__tenant=tenant).order_by('-created_at')
         
         # Usuarios normales solo ven sus notificaciones
         return InAppNotification.objects.filter(recipient=user).order_by('-created_at')
@@ -48,18 +49,33 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
         
         # Administradores pueden actualizar todas las notificaciones de su tenant
         if _can_manage_tenant_notifications(user, tenant=tenant):
-            return InAppNotification.objects.filter(recipient__tenant=user.tenant)
+            return InAppNotification.objects.filter(recipient__tenant=tenant)
         
         # Usuarios normales solo sus notificaciones
         return InAppNotification.objects.filter(recipient=user)
 
-class NotificationTemplateListView(generics.ListAPIView):
+class NotificationTemplateListView(generics.ListCreateAPIView):
     serializer_class = NotificationTemplateSerializer
     permission_classes = [tenant_permission('notifications_api.view_notificationtemplate')]
 
+    def get_permissions(self):
+        if self.request.method == 'POST':
+            return [tenant_permission('notifications_api.add_notificationtemplate')()]
+        return [tenant_permission('notifications_api.view_notificationtemplate')()]
+
     def get_queryset(self):
         tenant = getattr(self.request, 'tenant', getattr(self.request.user, 'tenant', None))
-        return NotificationTemplate.objects.filter(tenant=tenant, is_active=True)
+        if not tenant:
+            return NotificationTemplate.objects.none()
+        # Incluir templates específicos del tenant + templates globales (sin tenant)
+        return NotificationTemplate.objects.filter(
+            Q(tenant=tenant) | Q(tenant__isnull=True),
+            is_active=True
+        )
+
+    def perform_create(self, serializer):
+        tenant = getattr(self.request, 'tenant', getattr(self.request.user, 'tenant', None))
+        serializer.save(tenant=tenant)
 
 
 
@@ -99,8 +115,13 @@ class SendTestNotificationView(generics.GenericAPIView):
         if not template_id:
             return Response({'error': 'template_id requerido'}, status=400)
         
+        tenant = getattr(self.request, 'tenant', getattr(self.request.user, 'tenant', None))
+        
         try:
-            template = NotificationTemplate.objects.get(id=template_id)
+            template = NotificationTemplate.objects.get(
+                Q(id=template_id),
+                Q(tenant=tenant) | Q(tenant__isnull=True)
+            )
             service = NotificationService()
             
             # Contexto de prueba

@@ -1,10 +1,26 @@
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from apps.notifications_api.models import NotificationTemplate
 
 class Command(BaseCommand):
-    help = 'Crear templates básicos de notificaciones'
+    help = 'Crear templates básicos de notificaciones (globales o por tenant)'
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            '--tenant',
+            type=int,
+            help='ID del tenant para crear templates específicos (omite para templates globales)',
+        )
 
     def handle(self, *args, **options):
+        tenant_id = options.get('tenant')
+        tenant = None
+        if tenant_id:
+            from apps.tenants_api.models import Tenant
+            try:
+                tenant = Tenant.objects.get(id=tenant_id)
+            except Tenant.DoesNotExist:
+                raise CommandError(f'Tenant con ID {tenant_id} no existe.')
+
         templates = [
             {
                 'name': 'Confirmación de Cita',
@@ -128,6 +144,7 @@ Equipo de Soporte''',
         for template_data in templates:
             template, created = NotificationTemplate.objects.get_or_create(
                 name=template_data['name'],
+                tenant=tenant,
                 defaults=template_data
             )
             if created:

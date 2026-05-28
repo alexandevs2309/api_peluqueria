@@ -10,7 +10,8 @@ class InAppNotificationSerializer(serializers.ModelSerializer):
 class NotificationTemplateSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationTemplate
-        fields = ['id', 'name', 'type', 'notification_type', 'subject', 'body', 'is_html', 'is_active', 'available_variables']
+        fields = ['id', 'tenant', 'name', 'type', 'notification_type', 'subject', 'body', 'is_html', 'is_active', 'available_variables']
+        read_only_fields = ['tenant']
 
 class NotificationSerializer(serializers.ModelSerializer):
     template_name = serializers.CharField(source='template.name', read_only=True)

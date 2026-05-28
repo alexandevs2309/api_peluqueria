@@ -298,7 +298,13 @@ class SubscriptionAuditLogViewSet(viewsets.ModelViewSet):
     }
 
     def get_queryset(self):
-        return SubscriptionAuditLog.objects.filter(user=self.request.user)
+        if self.request.user.is_superuser:
+            return SubscriptionAuditLog.objects.all()
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        if not tenant:
+            return SubscriptionAuditLog.objects.none()
+        # Mostrar logs de todos los usuarios del tenant
+        return SubscriptionAuditLog.objects.filter(user__tenant=tenant)
 
 
     
@@ -825,6 +831,7 @@ class RenewSubscriptionView(APIView):
 
             Invoice.objects.create(
                 user=request.user,
+                tenant=tenant,
                 amount=plan.price * cached_order['months'],
                 due_date=timezone.now(),
                 is_paid=True,
@@ -926,6 +933,7 @@ class RenewSubscriptionView(APIView):
             amount_paid = first_invoice.get('amount_paid') or int(plan.price * 100)
             Invoice.objects.create(
                 user=user,
+                tenant=tenant,
                 amount=amount_paid / 100,
                 due_date=timezone.now(),
                 is_paid=True,
@@ -1053,6 +1061,7 @@ class RenewSubscriptionView(APIView):
                 from apps.billing_api.models import Invoice
                 Invoice.objects.create(
                     user=request.user,
+                    tenant=tenant,
                     amount=plan.price * months,
                     due_date=timezone.now(),
                     is_paid=True,
@@ -1172,6 +1181,7 @@ class RenewSubscriptionView(APIView):
                     amount = (payment_intent.amount or int(plan.price * months * 100)) / 100
                     Invoice.objects.create(
                         user=request.user,
+                        tenant=tenant,
                         amount=amount,
                         due_date=timezone.now(),
                         is_paid=True,
@@ -1239,6 +1249,7 @@ class RenewSubscriptionView(APIView):
                 from apps.billing_api.models import Invoice
                 Invoice.objects.create(
                     user=request.user,
+                    tenant=tenant,
                     amount=plan.price * months,
                     due_date=timezone.now(),
                     is_paid=True,

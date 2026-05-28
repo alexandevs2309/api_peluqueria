@@ -1,6 +1,7 @@
 import logging
 
 from django.db.models.signals import post_save, pre_save
+from django.db.models import Q
 from django.dispatch import receiver
 from django.utils import timezone
 from datetime import timedelta
@@ -35,9 +36,11 @@ def appointment_created(sender, instance, created, **kwargs):
         # Notificación por email (si existe template)
         service = NotificationService()
         try:
+            tenant = getattr(instance.stylist, 'tenant', None) if instance.stylist else None
             template = NotificationTemplate.objects.get(
-                notification_type='appointment_confirmation',
-                type='email',
+                Q(notification_type='appointment_confirmation'),
+                Q(type='email'),
+                Q(tenant=tenant) | Q(tenant__isnull=True),
                 is_active=True
             )
             
@@ -99,9 +102,11 @@ def sale_completed(sender, instance, created, **kwargs):
         service = NotificationService()
         
         try:
+            tenant = getattr(instance.employee.user, 'tenant', None) if instance.employee else None
             template = NotificationTemplate.objects.get(
-                notification_type='earnings_available',
-                type='email',
+                Q(notification_type='earnings_available'),
+                Q(type='email'),
+                Q(tenant=tenant) | Q(tenant__isnull=True),
                 is_active=True
             )
             
@@ -127,9 +132,11 @@ def product_low_stock(sender, instance, **kwargs):
         service = NotificationService()
         
         try:
+            tenant = getattr(instance, 'tenant', None)
             template = NotificationTemplate.objects.get(
-                notification_type='stock_alert',
-                type='email',
+                Q(notification_type='stock_alert'),
+                Q(type='email'),
+                Q(tenant=tenant) | Q(tenant__isnull=True),
                 is_active=True
             )
             
@@ -168,9 +175,11 @@ def subscription_expiring(sender, instance, **kwargs):
             service = NotificationService()
             
             try:
+                tenant = getattr(instance, 'tenant', None)
                 template = NotificationTemplate.objects.get(
-                    notification_type='subscription_expiring',
-                    type='email',
+                    Q(notification_type='subscription_expiring'),
+                    Q(type='email'),
+                    Q(tenant=tenant) | Q(tenant__isnull=True),
                     is_active=True
                 )
                 
@@ -212,38 +221,41 @@ def create_appointment_reminders():
     
     service = NotificationService()
     
-    try:
-        template = NotificationTemplate.objects.get(
-            notification_type='appointment_reminder',
-            type='email',
-            is_active=True
-        )
-        
-        for appointment in appointments:
-            # SMS recordatorio (async via Celery)
-            if appointment.client and appointment.client.phone:
-                phone = appointment.client.phone
-                if not phone.startswith('+'):
-                    phone = f'+1{phone}' if phone.isdigit() else phone
-                from .tasks import send_sms
-                send_sms.delay(
-                    phone=phone,
-                    message=f"Recordatorio: Tu cita en la barbería es mañana {appointment.date_time.strftime('%d/%m/%Y')} a las {appointment.date_time.strftime('%H:%M')}. Te esperamos!"
-                )
-
-            context = {
-                'client_name': appointment.client.full_name,
-                'appointment_date': appointment.date_time.strftime('%d/%m/%Y'),
-                'appointment_time': appointment.date_time.strftime('%H:%M'),
-                'stylist_name': appointment.stylist.full_name if appointment.stylist else 'Por asignar',
-                'service_name': appointment.service.name if appointment.service else 'Por definir'
-            }
-            
-            service.create_notification(
-                recipient=appointment.client.user if hasattr(appointment.client, 'user') else None,
-                template=template,
-                context_data=context,
-                scheduled_at=timezone.now() + timedelta(hours=1)  # Enviar en 1 hora
+    for appointment in appointments:
+        # SMS recordatorio (async via Celery)
+        if appointment.client and appointment.client.phone:
+            phone = appointment.client.phone
+            if not phone.startswith('+'):
+                phone = f'+1{phone}' if phone.isdigit() else phone
+            from .tasks import send_sms
+            send_sms.delay(
+                phone=phone,
+                message=f"Recordatorio: Tu cita en la barbería es mañana {appointment.date_time.strftime('%d/%m/%Y')} a las {appointment.date_time.strftime('%H:%M')}. Te esperamos!"
             )
-    except NotificationTemplate.DoesNotExist:
-        pass
+
+        # Buscar template para el tenant del stylist (o global)
+        tenant = getattr(appointment.stylist, 'tenant', None) if appointment.stylist else None
+        try:
+            template = NotificationTemplate.objects.get(
+                Q(notification_type='appointment_reminder'),
+                Q(type='email'),
+                Q(tenant=tenant) | Q(tenant__isnull=True),
+                is_active=True
+            )
+        except NotificationTemplate.DoesNotExist:
+            continue
+
+        context = {
+            'client_name': appointment.client.full_name,
+            'appointment_date': appointment.date_time.strftime('%d/%m/%Y'),
+            'appointment_time': appointment.date_time.strftime('%H:%M'),
+            'stylist_name': appointment.stylist.full_name if appointment.stylist else 'Por asignar',
+            'service_name': appointment.service.name if appointment.service else 'Por definir'
+        }
+        
+        service.create_notification(
+            recipient=appointment.client.user if hasattr(appointment.client, 'user') else None,
+            template=template,
+            context_data=context,
+            scheduled_at=timezone.now() + timedelta(hours=1)  # Enviar en 1 hora
+        )

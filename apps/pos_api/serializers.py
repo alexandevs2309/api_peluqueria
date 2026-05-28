@@ -212,8 +212,8 @@ class ReceiptSerializer(serializers.ModelSerializer):
 class PosConfigurationSerializer(serializers.ModelSerializer):
     class Meta:
         model = PosConfiguration
-        fields = ['id', 'user', 'business_name', 'address', 'phone', 'email', 'website', 'rnc',
+        fields = ['id', 'tenant', 'user', 'business_name', 'address', 'phone', 'email', 'website', 'rnc',
                  'currency', 'currency_symbol', 'tax_rate', 'tax_included',
                  'receipt_template', 'receipt_footer', 'auto_print_receipt', 'require_customer',
                  'allow_negative_stock']
-        read_only_fields = ['user']
+        read_only_fields = ['tenant', 'user']

@@ -108,9 +108,12 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
             return Response({'error': 'Código de barras requerido'}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+            if not tenant:
+                return Response({'error': 'Tenant no encontrado'}, status=status.HTTP_400_BAD_REQUEST)
             product = Product.objects.get(
                 barcode=barcode,
-                tenant=request.user.tenant,
+                tenant=tenant,
                 is_active=True
             )
             serializer = ProductSerializer(product)

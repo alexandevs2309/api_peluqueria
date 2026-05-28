@@ -78,7 +78,14 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             return
 
         try:
-            pos, created = PosConfiguration.objects.get_or_create(user=request.user)
+            tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+            pos, created = PosConfiguration.objects.get_or_create(
+                user=request.user,
+                defaults={'tenant': tenant}
+            )
+            # Si ya existía pero sin tenant, asignarlo ahora
+            if not created and pos.tenant is None and tenant is not None:
+                pos.tenant = tenant
             logger.debug("PosConfiguration: user_id=%s, created=%s", request.user.id, created)
             
             # Guardar valores anteriores

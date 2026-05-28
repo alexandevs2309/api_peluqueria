@@ -333,6 +333,7 @@ class Receipt(models.Model):
 
 class PosConfiguration(models.Model):
     """Configuración del POS por tenant"""
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, null=True, blank=True, related_name='pos_configs')
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='pos_config')
     business_name = models.CharField(max_length=255, blank=True)
     address = models.TextField(blank=True)
