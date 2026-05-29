@@ -26,6 +26,11 @@ class CSRFProtectionMiddleware(MiddlewareMixin):
             return None
         if request.path.startswith('/admin/') or request.path.startswith('/api/admin/'):
             return None
+        # Skip para registro público (POST sin AJAX)
+        if request.path.startswith('/api/subscriptions/register/'):
+            return None
+        if request.path.startswith('/api/subscriptions/check-email/'):
+            return None
 
         x_requested_with = request.META.get('HTTP_X_REQUESTED_WITH')
         if x_requested_with != 'XMLHttpRequest':
