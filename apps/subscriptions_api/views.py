@@ -144,9 +144,18 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='public-catalog', permission_classes=[AllowAny])
     def public_catalog(self, request):
+        cache_key = 'public_plan_catalog'
+        cached = cache.get(cache_key)
+        if cached is not None:
+            resp = Response(cached)
+            resp['Cache-Control'] = 'public, max-age=300'
+            return resp
         plans = self.get_queryset().filter(is_active=True, is_public=True).order_by('price')
         serializer = PublicSubscriptionPlanSerializer(plans, many=True)
-        return Response(serializer.data)
+        cache.set(cache_key, serializer.data, 300)
+        resp = Response(serializer.data)
+        resp['Cache-Control'] = 'public, max-age=300'
+        return resp
 
 
     

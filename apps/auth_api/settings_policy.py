@@ -1,3 +1,4 @@
+from django.conf import settings as django_settings
 from apps.settings_api.models import SystemSettings
 
 
@@ -21,6 +22,9 @@ def get_password_min_length(default: int = 8) -> int:
 
 
 def is_email_verification_required(default: bool = True) -> bool:
+    if django_settings.DEBUG:
+        return False
+
     settings = _get_system_settings()
     if settings is None:
         return default

@@ -1,3 +1,4 @@
+import json
 import logging
 
 from django.db.models.signals import post_save, pre_save
@@ -5,8 +6,27 @@ from django.db.models import Q
 from django.dispatch import receiver
 from django.utils import timezone
 from datetime import timedelta
-from .models import NotificationTemplate
+from .models import NotificationTemplate, InAppNotification
 from .services import NotificationService
+from .sse import publish_notification_event
+
+@receiver(post_save, sender=InAppNotification)
+def inapp_notification_created(sender, instance, created, **kwargs):
+    """Publica en Redis PubSub cuando se crea una notificación in-app."""
+    if created and instance.recipient_id:
+        publish_notification_event(
+            instance.recipient_id,
+            {
+                "type": "notification",
+                "id": instance.id,
+                "notification_type": instance.type,
+                "title": instance.title,
+                "message": instance.message,
+                "is_read": instance.is_read,
+                "created_at": instance.created_at.isoformat() if instance.created_at else None,
+            },
+        )
+
 
 @receiver(post_save, sender='appointments_api.Appointment')
 def appointment_created(sender, instance, created, **kwargs):

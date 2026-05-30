@@ -3,18 +3,38 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 from .models import Appointment
 from apps.clients_api.models import Client
-from apps.services_api.models import Service, StylistService
+from apps.services_api.models import Service
 from apps.roles_api.models import Role
 from django.contrib.auth import get_user_model
 from apps.employees_api.models import Employee, WorkSchedule
-from apps.employees_api.serializers import EmployeeSerializer
 
 User = get_user_model()
+
+
+class MinimalStylistInfoSerializer(serializers.Serializer):
+    """Versión ligera de EmployeeSerializer sin queries adicionales de roles/services."""
+    id = serializers.IntegerField()
+    specialty = serializers.CharField()
+    phone = serializers.CharField()
+    is_active = serializers.BooleanField()
+    user = serializers.SerializerMethodField()
+
+    def get_user(self, obj):
+        if not obj.user:
+            return None
+        return {
+            'id': obj.user.id,
+            'email': obj.user.email,
+            'full_name': obj.user.full_name or '',
+            'first_name': (obj.user.full_name.split(' ', 1)[0] if obj.user.full_name else ''),
+            'last_name': (obj.user.full_name.split(' ', 1)[1] if obj.user.full_name and ' ' in obj.user.full_name else ''),
+        }
+
 
 class AppointmentSerializer(serializers.ModelSerializer):
     client = serializers.PrimaryKeyRelatedField(queryset=Client.objects.all())
     stylist = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
-    stylist_info = EmployeeSerializer(source='stylist.employee_profile', read_only=True)
+    stylist_info = MinimalStylistInfoSerializer(source='stylist.employee_profile', read_only=True)
     role = serializers.PrimaryKeyRelatedField(queryset=Role.objects.all(), required=False, allow_null=True)
     date_time = serializers.DateTimeField(default=timezone.now)
     service = serializers.PrimaryKeyRelatedField(
@@ -26,21 +46,15 @@ class AppointmentSerializer(serializers.ModelSerializer):
     client_name = serializers.SerializerMethodField(read_only=True)
     stylist_name = serializers.SerializerMethodField(read_only=True)
     service_name = serializers.SerializerMethodField(read_only=True)
-    
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Temporalmente sin filtros para debuggear
-        pass
 
     class Meta:
         model = Appointment
         fields = [
             'id', 'client', 'stylist', 'role', 'service', 'stylist_info',
-            'status', 'created_at', 'description', 'updated_at', 'date_time' ,'sale',
+            'status', 'created_at', 'description', 'updated_at', 'date_time', 'sale',
             'client_name', 'stylist_name', 'service_name'
         ]
         read_only_fields = ['created_at', 'updated_at']
-        extra_kwargs = {'stylist_info': {'read_only': True}}
 
     def validate(self, attrs):
         request = self.context.get('request')

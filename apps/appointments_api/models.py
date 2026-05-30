@@ -37,6 +37,9 @@ class Appointment(models.Model):
         ordering = ['-date_time']
         indexes = [
             models.Index(fields=['tenant', 'date_time']),
+            models.Index(fields=['tenant', 'status']),
+            models.Index(fields=['tenant', 'stylist', 'date_time']),
+            models.Index(fields=['date_time']),
         ]
 
     def __str__(self):

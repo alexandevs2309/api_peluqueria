@@ -293,11 +293,16 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 
 # Database — soporta DATABASE_URL (Render) y variables individuales (Docker local)
+_pgbouncer_enabled = env.bool('PGBOUNCER_ENABLED', default=False)
+
+# Con PgBouncer en modo transaction: CONN_MAX_AGE=0 para no dejar conexiones abiertas
+_conn_max_age = 0 if _pgbouncer_enabled else env.int('CONN_MAX_AGE', default=600)
+
 _database_url = env('DATABASE_URL', default=None)
 if _database_url:
     _db_config = dj_database_url.parse(
         _database_url,
-        conn_max_age=env.int('CONN_MAX_AGE', default=600),
+        conn_max_age=_conn_max_age,
         engine='django_prometheus.db.backends.postgresql',
     )
     _db_config.setdefault('OPTIONS', {})
@@ -315,7 +320,7 @@ else:
             'PASSWORD': env('DB_PASSWORD', default='postgres'),
             'HOST': env('DB_HOST', default='db'),
             'PORT': env('DB_PORT', default='5432'),
-            'CONN_MAX_AGE': env.int('CONN_MAX_AGE', default=600),
+            'CONN_MAX_AGE': _conn_max_age,
             'OPTIONS': {
                 'connect_timeout': 10,
                 'options': '-c statement_timeout=30000',

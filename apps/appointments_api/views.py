@@ -3,6 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status, serializers
 from django.utils import timezone
+from django.db.models import Prefetch
 from datetime import datetime, timedelta
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
@@ -11,7 +12,7 @@ from apps.subscriptions_api.permissions import HasFeaturePermission
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
-from apps.employees_api.models import WorkSchedule
+from apps.employees_api.models import Employee, WorkSchedule
 
 User = get_user_model() 
 
@@ -19,6 +20,18 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Appointment.objects.all()
     serializer_class = AppointmentSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.action in ('list', 'retrieve', 'today'):
+            qs = qs.select_related('client', 'stylist', 'service', 'role')
+            qs = qs.prefetch_related(
+                Prefetch(
+                    'stylist__employee_profile',
+                    queryset=Employee.objects.select_related('user').prefetch_related('services')
+                )
+            )
+        return qs
     required_feature = 'appointments'
     permission_map = {
         'list': 'appointments_api.view_appointment',
@@ -174,8 +187,10 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     @action(detail=False, methods=['get'])
     def today(self, request):
         today = timezone.now().date()
+        tomorrow = today + timedelta(days=1)
         appointments = self.get_queryset().filter(
-            date_time__date=today
+            date_time__gte=today,
+            date_time__lt=tomorrow
         ).order_by('date_time')
         
         serializer = AppointmentSerializer(appointments, many=True)

@@ -1,3 +1,4 @@
+from django.core.cache import cache
 from rest_framework import status
 import logging
 from rest_framework.decorators import api_view, permission_classes
@@ -24,20 +25,25 @@ logger = logging.getLogger(__name__)
 def check_email_availability(request):
     """
     Endpoint para verificar si un email está disponible para registro
+    Cacheado 30 segundos para evitar consultas repetidas mientras el usuario escribe.
     """
-    email = request.GET.get('email', '').strip()
+    email = request.GET.get('email', '').strip().lower()
 
     if not email:
         return Response({
             'error': 'Email es requerido'
         }, status=status.HTTP_400_BAD_REQUEST)
 
-    exists = User.objects.filter(email__iexact=email).exists()
+    cache_key = f'email_check:{email}'
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return Response(cached)
 
-    return Response({
-        'available': not exists,
-        'email': email
-    }, status=status.HTTP_200_OK)
+    exists = User.objects.filter(email__iexact=email).exists()
+    data = {'available': not exists, 'email': email}
+    cache.set(cache_key, data, 30)
+
+    return Response(data, status=status.HTTP_200_OK)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -227,10 +233,12 @@ def register_with_plan(request):
                     'plan': data['planType'],
                     'user_id': user.id,
                     'subscription_status': 'trial',
+                    'subdomain': subdomain,
                     'note': 'Configuración completando en segundo plano'
                 },
                 'credentials': {
                     'email': user.email,
+                    'temporary_password': password,
                     'note': 'Credenciales enviadas por email'
                 },
                 'email_status': {

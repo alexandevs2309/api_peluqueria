@@ -104,6 +104,14 @@ class NotificationStatsView(generics.GenericAPIView):
         stats = service.get_notification_stats(user=request.user)
         return Response(stats)
 
+class MarkAllReadView(generics.GenericAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        InAppNotification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        return Response({'detail': 'Todas las notificaciones marcadas como leídas'})
+
+
 class SendTestNotificationView(generics.GenericAPIView):
     permission_classes = [tenant_permission('notifications_api.add_notification')]
     

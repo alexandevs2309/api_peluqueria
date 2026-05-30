@@ -33,6 +33,16 @@ services:
     networks:
       - backend
 
+  pgbouncer:
+    build: ./pgbouncer
+    ports:
+      - "6432:6432"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - backend
+
   web:
     build: .
     user: "1000:1000"
@@ -49,8 +59,9 @@ services:
       USE_CLOUDINARY: "false"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
-      DB_HOST: db
-      DB_PORT: "5432"
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      PGBOUNCER_ENABLED: ${PGBOUNCER_ENABLED:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
@@ -91,8 +102,9 @@ services:
       DEBUG: "true"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
-      DB_HOST: db
-      DB_PORT: "5432"
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      PGBOUNCER_ENABLED: ${PGBOUNCER_ENABLED:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
@@ -118,8 +130,9 @@ services:
       DEBUG: "true"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
-      DB_HOST: db
-      DB_PORT: "5432"
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      PGBOUNCER_ENABLED: ${PGBOUNCER_ENABLED:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
@@ -147,6 +160,33 @@ services:
       - web
     networks:
       - backend
+
+  sse:
+    build: .
+    user: "1000:1000"
+    command: uvicorn backend.asgi:application --host 0.0.0.0 --port 8001 --workers 1 --lifespan off
+    volumes:
+      - media_volume:/code/media
+    env_file:
+      - .env
+    environment:
+      DEBUG: "true"
+      LOG_LEVEL: INFO
+      DATABASE_URL: ""
+      DB_HOST: ${DB_HOST:-db}
+      DB_PORT: ${DB_PORT:-5432}
+      REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
+      RUNNING_SSE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - backend
+    restart: on-failure
+    ports:
+      - "8001:8001"
 
   prometheus:
     build:

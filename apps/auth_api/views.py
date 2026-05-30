@@ -243,7 +243,7 @@ class RegisterView(generics.CreateAPIView):
         # Enviar email de verificación (fuera de transacción)
         email_subject = "Verifica tu correo"
         frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
-        verify_url = f"{frontend_url}/verify-email/{user.email_verification_token}/"
+        verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
         email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
         email_html = _build_branded_email_html(
             user=user,
@@ -1081,13 +1081,25 @@ class UserViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         
-        # ✅ VALIDAR QUE PUEDE MODIFICAR ESTE USUARIO
+        # ✅ SUPERUSER CAN MODIFY ANYONE - EARLY RETURN
+        if request.user.is_superuser:
+            serializer = self.get_serializer(instance, data=request.data, partial=partial)
+            try:
+                serializer.is_valid(raise_exception=True)
+                user = serializer.save()
+                return Response(UserListSerializer(user).data)
+            except ValidationError as e:
+                return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # ✅ VALIDAR QUE PUEDE MODIFICAR ESTE USUARIO (non-superuser path)
         actor_role = get_effective_role_name(request.user, tenant=self._get_request_tenant()) or 'Client-Staff'
         target_role = get_effective_role_name(instance, tenant=instance.tenant) or 'Client-Staff'
         can_modify, error_msg = can_modify_user(
             modifier_role=actor_role,
             target_user_role=target_role,
-            modifier_is_superuser=request.user.is_superuser
+            modifier_is_superuser=False
         )
         if not can_modify:
             return Response({'error': error_msg}, status=status.HTTP_403_FORBIDDEN)

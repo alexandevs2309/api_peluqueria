@@ -1,19 +1,22 @@
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import cache_page
 from rest_framework import generics, permissions, response, status, views
 
 from apps.core.permissions import IsSuperAdmin
 
 from .models import SystemSettings
 from .serializers import SystemSettingsSerializer
-from .utils import clear_system_config_cache
+from .utils import clear_system_config_cache, get_system_config
 
 
 class PublicBrandingSettingsView(views.APIView):
-    """Expose solo branding seguro para frontend público."""
+    """Expose solo branding seguro para frontend público. Cacheado 5 min en Redis."""
 
     permission_classes = [permissions.AllowAny]
 
+    @method_decorator(cache_page(60 * 5))
     def get(self, request, *args, **kwargs):
-        settings = SystemSettings.get_settings()
+        settings = get_system_config()
         platform_domain = (settings.platform_domain or "").strip()
 
         public_site_url = ""
@@ -35,6 +38,7 @@ class PublicBrandingSettingsView(views.APIView):
                 "maintenance_mode": bool(settings.maintenance_mode),
             },
             status=status.HTTP_200_OK,
+            headers={"Cache-Control": "public, max-age=300"},
         )
 
 
