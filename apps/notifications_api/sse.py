@@ -1,7 +1,9 @@
+import asyncio
 import json
 import logging
+from datetime import datetime
 
-from asgiref.sync import sync_to_async
+import redis.asyncio as aioredis
 from django.conf import settings
 from django.http import StreamingHttpResponse, HttpResponse
 
@@ -10,6 +12,7 @@ from .models import InAppNotification
 logger = logging.getLogger(__name__)
 
 REDIS_PUBSUB_CHANNEL_TPL = "notifications:user:{}"
+SSE_HEARTBEAT_INTERVAL = 30
 
 
 _redis_url = None
@@ -18,15 +21,14 @@ _redis_url = None
 def _get_redis_url():
     global _redis_url
     if _redis_url is None:
-        _redis_url = settings.CACHES.get("default", {}).get("LOCATION", "redis://localhost:6379/0")
+        _redis_url = settings.CACHES.get("default", {}).get(
+            "LOCATION", "redis://localhost:6379/0"
+        )
     return _redis_url
 
 
 def publish_notification_event(user_id: int, event_data: dict) -> None:
-    """
-    Publica un evento de notificación en Redis PubSub para que el SSE
-    lo entregue en tiempo real al usuario conectado.
-    """
+    """Publica evento de notificación en Redis PubSub desde código síncrono."""
     try:
         import redis as sync_redis
 
@@ -38,25 +40,23 @@ def publish_notification_event(user_id: int, event_data: dict) -> None:
         logger.warning("Redis PubSub publish failed for user %s: %s", user_id, exc)
 
 
-def _get_unread_notifications(user):
-    """Sync helper: retorna las notificaciones no leídas del usuario."""
-    return list(
+async def _get_unread_notifications(user):
+    from asgiref.sync import sync_to_async
+
+    from .models import InAppNotification
+
+    notifications = await sync_to_async(list)(
         InAppNotification.objects.filter(recipient=user, is_read=False)
         .order_by("-created_at")[:50]
         .values("id", "type", "title", "message", "is_read", "created_at")
     )
+    for n in notifications:
+        if isinstance(n.get("created_at"), datetime):
+            n["created_at"] = n["created_at"].isoformat()
+    return notifications
 
 
 async def notification_sse(request):
-    """
-    SSE endpoint: GET /api/notifications/stream/
-    Autentica por cookie httpOnly (JWT) o por query param ?token=<JWT>.
-
-    Emite eventos:
-      - event: init       → {unread_count, notifications[]}
-      - event: notification → {id, type, title, message, is_read, created_at}
-      - event: heartbeat   → mantiene conexión viva
-    """
     from rest_framework_simplejwt.tokens import AccessToken
     from django.contrib.auth import get_user_model
 
@@ -79,17 +79,19 @@ async def notification_sse(request):
         return HttpResponse(status=401)
 
     async def event_stream():
-        import asyncio
-        import redis.asyncio as aioredis
-
         channel = REDIS_PUBSUB_CHANNEL_TPL.format(user.id)
 
-        r = aioredis.Redis.from_url(_get_redis_url())
+        r = aioredis.from_url(
+            _get_redis_url(),
+            decode_responses=True,
+            socket_connect_timeout=5,
+            socket_timeout=None,
+        )
         pubsub = r.pubsub()
         await pubsub.subscribe(channel)
 
         try:
-            notifications = await sync_to_async(_get_unread_notifications)(user)
+            notifications = await _get_unread_notifications(user)
             init_payload = {
                 "unread_count": len(notifications),
                 "notifications": notifications,
@@ -99,7 +101,8 @@ async def notification_sse(request):
             while True:
                 try:
                     message = await pubsub.get_message(
-                        timeout=30.0, ignore_subscribe_messages=True
+                        timeout=SSE_HEARTBEAT_INTERVAL,
+                        ignore_subscribe_messages=True,
                     )
                     if message and message.get("type") == "message":
                         data = json.loads(message["data"])
@@ -109,20 +112,22 @@ async def notification_sse(request):
                         yield ": heartbeat\n\n"
                 except asyncio.TimeoutError:
                     yield ": heartbeat\n\n"
-                except Exception as exc:
-                    logger.error("SSE stream error for user %s: %s", user.id, exc)
+                except Exception:
+                    logger.exception("SSE stream error for user %s", user.id)
                     break
         except GeneratorExit:
             pass
         finally:
-            await pubsub.unsubscribe(channel)
-            await pubsub.close()
-            await r.close()
+            try:
+                await pubsub.unsubscribe(channel)
+                await pubsub.close()
+                await r.close()
+            except Exception:
+                pass
 
     response = StreamingHttpResponse(
         event_stream(), content_type="text/event-stream"
     )
-    response.is_async = True
     response["Cache-Control"] = "no-cache"
     response["X-Accel-Buffering"] = "no"
     response["Connection"] = "keep-alive"
