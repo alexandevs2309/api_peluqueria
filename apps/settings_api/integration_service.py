@@ -1,7 +1,6 @@
 from django.conf import settings as django_settings
 from .models import SystemSettings
 import os
-import socket
 import logging
 
 logger = logging.getLogger(__name__)
@@ -95,6 +94,7 @@ class IntegrationService:
                     password=smtp_password,
                     use_tls=use_tls,
                     use_ssl=use_ssl,
+                    timeout=10,
                 )
                 connection.open()
                 connection.close()
