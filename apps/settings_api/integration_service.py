@@ -64,7 +64,7 @@ class IntegrationService:
 
     @staticmethod
     def is_sendgrid_enabled():
-        """Verificar si Email esta habilitado y configurado correctamente"""
+        """Verificar si Email esta habilitado y configurado correctamente (sin conexión SMTP real)"""
         system_settings = IntegrationService.get_system_settings()
         has_env_smtp = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
         if not system_settings.sendgrid_enabled and not has_env_smtp:
@@ -82,29 +82,7 @@ class IntegrationService:
         if not using_smtp and not api_key:
             return False
 
-        if using_smtp:
-            try:
-                from django.core.mail import get_connection
-                use_ssl = smtp_port == 465
-                use_tls = smtp_port in (587, 25) and not use_ssl
-                connection = get_connection(
-                    host=smtp_host,
-                    port=smtp_port,
-                    username=smtp_username,
-                    password=smtp_password,
-                    use_tls=use_tls,
-                    use_ssl=use_ssl,
-                    timeout=10,
-                )
-                connection.open()
-                connection.close()
-                return True
-            except Exception as e:
-                from apps.audit_api.views import AuditLogViewSet
-                AuditLogViewSet.log_integration_error('SendGrid', str(e))
-                return False
-
-        if not api_key.startswith('SG.'):
+        if api_key and not api_key.startswith('SG.'):
             return False
         return True
 
