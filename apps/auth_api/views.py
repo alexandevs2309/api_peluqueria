@@ -23,7 +23,7 @@ from rest_framework_simplejwt.exceptions import TokenError
 from django_ratelimit.decorators import ratelimit
 from django.utils.decorators import method_decorator
 from drf_spectacular.utils import extend_schema
-from .models import User, AccessLog, PasswordResetLog
+from .models import User, AccessLog
 from .serializers import (
     ActiveSessionSerializer, RegisterSerializer, LoginSerializer,
     PasswordChangeSerializer, PasswordResetRequestSerializer,
