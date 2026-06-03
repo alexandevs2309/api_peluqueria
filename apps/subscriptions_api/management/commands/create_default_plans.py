@@ -14,13 +14,14 @@ class Command(BaseCommand):
                 'duration_month': 0,
                 'max_employees': 3,
                 'max_users': 3,
+                'is_public': False,
                 'features': {
                     'appointments': True,
                     'reports': True,
                     'cash_register': True,
                     'client_history': True,
                     'inventory': False,
-                    
+
                     'multi_location': False,
                     'api_access': False,
                     'custom_branding': False,

@@ -280,7 +280,25 @@ def sync_subscription_state(tenant, now=None, *, save: bool = True) -> Subscript
             changed_fields.extend(archive_fields)
 
         elif status == "cancelled":
-            if tenant.is_active:
+            # Si el tenant está cancelled pero tiene UserSubscription activa con acceso vigente,
+            # se mantiene como 'active' hasta que expire end_date.
+            from apps.subscriptions_api.models import UserSubscription
+            has_active_until_end = UserSubscription.objects.filter(
+                user__tenant=tenant,
+                cancelled_at__isnull=False,
+                end_date__gte=now,
+            ).exists() if hasattr(tenant, 'user_set') else False
+
+            if has_active_until_end:
+                if tenant.subscription_status != "active":
+                    tenant.subscription_status = "active"
+                    changed_fields.append("subscription_status")
+                    reasons.append("cancelled_but_still_paid -> active_until_end")
+                if not tenant.is_active:
+                    tenant.is_active = True
+                    changed_fields.append("is_active")
+                    reasons.append("cancelled_but_still_paid -> activated")
+            elif tenant.is_active:
                 tenant.is_active = False
                 changed_fields.append("is_active")
                 reasons.append("legacy_cancelled_but_active -> deactivated")

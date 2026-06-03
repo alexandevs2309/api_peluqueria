@@ -146,6 +146,9 @@ class TenantPermissionByAction(BasePermission):
         if not self.has_permission(request, view):
             return False
 
+        if request.user.is_superuser:
+            return True
+
         tenant = resolve_request_tenant(request)
         if hasattr(obj, 'tenant'):
             return obj.tenant == tenant

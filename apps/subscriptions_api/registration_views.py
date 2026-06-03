@@ -324,6 +324,6 @@ def send_welcome_email(user, password, tenant):
     """
 
     logger.info("Sending welcome email to user_id=%s tenant_id=%s", user.id, tenant.id)
-    send_email_async.delay(subject, text_body, 'onboarding@resend.dev', [user.email], html_message=html_body)
+    send_email_async.delay(subject, text_body, '', [user.email], html_message=html_body)
 
     return {'email_sent': True, 'recipient': user.email, 'status': 'queued'}

@@ -83,27 +83,31 @@ class NotificationService:
 
     def _send_email(self, notification):
         """
-        Enviar notificación por email
+        Enviar notificación por email usando IntegrationService
         """
         try:
-            # Aquí iría la integración con SendGrid, Mailgun, etc.
-            # Por ahora, simulamos el envío
+            from apps.settings_api.integration_service import IntegrationService
 
-            # En un entorno real, usarías:
-            # from sendgrid import SendGridAPIClient
-            # from sendgrid.helpers.mail import Mail
+            recipient = notification.recipient.email
+            if not recipient:
+                logger.warning("Cannot send email notification: recipient has no email")
+                return False
 
-            logger.info(f"Email would be sent to {notification.recipient.email}: {notification.subject}")
+            IntegrationService.send_email(
+                to_email=recipient,
+                subject=notification.subject,
+                message=notification.message,
+            )
 
-            # Crear log
             NotificationLog.objects.create(
                 notification=notification,
                 channel='email',
-                provider='sendgrid',  # o el que uses
+                provider='sendgrid',
                 status='sent',
-                response_data={'simulated': True}
+                response_data={'sent_via': 'IntegrationService'}
             )
 
+            logger.info(f"Email sent to {recipient}: {notification.subject}")
             return True
 
         except Exception as e:

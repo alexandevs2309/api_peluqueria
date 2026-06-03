@@ -2,7 +2,6 @@ from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
 from django.db import models
 from .models import Product, StockMovement
-from django.core.mail import send_mail
 from django.conf import settings
 import logging
 
@@ -47,7 +46,8 @@ def create_low_stock_alert(product):
     # 2. Email a administradores (si está configurado)
     if hasattr(settings, 'ADMIN_EMAIL') and settings.ADMIN_EMAIL:
         try:
-            send_mail(
+            from apps.auth_api.tasks import send_email_async
+            send_email_async.delay(
                 subject=f'Alerta de Stock Bajo - {product.name}',
                 message=f'''
                 El producto {product.name} (SKU: {product.sku}) tiene stock bajo.
@@ -57,9 +57,8 @@ def create_low_stock_alert(product):
                 
                 Por favor, reabastecer lo antes posible.
                 ''',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[settings.ADMIN_EMAIL],
-                fail_silently=True
+                from_email='',
+                recipient_list=[settings.ADMIN_EMAIL] if isinstance(settings.ADMIN_EMAIL, str) else settings.ADMIN_EMAIL,
             )
         except Exception as e:
             logger.exception("Error sending low stock alert email product_id=%s", product.id)

@@ -146,18 +146,25 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             is_active=True
         ).first()
         
-        if user_subscription and user_subscription.end_date < timezone.now():
-            # Marcar como expirada
-            user_subscription.is_active = False
-            user_subscription.save()
-            
-            return JsonResponse({
-                'error': 'Subscription expired',
-                'code': 'SUBSCRIPTION_EXPIRED',
-                'expired_date': user_subscription.end_date.isoformat(),
-                'action_required': 'renew_subscription',
-                'renewal_url': '/client/payment'
-            }, status=402)
+        if user_subscription:
+            # Si está cancelada (cancelled_at set) pero end_date no ha pasado, aún tiene acceso
+            if user_subscription.cancelled_at and user_subscription.end_date and user_subscription.end_date > timezone.now():
+                request.subscription_cancelled = True
+                request.subscription_access_until = user_subscription.end_date
+                return None
+
+            if user_subscription.end_date and user_subscription.end_date < timezone.now():
+                # Marcar como expirada
+                user_subscription.is_active = False
+                user_subscription.save()
+                
+                return JsonResponse({
+                    'error': 'Subscription expired',
+                    'code': 'SUBSCRIPTION_EXPIRED',
+                    'expired_date': user_subscription.end_date.isoformat(),
+                    'action_required': 'renew_subscription',
+                    'renewal_url': '/client/payment'
+                }, status=402)
         
         # Validar plan activo
         if not tenant.subscription_plan:

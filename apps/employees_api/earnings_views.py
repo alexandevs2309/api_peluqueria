@@ -291,10 +291,9 @@ class PayrollViewSet(viewsets.ViewSet):
             return Response({'error': str(e)}, status=400)
     
     def _send_payment_notification(self, period):
-        """Enviar notificación de pago al empleado"""
+        """Enviar notificación de pago"""
         try:
-            from django.core.mail import send_mail
-            from django.conf import settings
+            from apps.auth_api.tasks import send_email_async
             
             employee_email = period.employee.user.email
             employee_name = period.employee.user.full_name or employee_email
@@ -314,12 +313,11 @@ Detalles:
 Saludos,
 Equipo de Nómina'''
             
-            send_mail(
+            send_email_async.delay(
                 subject=subject,
                 message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email='',
                 recipient_list=[employee_email],
-                fail_silently=True
             )
             
             period.notification_sent = True
@@ -331,8 +329,7 @@ Equipo de Nómina'''
     def _send_approval_notification(self, period):
         """Enviar notificación de aprobación"""
         try:
-            from django.core.mail import send_mail
-            from django.conf import settings
+            from apps.auth_api.tasks import send_email_async
             
             employee_email = period.employee.user.email
             employee_name = period.employee.user.full_name or employee_email
@@ -349,12 +346,11 @@ El pago será procesado próximamente.
 Saludos,
 Equipo de Nómina'''
             
-            send_mail(
+            send_email_async.delay(
                 subject=subject,
                 message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email='',
                 recipient_list=[employee_email],
-                fail_silently=True
             )
         except Exception as e:
             logger.error("Error sending approval notification for period %s: %s", period.id, e)
@@ -362,8 +358,7 @@ Equipo de Nómina'''
     def _send_rejection_notification(self, period):
         """Enviar notificación de rechazo"""
         try:
-            from django.core.mail import send_mail
-            from django.conf import settings
+            from apps.auth_api.tasks import send_email_async
             
             employee_email = period.employee.user.email
             employee_name = period.employee.user.full_name or employee_email
@@ -380,12 +375,11 @@ Por favor, contacta con el departamento de nómina para más información.
 Saludos,
 Equipo de Nómina'''
             
-            send_mail(
+            send_email_async.delay(
                 subject=subject,
                 message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email='',
                 recipient_list=[employee_email],
-                fail_silently=True
             )
         except Exception as e:
             logger.error("Error sending rejection notification for period %s: %s", period.id, e)

@@ -49,6 +49,7 @@ class UserSubscription(models.Model):
     end_date = models.DateTimeField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     auto_renew = models.BooleanField(default=False)
+    cancelled_at = models.DateTimeField(blank=True, null=True, help_text="Momento en que se solicitó la cancelación. Si está seteado, la suscripción expirará en end_date.")
 
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -119,14 +120,14 @@ class UserSubscription(models.Model):
             )
 
     def save(self, *args, **kwargs):
-        if not self._state.adding:
+        if self._state.adding:
+            if not self.end_date:
+                self.start_date = timezone.now()
+                self.end_date = self.start_date + relativedelta(months=self.plan.duration_month)
+        else:
             old = UserSubscription.objects.get(pk=self.pk)
-            if old.is_active is False and self.is_active is True:
-                raise ValueError("No se puede reactivar una suscripcion inactiva")
-
-        if self._state.adding and not self.end_date:
-            self.start_date = timezone.now()
-            self.end_date = self.start_date + relativedelta(months=self.plan.duration_month)
+            if old.is_active is False and self.is_active is True and not old.cancelled_at:
+                raise ValueError("No se puede reactivar una suscripcion inactiva sin pasar por cancelacion")
 
         if self.end_date and self.end_date < timezone.now():
             self.is_active = False

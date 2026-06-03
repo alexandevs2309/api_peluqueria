@@ -184,6 +184,24 @@ def handle_payment_succeeded(invoice_data):
                 tenant.id,
                 tenant.access_until.isoformat() if tenant.access_until else None
             )
+
+        # Enviar confirmación de pago
+        try:
+            from apps.subscriptions_api.views import send_purchase_confirmation
+            from apps.subscriptions_api.models import SubscriptionPlan
+            metadata = invoice_data.get('metadata', {})
+            plan_id = metadata.get('plan_id')
+            months = int(metadata.get('months', 1))
+            plan = SubscriptionPlan.objects.get(id=plan_id) if plan_id else None
+            if plan and hasattr(user, 'tenant'):
+                send_purchase_confirmation(
+                    user, user.tenant, plan,
+                    invoice_data['amount_paid'] / 100,
+                    months,
+                    payment_method='stripe'
+                )
+        except Exception:
+            logger.exception("Error sending payment confirmation from webhook")
                 
     except User.DoesNotExist:
         logger.warning(f"Payment succeeded: user {user_id} not found")

@@ -101,8 +101,9 @@ class UserSubscriptionSerializer(serializers.ModelSerializer):
             'start_date',
             'end_date',
             'is_active',
+            'cancelled_at',
         ]
-        read_only_fields = [ 'user', 'start_date', 'end_date','is_active']
+        read_only_fields = [ 'user', 'start_date', 'end_date', 'is_active', 'cancelled_at']
 
     def validate(self , data):
         user = self.context['request'].user

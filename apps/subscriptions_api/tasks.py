@@ -1,7 +1,6 @@
 from celery import shared_task
 from datetime import timedelta
 from django.utils import timezone
-from django.core.mail import send_mail
 from django.conf import settings
 from apps.tenants_api.models import Tenant
 from apps.tenants_api.subscription_lifecycle import sync_subscription_state
@@ -208,6 +207,8 @@ def check_expired_subscriptions(self):
 
 def send_trial_expired_email(tenant):
     """Enviar email cuando el trial expira"""
+    from apps.auth_api.tasks import send_email_async
+
     subject = f"Tu prueba gratuita ha expirado - {tenant.name}"
     message = f"""
     Hola {tenant.owner.full_name},
@@ -231,13 +232,12 @@ def send_trial_expired_email(tenant):
             "Para continuar usando BarberSaaS inicia sesión y selecciona un plan de pago.",
             "No pierdas tus datos. Reactiva tu cuenta hoy."
         ])
-        send_mail(
+        send_email_async.delay(
             subject=subject,
             message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email='',
             recipient_list=[tenant.contact_email],
             html_message=html_message,
-            fail_silently=False,
         )
     except Exception as e:
         logger.error(f"Error sending trial expired email to {tenant.contact_email}: {str(e)}")
@@ -289,19 +289,20 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
     """
     
     try:
+        from apps.auth_api.tasks import send_email_async
+
         html_message = _build_html_email(tenant, subject, [
             f"Hola {owner.full_name or owner.email},",
             f"Tu prueba gratuita de {tenant.name} expira en {days_remaining} días.",
             "Para evitar suspensión, entra a configuración de suscripción y elige un plan.",
             "No esperes al último momento."
         ])
-        send_mail(
+        send_email_async.delay(
             subject=subject,
             message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email='',
             recipient_list=[recipient],
             html_message=html_message,
-            fail_silently=False,
         )
 
         if getattr(tenant, 'trial_notifications_sent', None) is not None:

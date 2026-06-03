@@ -1,7 +1,6 @@
 import stripe
 from celery import shared_task
 from django.conf import settings
-from django.core.mail import send_mail
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -239,10 +238,10 @@ def send_reconciliation_alert(reconciliation):
     
     finance_emails = getattr(settings, 'FINANCE_ALERT_EMAILS', None)
     if finance_emails:
-        send_mail(
+        from apps.auth_api.tasks import send_email_async
+        send_email_async.delay(
             subject='[CRITICAL] Financial Reconciliation Alert',
             message=message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=finance_emails,
-            fail_silently=True,
+            from_email='',
+            recipient_list=finance_emails if isinstance(finance_emails, list) else [finance_emails],
         )

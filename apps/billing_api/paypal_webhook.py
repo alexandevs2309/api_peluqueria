@@ -185,6 +185,29 @@ def handle_capture_completed(resource):
                 update_fields.append('updated_at')
                 tenant.save(update_fields=update_fields)
 
+        # Enviar confirmación de pago
+        try:
+            from apps.subscriptions_api.views import send_purchase_confirmation
+            from apps.subscriptions_api.models import SubscriptionPlan
+            custom_id = (resource.get('purchase_units') or [{}])[0].get('custom_id', '')
+            plan_id = None
+            months = 1
+            for part in custom_id.split('|'):
+                if part.startswith('plan:'):
+                    plan_id = part.split(':', 1)[1]
+                elif part.startswith('months:'):
+                    months = int(part.split(':', 1)[1])
+            if plan_id and hasattr(user, 'tenant'):
+                plan = SubscriptionPlan.objects.get(id=int(plan_id))
+                send_purchase_confirmation(
+                    user, user.tenant, plan,
+                    capture['amount'],
+                    months,
+                    payment_method='paypal'
+                )
+        except Exception:
+            logger.exception("Error sending payment confirmation from PayPal webhook")
+
 
 def handle_capture_denied(resource):
     """Manejar PAYMENT.CAPTURE.DENIED."""

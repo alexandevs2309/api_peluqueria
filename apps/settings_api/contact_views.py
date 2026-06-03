@@ -2,7 +2,6 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
-from django.core.mail import send_mail
 from django.conf import settings
 import logging
 
@@ -37,18 +36,19 @@ def demo_request(request):
         {data.get('message', 'Sin mensaje adicional')}
         """
         
-        # Enviar email (configurar SMTP en settings)
+        # Enviar email
         try:
-            send_mail(
-                subject=subject,
-                message=message,
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[settings.CONTACT_EMAIL],
-                fail_silently=False,
-            )
+            from apps.auth_api.tasks import send_email_async
+            contac_email = getattr(settings, 'CONTACT_EMAIL', None)
+            if contac_email:
+                send_email_async.delay(
+                    subject=subject,
+                    message=message,
+                    from_email='',
+                    recipient_list=[contac_email] if isinstance(contac_email, str) else contac_email,
+                )
         except Exception as e:
             logger.error(f"Error sending demo request email: {str(e)}")
-            # No fallar si el email no se puede enviar
         
         return Response({
             'message': 'Solicitud de demo enviada correctamente',

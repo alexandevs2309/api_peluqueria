@@ -33,6 +33,57 @@ stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 logger = logging.getLogger(__name__)
 
 
+def send_purchase_confirmation(user, tenant, plan, amount, months, payment_method='stripe'):
+    """Enviar confirmación de compra de plan"""
+    from apps.auth_api.tasks import send_email_async
+    from django.conf import settings as django_settings
+
+    frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:4200')
+    login_url = f"{frontend_url}/auth/login"
+
+    subject = f"¡Pago confirmado! - {plan.get_name_display()}"
+
+    text_body = (
+        f"Hola {user.full_name},\n\n"
+        f"Tu pago ha sido procesado exitosamente.\n\n"
+        f"Plan: {plan.get_name_display()}\n"
+        f"Duración: {months} mes(es)\n"
+        f"Monto: ${amount:,.2f}\n"
+        f"Barbería: {tenant.name}\n"
+        f"Método de pago: {payment_method}\n\n"
+        f"Ya puedes disfrutar de todas las funcionalidades de tu plan.\n\n"
+        f"Inicia sesión: {login_url}\n\n"
+        f"El equipo de Auron Suite"
+    )
+
+    html_body = f"""
+    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
+      <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
+        <div style="text-align:center;margin-bottom:20px;">
+          <h2 style="color:#111827;margin:0;">✅ Pago Confirmado</h2>
+        </div>
+        <p>Hola <strong>{user.full_name}</strong>,</p>
+        <p>Tu pago ha sido procesado exitosamente.</p>
+        <div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;">
+          <p style="margin:4px 0;"><strong>Plan:</strong> {plan.get_name_display()}</p>
+          <p style="margin:4px 0;"><strong>Duración:</strong> {months} mes(es)</p>
+          <p style="margin:4px 0;"><strong>Monto:</strong> ${amount:,.2f}</p>
+          <p style="margin:4px 0;"><strong>Barbería:</strong> {tenant.name}</p>
+          <p style="margin:4px 0;"><strong>Método de pago:</strong> {payment_method}</p>
+        </div>
+        <p>Ya puedes disfrutar de todas las funcionalidades de tu plan.</p>
+        <p style="margin:24px 0;">
+          <a href="{login_url}" style="background:#2563eb;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;display:inline-block;font-weight:600;">Ir a mi cuenta</a>
+        </p>
+        <p style="color:#6b7280;font-size:13px;">El equipo de Auron Suite</p>
+      </div>
+    </div>
+    """
+
+    logger.info("Sending purchase confirmation to user_id=%s plan=%s amount=%s", user.id, plan.id, amount)
+    send_email_async.delay(subject, text_body, '', [user.email], html_message=html_body)
+
+
 class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     queryset = SubscriptionPlan.objects.all()
     serializer_class = SubscriptionPlanSerializer
@@ -174,6 +225,7 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
         'partial_update': 'subscriptions_api.change_usersubscription',
         'destroy': 'subscriptions_api.delete_usersubscription',
         'cancel_subscription': 'subscriptions_api.change_usersubscription',
+        'reactivate_subscription': 'subscriptions_api.change_usersubscription',
         'current': 'subscriptions_api.view_usersubscription',
     }
 
@@ -220,6 +272,7 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='cancel')
     def cancel_subscription(self, request, pk=None):
         from django.db import transaction
+        from django.utils import timezone
         
         try:
             subscription = self.get_object()
@@ -227,6 +280,14 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
             if not subscription.is_active:
                 return Response(
                     {'detail': 'La suscripción ya está inactiva.'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if subscription.cancelled_at:
+                return Response(
+                    {'detail': 'La suscripción ya fue cancelada. Conservarás acceso hasta {}.'.format(
+                        subscription.end_date.strftime('%d/%m/%Y') if subscription.end_date else 'el final del período'
+                    )},
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
@@ -241,35 +302,38 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
             stripe_cancelled = False
             if hasattr(subscription, 'stripe_subscription_id') and subscription.stripe_subscription_id:
                 try:
+                    import stripe
                     stripe.Subscription.modify(
                         subscription.stripe_subscription_id,
                         cancel_at_period_end=True
                     )
                     stripe_cancelled = True
                 except stripe.error.StripeError as e:
-                    # ✅ Fallar antes de modificar DB
                     return Response(
                         {'detail': f'Error cancelando en Stripe: {str(e)}'},
                         status=status.HTTP_500_INTERNAL_SERVER_ERROR
                     )
             
-            # ✅ 2. Solo actualizar DB si Stripe tuvo éxito
+            # ✅ 2. Marcar como cancelada pero mantener acceso hasta end_date
             with transaction.atomic():
-                subscription.is_active = False
-                subscription.save(update_fields=['is_active'])
+                subscription.cancelled_at = timezone.now()
+                subscription.save(update_fields=['cancelled_at'])
 
                 log_subscription_event(
                     user=request.user,
                     subscription=subscription,
                     action='cancelled',
-                    description=f'Suscripción al plan "{subscription.plan.name}" cancelada. Stripe: {stripe_cancelled}'
+                    description=f'Suscripción al plan "{subscription.plan.name}" cancelada. Acceso hasta {subscription.end_date.strftime("%d/%m/%Y") if subscription.end_date else "fin del período"}. Stripe: {stripe_cancelled}'
                 )
 
+            end_date_str = subscription.end_date.strftime('%d/%m/%Y') if subscription.end_date else 'el final del período'
             return Response(
                 {
                     'detail': 'Suscripción cancelada correctamente.',
+                    'cancelled_at': subscription.cancelled_at.isoformat(),
+                    'access_until': end_date_str,
                     'stripe_cancelled': stripe_cancelled,
-                    'note': 'Tendrás acceso hasta el final del período pagado' if stripe_cancelled else 'Acceso cancelado inmediatamente'
+                    'note': f'Conservarás acceso hasta {end_date_str}. No te preocupes, no te seguiremos cobrando.'
                 }, 
                 status=status.HTTP_200_OK
             )
@@ -280,16 +344,90 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
+    @action(detail=True, methods=['post'], url_path='reactivate')
+    def reactivate_subscription(self, request, pk=None):
+        try:
+            subscription = self.get_object()
+
+            if not subscription.is_active:
+                return Response(
+                    {'detail': 'La suscripción está inactiva. No se puede reactivar.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not subscription.cancelled_at:
+                return Response(
+                    {'detail': 'La suscripción no está cancelada.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if subscription.end_date and subscription.end_date < timezone.now():
+                return Response(
+                    {'detail': 'La suscripción ya expiró. Debes adquirir un nuevo plan.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            if not request.user.is_superuser and subscription.user != request.user:
+                return Response(
+                    {'detail': 'No tienes permiso para reactivar esta suscripción.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+            # Reactivar en Stripe (quitar cancel_at_period_end)
+            stripe_reactivated = False
+            if hasattr(subscription, 'stripe_subscription_id') and subscription.stripe_subscription_id:
+                try:
+                    stripe.Subscription.modify(
+                        subscription.stripe_subscription_id,
+                        cancel_at_period_end=False
+                    )
+                    stripe_reactivated = True
+                except stripe.error.StripeError as e:
+                    return Response(
+                        {'detail': f'Error reactivando en Stripe: {str(e)}'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                    )
+
+            with transaction.atomic():
+                subscription.cancelled_at = None
+                subscription.save(update_fields=['cancelled_at'])
+
+                log_subscription_event(
+                    user=request.user,
+                    subscription=subscription,
+                    action='subscription_reactivated',
+                    description=f'Suscripción al plan "{subscription.plan.name}" reactivada. Stripe: {stripe_reactivated}'
+                )
+
+            return Response(
+                {
+                    'detail': 'Suscripción reactivada correctamente.',
+                    'stripe_reactivated': stripe_reactivated,
+                },
+                status=status.HTTP_200_OK
+            )
+
+        except Exception as e:
+            return Response(
+                {'detail': f'Error al reactivar la suscripción: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
     @action(detail=False, methods=["get"], url_path="current")
     def current(self, request):
         try:
+            now = timezone.now()
             subscription = UserSubscription.objects.get(
                 user=request.user,
                 is_active=True,
-                end_date__gte=timezone.now()
+                end_date__gte=now,
             )
             serializer = UserSubscriptionSerializer(subscription)
-            return Response(serializer.data)
+            data = serializer.data
+            data['is_cancelled'] = subscription.cancelled_at is not None
+            data['cancelled_at'] = subscription.cancelled_at.isoformat() if subscription.cancelled_at else None
+            data['access_until'] = subscription.end_date.isoformat() if subscription.end_date else None
+            return Response(data)
         except UserSubscription.DoesNotExist:
             return Response({'detail': 'No active subscription'}, status=404)
 
@@ -861,6 +999,14 @@ class RenewSubscriptionView(APIView):
             'order_id': order_id,
             'capture_id': capture_entry.get('id'),
         }
+
+        send_purchase_confirmation(
+            request.user, tenant, plan,
+            plan.price * cached_order['months'],
+            cached_order['months'],
+            payment_method='paypal'
+        )
+
         cache.set(self._paypal_capture_cache_key(order_id), response_payload, timeout=60 * 60 * 24 * 7)
         cache.delete(self._paypal_order_cache_key(order_id))
         return Response(response_payload)
@@ -952,6 +1098,13 @@ class RenewSubscriptionView(APIView):
                 stripe_payment_intent_id=first_payment_intent.get('id'),
                 description=f"Auto-renew subscription - {plan.get_name_display()}"
             )
+
+        send_purchase_confirmation(
+            user, tenant, plan,
+            amount_paid / 100 if isinstance(amount_paid, int) else plan.price,
+            1,
+            payment_method='stripe'
+        )
 
         return Response({
             'message': 'Auto-renew subscription activated successfully',
@@ -1080,6 +1233,13 @@ class RenewSubscriptionView(APIView):
                     description=f"Subscription renewal (manual dev) - {plan.get_name_display()} x{months}m"
                 )
 
+            send_purchase_confirmation(
+                request.user, tenant, plan,
+                plan.price * months,
+                months,
+                payment_method='transfer'
+            )
+
             return Response({
                 'message': 'Subscription renewed successfully (manual dev mode)',
                 'plan': plan.name,
@@ -1201,6 +1361,13 @@ class RenewSubscriptionView(APIView):
                         description=f"Subscription renewal - {plan.get_name_display()} x{months}m"
                     )
 
+                send_purchase_confirmation(
+                    request.user, tenant, plan,
+                    amount,
+                    months,
+                    payment_method='stripe'
+                )
+
                 return Response({
                     'message': 'Subscription renewed successfully',
                     'plan': plan.name,
@@ -1268,7 +1435,14 @@ class RenewSubscriptionView(APIView):
                     stripe_payment_intent_id=payment_intent.id,
                     description=f"Subscription renewal - {plan.get_name_display()} x{months}m"
                 )
-            
+
+            send_purchase_confirmation(
+                request.user, tenant, plan,
+                plan.price * months,
+                months,
+                payment_method='stripe'
+            )
+
             return Response({
                 'message': 'Subscription renewed successfully',
                 'plan': plan.name,
