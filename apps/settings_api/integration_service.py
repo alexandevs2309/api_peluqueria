@@ -66,7 +66,8 @@ class IntegrationService:
     def is_sendgrid_enabled():
         """Verificar si Email esta habilitado y configurado correctamente"""
         system_settings = IntegrationService.get_system_settings()
-        if not system_settings.sendgrid_enabled:
+        has_env_smtp = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
+        if not system_settings.sendgrid_enabled and not has_env_smtp:
             return False
 
         smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
