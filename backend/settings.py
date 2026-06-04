@@ -494,17 +494,12 @@ if USE_CLOUDINARY:
         'BACKEND': 'cloudinary_storage.storage.MediaCloudinaryStorage',
     }
     MEDIA_ROOT = BASE_DIR / 'media'
-elif DEBUG:
+else:
     MEDIA_ROOT = Path(env('MEDIA_ROOT', default=str(BASE_DIR / 'media')))
     STORAGES['default'] = {
         'BACKEND': 'django.core.files.storage.FileSystemStorage',
     }
     os.makedirs(MEDIA_ROOT, exist_ok=True)
-else:
-    raise RuntimeError(
-        'Media storage de produccion no configurado. '
-        'Define USE_CLOUDINARY=True y las credenciales CLOUDINARY_*.'
-    )
 
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
