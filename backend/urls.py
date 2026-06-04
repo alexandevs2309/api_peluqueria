@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
-from django.views.decorators.cache import cache_page
+
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
@@ -14,7 +14,6 @@ from apps.settings_api.views import SystemSettingsRetrieveUpdateView, SystemSett
 
 
 @require_http_methods(["GET"])
-@cache_page(60)
 def health_check(request):
     checks = {}
     all_ok = True

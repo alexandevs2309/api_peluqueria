@@ -328,23 +328,29 @@ else:
         }
     }
 
-# Cache configuration using Redis
-# PASSWORD no se pasa en OPTIONS cuando ya viene en la URL (evita doble auth)
+# Cache configuration: Redis cuando esté disponible, LocMem como fallback
 _redis_url = env('REDIS_URL', default='redis://localhost:6379/0')
-CACHES = {
-    'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': _redis_url,
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        },
+_redis_available = _redis_url and 'localhost' not in _redis_url
+
+if _redis_available:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': _redis_url,
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            },
+        }
     }
-}
-
-
-# Session engine using Redis cache
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'default'
+    SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+    SESSION_CACHE_ALIAS = 'default'
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
+    }
+    SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 
 # Celery — usa REDIS_URL como fuente única si no se definen explícitamente
 # ⚠️  RENDER FREE PLAN: CELERY_TASK_ALWAYS_EAGER=True en env vars de Render.
