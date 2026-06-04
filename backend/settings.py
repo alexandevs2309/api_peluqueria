@@ -544,6 +544,7 @@ else:
         EMAIL_HOST_PASSWORD = _smtp_password
         EMAIL_USE_TLS = env.bool('EMAIL_USE_TLS', default=True)
         EMAIL_USE_SSL = env.bool('EMAIL_USE_SSL', default=False)
+        EMAIL_TIMEOUT = 10
     elif SENDGRID_API_KEY and SENDGRID_API_KEY.startswith('SG.'):
         EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
         EMAIL_HOST = 'smtp.sendgrid.net'
