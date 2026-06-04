@@ -332,6 +332,7 @@ else:
 _redis_url = env('REDIS_URL', default='redis://localhost:6379/0')
 _redis_available = _redis_url and 'localhost' not in _redis_url
 
+_redis_available = _redis_url and 'localhost' not in _redis_url
 if _redis_available:
     CACHES = {
         'default': {
@@ -532,6 +533,7 @@ if "pytest" in sys.modules:
 else:
     # Email configuration (Resend SMTP / SendGrid / fallback console)
     SENDGRID_API_KEY = env('SENDGRID_API_KEY', default='')
+    RESEND_API_KEY = env('RESEND_API_KEY', default='')
     DEFAULT_FROM_EMAIL = env('DEFAULT_FROM_EMAIL', default=env('SENDGRID_FROM_EMAIL', default='noreply@yourdomain.com'))
 
     _smtp_host = env('EMAIL_HOST', default='')

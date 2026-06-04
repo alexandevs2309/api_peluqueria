@@ -1,7 +1,10 @@
 import sys
+import json
 import logging
 import uuid
 import hashlib
+
+import requests
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
@@ -154,8 +157,32 @@ def _build_branded_email_html(user, title, message_html, cta_url=None, cta_label
     </div>
     """
 
+def _send_email_resend(to_email, subject, html_body):
+    api_key = getattr(settings, 'RESEND_API_KEY', '')
+
+    resp = requests.post(
+        'https://api.resend.com/emails',
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        },
+        json={
+            'from': 'Auron Suite <onboarding@resend.dev>',
+            'to': [to_email],
+            'subject': subject,
+            'html': html_body,
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
 def _deliver_user_email(user, subject, text_body, html_body):
-    send_mail(subject, text_body, settings.DEFAULT_FROM_EMAIL, [user.email], html_message=html_body)
+    resend_key = getattr(settings, 'RESEND_API_KEY', '')
+    if resend_key and resend_key.startswith('re_'):
+        _send_email_resend(user.email, subject, html_body)
+    else:
+        send_mail(subject, text_body, settings.DEFAULT_FROM_EMAIL, [user.email], html_message=html_body)
 
 class RegisterThrottle(AnonRateThrottle):
     scope = 'register'
