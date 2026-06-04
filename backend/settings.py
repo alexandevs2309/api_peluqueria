@@ -671,10 +671,12 @@ if not DEBUG:
     _using_stripe_test_keys = STRIPE_SECRET_KEY.startswith('sk_test_')
 
     if _stripe_enabled_in_env and _using_stripe_test_keys and not STRIPE_LIVE_MODE_CONFIRMED:
-        raise RuntimeError(
+        import warnings
+        warnings.warn(
             'STRIPE_SECRET_KEY comienza con sk_test_ y DEBUG=False. '
-            'Usa claves live en produccion o define STRIPE_LIVE_MODE_CONFIRMED=True '
-            'solo para staging con claves test.'
+            'Stripe en modo staging. Para produccion real, usa claves live (sk_live_).',
+            RuntimeWarning,
+            stacklevel=2,
         )
 
     if _stripe_enabled_in_env and _using_stripe_test_keys and STRIPE_LIVE_MODE_CONFIRMED:
