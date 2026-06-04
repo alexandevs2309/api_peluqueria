@@ -107,21 +107,49 @@ class LoginSerializer(serializers.Serializer):
             data['tenant'] = tenant_input
             data['tenant_subdomain'] = tenant_input
 
-        # Login sin tenant es intencional y exclusivo para usuarios globales.
+        # Login sin tenant — inferir si hay un solo usuario
         if not tenant_input:
-            superadmin = User.objects.filter(email=email, is_superuser=True, tenant__isnull=True).first()
+            superadmin = User.objects.filter(
+                email=email, is_superuser=True, tenant__isnull=True
+            ).first()
             if superadmin:
                 if not superadmin.check_password(password):
                     raise serializers.ValidationError("Credenciales inválidas.")
                 if not superadmin.is_active:
-                    raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
+                    raise serializers.ValidationError(
+                        "Cuenta inactiva. Contacte al administrador."
+                    )
                 data['user'] = superadmin
                 data['tenant'] = None
                 return data
 
-            raise serializers.ValidationError({
-                'tenant': 'Tenant requerido para usuarios de cliente.'
-            })
+            candidates = list(
+                User.objects.filter(email=email).select_related('tenant')
+            )
+            if len(candidates) > 1:
+                raise serializers.ValidationError({
+                    'tenant': 'Este correo pertenece a varios negocios. Indica el subdominio para continuar.'
+                })
+            if not candidates:
+                raise serializers.ValidationError("Credenciales inválidas.")
+
+            user = candidates[0]
+            tenant = user.tenant
+            if not user.check_password(password):
+                raise serializers.ValidationError("Credenciales inválidas.")
+            if not user.is_active:
+                raise serializers.ValidationError(
+                    "Cuenta inactiva. Contacte al administrador."
+                )
+            if is_email_verification_required() and not getattr(
+                user, 'is_email_verified', False
+            ):
+                raise serializers.ValidationError(
+                    "Debe verificar su correo antes de iniciar sesión."
+                )
+            data['user'] = user
+            data['tenant'] = tenant
+            return data
 
         # ✅ BUSCAR TENANT EXPLÍCITO
         try:
