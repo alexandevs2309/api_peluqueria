@@ -561,7 +561,13 @@ class PasswordResetRequestView(APIView):
                 cta_label="Restablecer contraseña",
                 request=request
             )
-            _deliver_user_email(user, subject, text_body, html_body)
+            try:
+                _deliver_user_email(user, subject, text_body, html_body)
+            except Exception as exc:
+                return Response(
+                    {"detail": f"Error al enviar correo: {exc}"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
 
             return Response({"detail": "Correo enviado para restablecer contraseña."}, status=status.HTTP_200_OK)
         except User.DoesNotExist:
