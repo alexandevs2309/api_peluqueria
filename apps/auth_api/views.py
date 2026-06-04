@@ -15,6 +15,7 @@ from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.core.mail import send_mail
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
@@ -154,14 +155,7 @@ def _build_branded_email_html(user, title, message_html, cta_url=None, cta_label
     """
 
 def _deliver_user_email(user, subject, text_body, html_body):
-    if "pytest" in sys.modules:
-        send_mail(subject, text_body, "no-reply@peluqueria.com", [user.email], html_message=html_body)
-        return
-    try:
-        from apps.settings_api.integration_service import IntegrationService
-        IntegrationService.send_email(user.email, subject, html_body or text_body)
-    except Exception:
-        logger.exception("Failed to send email to user_id=%s", user.id)
+    send_mail(subject, text_body, settings.DEFAULT_FROM_EMAIL, [user.email], html_message=html_body)
 
 class RegisterThrottle(AnonRateThrottle):
     scope = 'register'
