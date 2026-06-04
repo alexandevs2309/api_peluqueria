@@ -167,7 +167,7 @@ def _send_email_resend(to_email, subject, html_body):
             'Content-Type': 'application/json',
         },
         json={
-            'from': 'Auron Suite <onboarding@resend.dev>',
+            'from': 'Auron Suite <notificaciones@auronsuite.com>',
             'to': [to_email],
             'subject': subject,
             'html': html_body,
