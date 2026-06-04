@@ -11,6 +11,7 @@ class Command(BaseCommand):
                 'name': 'free',
                 'description': 'Prueba gratis por 7 dias para conocer la plataforma antes de suscribirte.',
                 'price': 0.00,
+                'annual_price': 0.00,
                 'duration_month': 0,
                 'max_employees': 3,
                 'max_users': 3,
@@ -37,8 +38,10 @@ class Command(BaseCommand):
                 'name': 'basic',
                 'description': 'Entrada seria para barberias pequenas que necesitan citas, caja, clientes y reportes sin complicarse.',
                 'price': 29.00,
+                'annual_price': 278.40,
                 'duration_month': 1,
                 'stripe_price_id': '',
+                'stripe_annual_price_id': '',
                 'max_employees': 5,
                 'max_users': 10,
                 'allows_multiple_branches': False,
@@ -64,8 +67,10 @@ class Command(BaseCommand):
                 'name': 'standard',
                 'description': 'El plan recomendado para negocios en crecimiento que necesitan inventario, reportes avanzados y mas capacidad.',
                 'price': 59.00,
+                'annual_price': 566.40,
                 'duration_month': 1,
                 'stripe_price_id': '',
+                'stripe_annual_price_id': '',
                 'max_employees': 15,
                 'max_users': 30,
                 'allows_multiple_branches': False,
@@ -91,8 +96,10 @@ class Command(BaseCommand):
                 'name': 'premium',
                 'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
                 'price': 99.00,
+                'annual_price': 950.40,
                 'duration_month': 1,
                 'stripe_price_id': '',
+                'stripe_annual_price_id': '',
                 'max_employees': 50,
                 'max_users': 100,
                 'allows_multiple_branches': True,
@@ -118,8 +125,10 @@ class Command(BaseCommand):
                 'name': 'enterprise',
                 'description': 'Para cadenas y operaciones que necesitan escala ilimitada, soporte prioritario y acompanamiento.',
                 'price': 149.00,
+                'annual_price': 1430.40,
                 'duration_month': 1,
                 'stripe_price_id': '',
+                'stripe_annual_price_id': '',
                 'max_employees': 0,
                 'max_users': 0,
                 'allows_multiple_branches': True,
@@ -146,13 +155,13 @@ class Command(BaseCommand):
         ]
 
         for plan_data in plans:
-            plan, created = SubscriptionPlan.objects.get_or_create(
+            plan, created = SubscriptionPlan.objects.update_or_create(
                 name=plan_data['name'],
                 defaults=plan_data
             )
             if created:
                 self.stdout.write(self.style.SUCCESS(f'Created plan: {plan.get_name_display()}'))
             else:
-                self.stdout.write(self.style.WARNING(f'Plan already exists: {plan.get_name_display()}'))
+                self.stdout.write(self.style.SUCCESS(f'Updated plan: {plan.get_name_display()}'))
 
         self.stdout.write(self.style.SUCCESS('Successfully created/verified all default plans'))

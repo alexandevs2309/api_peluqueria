@@ -20,7 +20,7 @@ INSTALLED_APPS = [
     'django_celery_beat',
     # 'allauth',
     # 'allauth.account',
-    'oauth2_provider',
+    # 'oauth2_provider',
     'health_check',
     'mptt',
     'simple_history',

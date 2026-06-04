@@ -770,3 +770,127 @@ def test_sync_plan_consistency_command_apply_normalizes_and_syncs():
     assert tenant.max_employees == plan.max_employees
     assert tenant.max_users == plan.max_users
     assert "Summary" in stdout.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Annual Billing and Interval Tests
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+def test_annual_price_fields_and_cache_invalidation():
+    from django.core.cache import cache
+    
+    cache.set('public_plan_catalog', 'some-cached-data')
+    assert cache.get('public_plan_catalog') == 'some-cached-data'
+    
+    plan = SubscriptionPlan.objects.create(
+        name="test_annual_plan",
+        price=10.00,
+        annual_price=100.00,
+        duration_month=1
+    )
+    
+    assert cache.get('public_plan_catalog') is None, "Cache should be invalidated on plan save"
+    
+    cache.set('public_plan_catalog', 'some-other-cached-data')
+    plan.delete()
+    assert cache.get('public_plan_catalog') is None, "Cache should be invalidated on plan delete"
+
+
+@pytest.mark.django_db
+def test_renew_subscription_annual_billing(monkeypatch):
+    from django.test.utils import override_settings
+    monkeypatch.setattr("apps.auth_api.tasks.send_email_async.delay", lambda *a, **kw: None)
+    
+    user, tenant = _make_tenant_user("renew-annual")
+    plan = SubscriptionPlan.objects.get_or_create(
+        name="basic", 
+        defaults={"price": 10, "annual_price": 100, "duration_month": 1}
+    )[0]
+    plan.annual_price = 100
+    plan.save()
+
+    captured = {}
+
+    def fake_customer_create(**kwargs):
+        return FakeStripeObject(id="cus_annual")
+
+    def fake_customer_retrieve(customer_id):
+        return FakeStripeObject(id=customer_id)
+
+    def fake_payment_intent_create(**kwargs):
+        captured["amount"] = kwargs.get("amount")
+        captured["metadata"] = kwargs.get("metadata") or {}
+        return FakeStripeObject(
+            id="pi_annual",
+            status="requires_action",
+            client_secret="cs_annual",
+            amount=kwargs.get("amount"),
+            customer=kwargs.get("customer"),
+        )
+
+    monkeypatch.setattr(subscription_views.stripe.Customer, "create", fake_customer_create)
+    monkeypatch.setattr(subscription_views.stripe.Customer, "retrieve", fake_customer_retrieve)
+    monkeypatch.setattr(subscription_views.stripe.PaymentIntent, "create", fake_payment_intent_create)
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    
+    with override_settings(DEBUG=True):
+        response = client.post(reverse("renew-subscription"), {
+            "plan_id": plan.id,
+            "payment_method_id": "pm_annual_123",
+            "months": 1,
+            "billing_interval": "year",
+            "auto_renew": False,
+        })
+
+    print("RESPONSE STATUS:", response.status_code)
+    print("RESPONSE CONTENT:", response.content)
+    assert response.status_code == 200
+    assert response.data.get("requires_action") is True
+    # Annual amount is 100, so captured amount in Stripe (in cents) should be 10000
+    assert captured["amount"] == 10000
+    assert captured["metadata"].get("billing_interval") == "year"
+    assert captured["metadata"].get("months") == "12"
+
+
+@pytest.mark.django_db
+def test_register_with_plan_annual_billing(monkeypatch):
+    monkeypatch.setattr("apps.auth_api.tasks.send_email_async.delay", lambda *a, **kw: None)
+    from apps.billing_api.models import Invoice
+    
+    plan = SubscriptionPlan.objects.get_or_create(
+        name="basic", 
+        defaults={"price": 10, "annual_price": 100, "duration_month": 1}
+    )[0]
+    plan.annual_price = 100
+    plan.save()
+    
+    client = APIClient()
+    response = client.post(reverse("register-with-plan"), {
+        "fullName": "Test Annual Owner",
+        "email": "owner_annual@test.com",
+        "businessName": "Annual Salon",
+        "phone": "+18295551234",
+        "planType": "basic",
+        "billing_interval": "year"
+    }, format="json")
+    
+    assert response.status_code == 201
+    response_data = response.data
+    assert response_data["account"]["business_name"] == "Annual Salon"
+    
+    tenant = Tenant.objects.get(owner__email="owner_annual@test.com")
+    assert tenant.plan_type == "basic"
+    assert tenant.max_employees == plan.max_employees
+    
+    # Check UserSubscription billing_interval
+    user_sub = UserSubscription.objects.get(user=tenant.owner)
+    assert user_sub.billing_interval == "year"
+    
+    # Check Invoice amount is correct (annual_price 100)
+    invoice = Invoice.objects.filter(tenant=tenant).first()
+    assert invoice is not None
+    assert invoice.amount == 100.00
+    assert "Primer año" in invoice.description

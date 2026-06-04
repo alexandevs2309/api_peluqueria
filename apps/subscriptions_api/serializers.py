@@ -12,7 +12,7 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = SubscriptionPlan
         fields = [
-            'id', 'name', 'display_name', 'description', 'price', 'duration_month', 'stripe_price_id', 'is_active', 'is_public',
+            'id', 'name', 'display_name', 'description', 'price', 'annual_price', 'duration_month', 'stripe_price_id', 'stripe_annual_price_id', 'is_active', 'is_public',
             'max_employees', 'max_users', 'allows_multiple_branches', 'features', 'commercial_benefits',
             'features_list', 'created_at', 'updated_at'
         ]
@@ -39,6 +39,8 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
             'display_name',
             'description',
             'price',
+            'annual_price',
+            'stripe_annual_price_id',
             'highlight_features',
             'technical_features',
             'commercial_benefits',
@@ -101,6 +103,7 @@ class UserSubscriptionSerializer(serializers.ModelSerializer):
             'start_date',
             'end_date',
             'is_active',
+            'billing_interval',
             'cancelled_at',
         ]
         read_only_fields = [ 'user', 'start_date', 'end_date', 'is_active', 'cancelled_at']
@@ -127,6 +130,7 @@ class OnboardingSerializer(serializers.Serializer):
     password = serializers.CharField(min_length=8)
     stripe_customer_id = serializers.CharField()
     country = serializers.CharField(required=False, allow_blank=True)
+    billing_interval = serializers.ChoiceField(choices=['month', 'year'], default='month', required=False)
 
     def validate_owner_email(self, value):
         from django.contrib.auth import get_user_model

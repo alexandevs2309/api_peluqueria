@@ -27,6 +27,14 @@ class SubscriptionPlan(models.Model):
         db_index=True,
         help_text="Stripe Price ID (ej: price_...) para cobro recurrente"
     )
+    annual_price = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Precio anual del plan")
+    stripe_annual_price_id = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Stripe Price ID (ej: price_...) para cobro recurrente anual"
+    )
     is_active = models.BooleanField(default=True)
     is_public = models.BooleanField(default=True, help_text="Visible y elegible en catalogo publico y onboarding")
     max_employees = models.PositiveIntegerField(default=0)
@@ -37,6 +45,16 @@ class SubscriptionPlan(models.Model):
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        from django.core.cache import cache
+        cache.delete('public_plan_catalog')
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        from django.core.cache import cache
+        cache.delete('public_plan_catalog')
+        super().delete(*args, **kwargs)
 
     def __str__(self):
         return self.get_name_display()
@@ -49,6 +67,12 @@ class UserSubscription(models.Model):
     end_date = models.DateTimeField(blank=True, null=True)
     is_active = models.BooleanField(default=True)
     auto_renew = models.BooleanField(default=False)
+    billing_interval = models.CharField(
+        max_length=20,
+        default='month',
+        choices=[('month', 'Mensual'), ('year', 'Anual')],
+        help_text="Ciclo de facturacion: mensual o anual"
+    )
     cancelled_at = models.DateTimeField(blank=True, null=True, help_text="Momento en que se solicitó la cancelación. Si está seteado, la suscripción expirará en end_date.")
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -123,7 +147,8 @@ class UserSubscription(models.Model):
         if self._state.adding:
             if not self.end_date:
                 self.start_date = timezone.now()
-                self.end_date = self.start_date + relativedelta(months=self.plan.duration_month)
+                months = 12 if self.billing_interval == 'year' else self.plan.duration_month
+                self.end_date = self.start_date + relativedelta(months=months)
         else:
             old = UserSubscription.objects.get(pk=self.pk)
             if old.is_active is False and self.is_active is True and not old.cancelled_at:
@@ -143,6 +168,12 @@ class Subscription(models.Model):
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT)
     stripe_subscription_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
+    billing_interval = models.CharField(
+        max_length=20,
+        default='month',
+        choices=[('month', 'Mensual'), ('year', 'Anual')],
+        help_text="Ciclo de facturacion: mensual o anual"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

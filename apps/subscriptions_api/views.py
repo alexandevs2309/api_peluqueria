@@ -1,4 +1,5 @@
 import os
+from decimal import Decimal
 import requests
 from rest_framework import viewsets
 import logging
@@ -620,19 +621,26 @@ class OnboardingView(APIView):
 
             # 3. Obtener plan y validar stripe_price_id
             plan = SubscriptionPlan.objects.get(id=data['plan_id'])
+            billing_interval = data.get('billing_interval', 'month')
             
-            # ✅ Requerir stripe_price_id explícito para evitar cobros a precio incorrecto
-            if not plan.stripe_price_id:
+            # ✅ Requerir stripe_price_id/stripe_annual_price_id explícito para evitar cobros a precio incorrecto
+            stripe_price_id = plan.stripe_annual_price_id if billing_interval == 'year' else plan.stripe_price_id
+            if not stripe_price_id:
                 return Response({
-                    'error': f'Plan {plan.name} missing stripe_price_id configuration'
+                    'error': f'Plan {plan.name} missing stripe price configuration for interval {billing_interval}'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            stripe_price_id = plan.stripe_price_id
             
             # 4. Crear suscripción Stripe
             stripe_subscription = stripe.Subscription.create(
                 customer=customer.id,
                 items=[{'price': stripe_price_id}],
                 payment_behavior='error_if_incomplete',  # ✅ Fallar si no puede cobrar
+                metadata={
+                    'user_id': str(user.id),
+                    'tenant_id': str(tenant.id),
+                    'plan_id': str(plan.id),
+                    'billing_interval': billing_interval
+                },
                 expand=['latest_invoice.payment_intent']
             )
             
@@ -650,7 +658,8 @@ class OnboardingView(APIView):
                 tenant=tenant,
                 plan=plan,
                 stripe_subscription_id=stripe_subscription.id,
-                is_active=True
+                is_active=True,
+                billing_interval=billing_interval
             )
 
             # 6. Asignar rol ClientAdmin
@@ -704,7 +713,7 @@ class RenewSubscriptionView(APIView):
             return None
         return months
 
-    def _apply_paid_access(self, tenant, user, plan, months, auto_renew=False, access_until_override=None):
+    def _apply_paid_access(self, tenant, user, plan, months, auto_renew=False, access_until_override=None, billing_interval='month'):
         now = timezone.now()
         base_time = now
         if tenant.access_until and tenant.access_until > now:
@@ -738,7 +747,8 @@ class RenewSubscriptionView(APIView):
             start_date=base_time,
             end_date=access_until,
             is_active=True,
-            auto_renew=auto_renew
+            auto_renew=auto_renew,
+            billing_interval=billing_interval
         )
         return access_until
 
@@ -814,7 +824,7 @@ class RenewSubscriptionView(APIView):
 
         return {'token': token, 'config': config}, None
 
-    def _create_paypal_order(self, request, tenant, plan, months, auto_renew):
+    def _create_paypal_order(self, request, tenant, plan, months, auto_renew, billing_interval='month'):
         if auto_renew:
             return Response({
                 'error': 'PayPal auto-renew no disponible',
@@ -826,7 +836,17 @@ class RenewSubscriptionView(APIView):
             return error_response
 
         frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
-        total_amount = f"{plan.price * months:.2f}"
+        
+        price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+        if billing_interval == 'year' and not price_per_cycle:
+            price_per_cycle = plan.price * 12 * Decimal('0.8')
+
+        if billing_interval == 'year':
+            total_amount_val = price_per_cycle * months / 12
+        else:
+            total_amount_val = price_per_cycle * months
+
+        total_amount = f"{total_amount_val:.2f}"
         payload = {
             'intent': 'CAPTURE',
             'purchase_units': [{
@@ -889,6 +909,7 @@ class RenewSubscriptionView(APIView):
                 'plan_id': plan.id,
                 'months': months,
                 'auto_renew': auto_renew,
+                'billing_interval': billing_interval,
                 'amount': total_amount,
             },
             timeout=60 * 60 * 24,
@@ -974,18 +995,19 @@ class RenewSubscriptionView(APIView):
                 plan,
                 cached_order['months'],
                 auto_renew=False,
+                billing_interval=cached_order.get('billing_interval', 'month')
             )
 
             Invoice.objects.create(
                 user=request.user,
                 tenant=tenant,
-                amount=plan.price * cached_order['months'],
+                amount=Decimal(cached_order['amount']),
                 due_date=timezone.now(),
                 is_paid=True,
                 paid_at=timezone.now(),
                 payment_method='paypal',
                 status='paid',
-                description=f"Subscription renewal - {plan.get_name_display()} x{cached_order['months']}m (PayPal {order_id})"
+                description=f"Subscription renewal - {plan.get_name_display()} ({'Anual' if cached_order.get('billing_interval') == 'year' else 'Mensual'}) x{cached_order['months']}m (PayPal {order_id})"
             )
 
         response_payload = {
@@ -1011,7 +1033,7 @@ class RenewSubscriptionView(APIView):
         cache.delete(self._paypal_order_cache_key(order_id))
         return Response(response_payload)
 
-    def _handle_auto_renew_payment(self, tenant, user, plan, payment_method_id, customer_id):
+    def _handle_auto_renew_payment(self, tenant, user, plan, payment_method_id, customer_id, billing_interval='month', months=1):
         # Adjuntar método de pago y establecerlo por defecto para cobros automáticos.
         try:
             stripe.PaymentMethod.attach(payment_method_id, customer=customer_id)
@@ -1024,10 +1046,10 @@ class RenewSubscriptionView(APIView):
             invoice_settings={'default_payment_method': payment_method_id}
         )
 
-        stripe_price_id = plan.stripe_price_id
+        stripe_price_id = plan.stripe_annual_price_id if billing_interval == 'year' else plan.stripe_price_id
         if not stripe_price_id:
             return Response({
-                'error': f'Plan {plan.name} missing stripe_price_id configuration'
+                'error': f'Plan {plan.name} missing stripe price configuration for interval {billing_interval}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
         stripe_subscription = stripe.Subscription.create(
@@ -1038,7 +1060,9 @@ class RenewSubscriptionView(APIView):
             metadata={
                 'user_id': str(user.id),
                 'tenant_id': str(tenant.id),
-                'plan_id': str(plan.id)
+                'plan_id': str(plan.id),
+                'billing_interval': billing_interval,
+                'months': str(months)
             },
             expand=['latest_invoice.payment_intent']
         )
@@ -1067,9 +1091,10 @@ class RenewSubscriptionView(APIView):
 
         with transaction.atomic():
             access_until = self._apply_paid_access(
-                tenant, user, plan, months=1,
+                tenant, user, plan, months=months,
                 auto_renew=True,
-                access_until_override=access_until_override
+                access_until_override=access_until_override,
+                billing_interval=billing_interval
             )
 
             Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
@@ -1078,14 +1103,18 @@ class RenewSubscriptionView(APIView):
                 plan=plan,
                 defaults={
                     'stripe_subscription_id': stripe_subscription.id,
-                    'is_active': True
+                    'is_active': True,
+                    'billing_interval': billing_interval
                 }
             )
 
             from apps.billing_api.models import Invoice
             first_invoice = stripe_subscription.get('latest_invoice') or {}
             first_payment_intent = first_invoice.get('payment_intent') or {}
-            amount_paid = first_invoice.get('amount_paid') or int(plan.price * 100)
+            price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+            if billing_interval == 'year' and not price_per_cycle:
+                price_per_cycle = plan.price * 12 * Decimal('0.8')
+            amount_paid = first_invoice.get('amount_paid') or int(price_per_cycle * 100)
             Invoice.objects.create(
                 user=user,
                 tenant=tenant,
@@ -1096,7 +1125,7 @@ class RenewSubscriptionView(APIView):
                 payment_method='stripe',
                 status='paid',
                 stripe_payment_intent_id=first_payment_intent.get('id'),
-                description=f"Auto-renew subscription - {plan.get_name_display()}"
+                description=f"Auto-renew subscription - {plan.get_name_display()} ({'Anual' if billing_interval == 'year' else 'Mensual'})"
             )
 
         send_purchase_confirmation(
@@ -1111,7 +1140,7 @@ class RenewSubscriptionView(APIView):
             'plan': plan.name,
             'status': tenant.subscription_status,
             'access_level': tenant.get_access_level(),
-            'months': 1,
+            'months': months,
             'access_until': access_until,
             'auto_renew': True,
             'stripe_subscription_id': stripe_subscription.id
@@ -1163,17 +1192,27 @@ class RenewSubscriptionView(APIView):
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
 
-        raw_paypal_action = request.data.get('paypal_action')
-        has_paypal_intent = bool(raw_paypal_action or request.data.get('paypal_order_id') or request.data.get('order_id'))
-        payment_provider = str(
-            request.data.get('payment_provider') or ('paypal' if has_paypal_intent else 'stripe')
-        ).strip().lower()
-        paypal_action = str(raw_paypal_action or 'create_order').strip().lower()
         plan_id = request.data.get('plan_id')
         payment_method_id = request.data.get('payment_method_id')
         payment_intent_id = request.data.get('payment_intent_id')
-        paypal_order_id = request.data.get('paypal_order_id') or request.data.get('order_id')
+        paypal_action = request.data.get('paypal_action')
+        paypal_order_id = request.data.get('paypal_order_id')
+
+        payment_provider = request.data.get('payment_provider')
+        if not payment_provider:
+            if paypal_action or paypal_order_id:
+                payment_provider = 'paypal'
+            else:
+                payment_provider = 'stripe'
+
+        billing_interval = str(request.data.get('billing_interval') or 'month').strip().lower()
+        if billing_interval not in {'month', 'year'}:
+            return Response({'error': 'billing_interval must be either "month" or "year"'}, status=400)
+
         months = self._parse_months(request.data.get('months'))
+        if billing_interval == 'year':
+            months = 12
+
         auto_renew_raw = request.data.get('auto_renew', False)
         auto_renew = str(auto_renew_raw).lower() in {'1', 'true', 'yes', 'on'}
 
@@ -1188,8 +1227,8 @@ class RenewSubscriptionView(APIView):
 
         if months is None:
             return Response({'error': 'Months must be an integer between 1 and 24'}, status=400)
-        if auto_renew and months != 1:
-            return Response({'error': 'Auto-renew currently supports only 1 month per cycle'}, status=400)
+        if auto_renew and months not in {1, 12}:
+            return Response({'error': 'Auto-renew currently supports only 1 month or 12 months (1 year) per cycle'}, status=400)
         if not plan_id:
             return Response({'error': 'Plan ID required'}, status=400)
         
@@ -1207,7 +1246,7 @@ class RenewSubscriptionView(APIView):
                 months,
                 paypal_action,
             )
-            return self._create_paypal_order(request, tenant, plan, months, auto_renew)
+            return self._create_paypal_order(request, tenant, plan, months, auto_renew, billing_interval=billing_interval)
 
         if not payment_method_id and not payment_intent_id:
             return Response({'error': 'Payment method or payment intent required'}, status=400)
@@ -1218,13 +1257,22 @@ class RenewSubscriptionView(APIView):
             if auto_renew:
                 return Response({'error': 'Auto-renew requires a real Stripe payment method'}, status=400)
             with transaction.atomic():
-                access_until = self._apply_paid_access(tenant, request.user, plan, months)
+                access_until = self._apply_paid_access(tenant, request.user, plan, months, billing_interval=billing_interval)
 
                 from apps.billing_api.models import Invoice
+                price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+                if billing_interval == 'year' and not price_per_cycle:
+                    price_per_cycle = plan.price * 12 * Decimal('0.8')
+
+                if billing_interval == 'year':
+                    total_amount_val = price_per_cycle * months / 12
+                else:
+                    total_amount_val = price_per_cycle * months
+
                 Invoice.objects.create(
                     user=request.user,
                     tenant=tenant,
-                    amount=plan.price * months,
+                    amount=total_amount_val,
                     due_date=timezone.now(),
                     is_paid=True,
                     paid_at=timezone.now(),
@@ -1235,7 +1283,7 @@ class RenewSubscriptionView(APIView):
 
             send_purchase_confirmation(
                 request.user, tenant, plan,
-                plan.price * months,
+                total_amount_val,
                 months,
                 payment_method='transfer'
             )
@@ -1294,6 +1342,7 @@ class RenewSubscriptionView(APIView):
                     or ('tenant_id' in metadata and str(metadata.get('tenant_id')) != str(tenant.id))
                     or ('plan_id' in metadata and str(metadata.get('plan_id')) != str(plan.id))
                     or ('months' in metadata and str(metadata.get('months')) != str(months))
+                    or ('billing_interval' in metadata and str(metadata.get('billing_interval')) != str(billing_interval))
                 ):
                     return Response({
                         'error': 'Payment intent metadata mismatch'
@@ -1333,7 +1382,8 @@ class RenewSubscriptionView(APIView):
                         plan,
                         months,
                         auto_renew=auto_renew,
-                        access_until_override=access_until_override
+                        access_until_override=access_until_override,
+                        billing_interval=billing_interval
                     )
 
                     if auto_renew and stripe_subscription_id:
@@ -1343,11 +1393,21 @@ class RenewSubscriptionView(APIView):
                             plan=plan,
                             defaults={
                                 'stripe_subscription_id': stripe_subscription_id,
-                                'is_active': True
+                                'is_active': True,
+                                'billing_interval': billing_interval
                             }
                         )
 
-                    amount = (payment_intent.amount or int(plan.price * months * 100)) / 100
+                    price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+                    if billing_interval == 'year' and not price_per_cycle:
+                        price_per_cycle = plan.price * 12 * Decimal('0.8')
+
+                    if billing_interval == 'year':
+                        fallback_amount = (price_per_cycle * months) / 12
+                    else:
+                        fallback_amount = price_per_cycle * months
+
+                    amount = (payment_intent.amount or int(fallback_amount * 100)) / 100
                     Invoice.objects.create(
                         user=request.user,
                         tenant=tenant,
@@ -1358,7 +1418,7 @@ class RenewSubscriptionView(APIView):
                         payment_method='stripe',
                         status='paid',
                         stripe_payment_intent_id=payment_intent.id,
-                        description=f"Subscription renewal - {plan.get_name_display()} x{months}m"
+                        description=f"Subscription renewal - {plan.get_name_display()} ({'Anual' if billing_interval == 'year' else 'Mensual'}) x{months}m"
                     )
 
                 send_purchase_confirmation(
@@ -1379,14 +1439,22 @@ class RenewSubscriptionView(APIView):
                 })
 
             if auto_renew:
-                return self._handle_auto_renew_payment(tenant, request.user, plan, payment_method_id, customer.id)
+                return self._handle_auto_renew_payment(tenant, request.user, plan, payment_method_id, customer.id, billing_interval=billing_interval, months=months)
             
-            # Crear PaymentIntent y cobrar inmediatamente
+            price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+            if billing_interval == 'year' and not price_per_cycle:
+                price_per_cycle = plan.price * 12 * Decimal('0.8')
+
+            if billing_interval == 'year':
+                total_amount_val = price_per_cycle * months / 12
+            else:
+                total_amount_val = price_per_cycle * months
+
             frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
             return_url = request.data.get('return_url') or f"{frontend_url}/client/payment"
 
             payment_intent = stripe.PaymentIntent.create(
-                amount=int(plan.price * months * 100),  # Centavos
+                amount=int(total_amount_val * 100),  # Centavos
                 currency='usd',
                 customer=customer.id,
                 payment_method=payment_method_id,
@@ -1396,7 +1464,8 @@ class RenewSubscriptionView(APIView):
                     'user_id': str(request.user.id),
                     'tenant_id': str(tenant.id),
                     'plan_id': str(plan.id),
-                    'months': str(months)
+                    'months': str(months),
+                    'billing_interval': billing_interval
                 }
             )
             
@@ -1419,26 +1488,26 @@ class RenewSubscriptionView(APIView):
             
             # Solo entonces activar nueva suscripción
             with transaction.atomic():
-                access_until = self._apply_paid_access(tenant, request.user, plan, months)
+                access_until = self._apply_paid_access(tenant, request.user, plan, months, billing_interval=billing_interval)
                 
                 # Crear factura local
                 from apps.billing_api.models import Invoice
                 Invoice.objects.create(
                     user=request.user,
                     tenant=tenant,
-                    amount=plan.price * months,
+                    amount=total_amount_val,
                     due_date=timezone.now(),
                     is_paid=True,
                     paid_at=timezone.now(),
                     payment_method='stripe',
                     status='paid',
                     stripe_payment_intent_id=payment_intent.id,
-                    description=f"Subscription renewal - {plan.get_name_display()} x{months}m"
+                    description=f"Subscription renewal - {plan.get_name_display()} ({'Anual' if billing_interval == 'year' else 'Mensual'}) x{months}m"
                 )
 
             send_purchase_confirmation(
                 request.user, tenant, plan,
-                plan.price * months,
+                total_amount_val,
                 months,
                 payment_method='stripe'
             )

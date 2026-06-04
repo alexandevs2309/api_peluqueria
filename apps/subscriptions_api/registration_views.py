@@ -76,14 +76,19 @@ def register_with_plan(request):
 
         with transaction.atomic():
             from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
+            from decimal import Decimal
             plan_name = data['planType']
+            billing_interval = str(data.get('billingInterval') or data.get('billing_interval') or 'month').strip().lower()
+            if billing_interval not in {'month', 'year'}:
+                billing_interval = 'month'
+
             try:
                 subscription_plan = SubscriptionPlan.objects.get(
                     name=plan_name,
                     is_active=True,
                     is_public=True,
                 )
-                logger.info("Subscription plan selected plan_id=%s", subscription_plan.id)
+                logger.info("Subscription plan selected plan_id=%s billing_interval=%s", subscription_plan.id, billing_interval)
             except SubscriptionPlan.DoesNotExist:
                 return Response({
                     'error': f'Plan no válido: {data["planType"]}'
@@ -145,16 +150,22 @@ def register_with_plan(request):
                 start_date=timezone.now(),
                 end_date=trial_end,
                 is_active=True,
-                auto_renew=False
+                auto_renew=False,
+                billing_interval=billing_interval
             )
             logger.info("Trial subscription created subscription_id=%s", user_subscription.id)
 
             from apps.billing_api.models import Invoice
+            price_per_cycle = subscription_plan.annual_price if billing_interval == 'year' else subscription_plan.price
+            if billing_interval == 'year' and not price_per_cycle:
+                price_per_cycle = subscription_plan.price * 12 * Decimal('0.8')
+
             invoice = Invoice.objects.create(
+                tenant=tenant,
                 user=user,
                 subscription=user_subscription,
-                amount=subscription_plan.price,
-                description=f"{subscription_plan.get_name_display()} - Primer mes",
+                amount=price_per_cycle,
+                description=f"{subscription_plan.get_name_display()} - Primer {'año' if billing_interval == 'year' else 'mes'}",
                 due_date=trial_end,
                 status='pending'
             )
