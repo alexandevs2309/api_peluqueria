@@ -1,8 +1,4 @@
-
-import os
-
-from django.core.wsgi import get_wsgi_application
-
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
-
-application = get_wsgi_application()
+"""Minimal WSGI app - gunicorn startup test"""
+def application(environ, start_response):
+    start_response('200 OK', [('Content-Type', 'text/plain')])
+    return [b'gunicorn test OK']
