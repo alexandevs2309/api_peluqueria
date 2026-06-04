@@ -156,11 +156,15 @@ class TenantMiddleware(MiddlewareMixin):
                 tenant_id = validated_token.get('tenant_id')
                 if tenant_id:
                     try:
-                        tenant = Tenant.objects.get(
-                            id=tenant_id,
-                            deleted_at__isnull=True,
-                            is_active=True
-                        )
+                        is_paywall_safe = self._is_paywall_safe_request(request)
+                        tenant_filter = {
+                            'id': tenant_id,
+                            'deleted_at__isnull': True,
+                        }
+                        if not is_paywall_safe:
+                            tenant_filter['is_active'] = True
+                        
+                        tenant = Tenant.objects.get(**tenant_filter)
                         request.tenant = tenant
                         
                         # ✅ VALIDACIÓN DEFENSIVA: JWT tenant debe coincidir con user.tenant
@@ -200,8 +204,12 @@ class TenantMiddleware(MiddlewareMixin):
                     user_tenant = request.user.tenant
                     
                     if user_tenant.deleted_at is not None or not user_tenant.is_active:
-                        return self._inactive_tenant_response(user_tenant)
-                    request.tenant = user_tenant
+                        if user_tenant.deleted_at is None and self._is_paywall_safe_request(request):
+                            request.tenant = user_tenant
+                        else:
+                            return self._inactive_tenant_response(user_tenant)
+                    else:
+                        request.tenant = user_tenant
                 else:
                     logger.warning('Authenticated user without tenant')
                     if request.path.startswith('/api/subscriptions/me/'):

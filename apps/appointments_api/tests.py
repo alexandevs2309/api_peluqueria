@@ -5,6 +5,7 @@ from rest_framework.test import APIClient
 from apps.services_api.models import Service, StylistService
 from apps.clients_api.models import Client
 from django.contrib.auth import get_user_model
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.employees_api.models import WorkSchedule, Employee
 from .models import Appointment
@@ -14,16 +15,29 @@ from django.utils import timezone
 from apps.roles_api.models import Role, UserRole
 from apps.auth_api.factories import UserFactory
 from apps.tenants_api.models import Tenant
+from apps.subscriptions_api.models import SubscriptionPlan
 
 faker = Faker('es_ES')
 User = get_user_model()
 
 
 @pytest.fixture
-def test_tenant():
+def plan(db):
+    return SubscriptionPlan.objects.create(
+        name="premium",
+        price=10.0,
+        max_users=10,
+        features={"appointments": True}
+    )
+
+
+@pytest.fixture
+def test_tenant(plan):
     return Tenant.objects.create(
         name=faker.company(),
-        subdomain=faker.slug()
+        subdomain=faker.slug(),
+        subscription_plan=plan,
+        subscription_status='active'
     )
 
 
@@ -39,6 +53,18 @@ def authenticated_user(api_client, test_tenant):
         password='testpass123',
         tenant=test_tenant
     )
+    from django.contrib.auth.models import Permission
+    role, _ = Role.objects.get_or_create(name='Client-Admin')
+    perms = Permission.objects.filter(
+        content_type__app_label='appointments_api',
+        codename__in=['view_appointment', 'add_appointment', 'change_appointment', 'delete_appointment']
+    )
+    role.permissions.add(*perms)
+    UserRole.objects.get_or_create(user=user, role=role, tenant=test_tenant)
+
+    refresh = RefreshToken.for_user(user)
+    refresh['tenant_id'] = test_tenant.id
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     api_client.force_authenticate(user=user)
     return user, api_client
 
@@ -81,7 +107,14 @@ def service_factory(test_tenant):
 
 @pytest.fixture
 def stylist_role():
-    return Role.objects.create(name='stylist')
+    from django.contrib.auth.models import Permission
+    role, _ = Role.objects.get_or_create(name='stylist')
+    perms = Permission.objects.filter(
+        content_type__app_label='appointments_api',
+        codename__in=['view_appointment', 'add_appointment', 'change_appointment', 'delete_appointment']
+    )
+    role.permissions.add(*perms)
+    return role
 
 
 @pytest.fixture
@@ -91,8 +124,8 @@ def stylist(stylist_role, test_tenant):
         password='testpass123',
         tenant=test_tenant,
     )
-    UserRole.objects.create(user=user, role=stylist_role, tenant=test_tenant)
-    employee = Employee.objects.create(user=user, specialty='Corte de cabello', tenant=test_tenant)
+    UserRole.objects.get_or_create(user=user, role=stylist_role, tenant=test_tenant)
+    employee = Employee.objects.create(user=user, specialty='stylist', tenant=test_tenant)
     return user, employee
 
 
@@ -170,7 +203,12 @@ def test_create_appointment_without_service(authenticated_user, client_factory, 
 @pytest.mark.django_db
 def test_list_appointments(api_client, client_factory, stylist, service_factory, stylist_role, test_tenant):
     stylist_user, employee = stylist
+    
+    refresh = RefreshToken.for_user(stylist_user)
+    refresh['tenant_id'] = stylist_user.tenant_id
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     api_client.force_authenticate(user=stylist_user)
+    
     client_obj = client_factory.create()
     service = service_factory.create(name='Corte Básico')
     StylistService.objects.create(stylist=stylist_user, service=service, duration=timedelta(minutes=30))
@@ -204,10 +242,8 @@ def test_list_appointments(api_client, client_factory, stylist, service_factory,
 
 
 @pytest.mark.django_db
-def test_create_appointment_invalid_service():
-    user = UserFactory(is_email_verified=True)
-    client = APIClient()
-    client.force_authenticate(user=user)
+def test_create_appointment_invalid_service(authenticated_user):
+    user, client = authenticated_user
     data = {
         "date_time": "2030-01-01T10:00:00Z",
         "service": 9999
@@ -219,7 +255,7 @@ def test_create_appointment_invalid_service():
 @pytest.mark.django_db
 def test_create_appointment_stylist_without_employee(client_factory, service_factory, stylist_role, test_tenant):
     user = UserFactory(tenant=test_tenant, email='stylist@nomodel.com', password='pass')
-    UserRole.objects.create(user=user, role=stylist_role, tenant=test_tenant)
+    UserRole.objects.get_or_create(user=user, role=stylist_role, tenant=test_tenant)
     client_obj = client_factory.create()
     service = service_factory.create()
 
@@ -235,7 +271,11 @@ def test_create_appointment_stylist_without_employee(client_factory, service_fac
     }
 
     client = APIClient()
+    refresh = RefreshToken.for_user(user)
+    refresh['tenant_id'] = user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=user)
+    
     response = client.post(reverse("appointment-list"), data, format="json")
     assert response.status_code == 400
     assert "no tiene un perfil de empleado" in str(response.data)
@@ -262,10 +302,14 @@ def test_create_appointment_outside_schedule(client_factory, service_factory, st
     }
 
     client = APIClient()
+    refresh = RefreshToken.for_user(stylist_user)
+    refresh['tenant_id'] = stylist_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=stylist_user)
+    
     response = client.post(reverse("appointment-list"), data, format="json")
     assert response.status_code == 400
-    assert "no está disponible en este horario" in str(response.data)
+    assert "no trabaja en ese horario" in str(response.data)
 
 
 @pytest.mark.django_db
@@ -288,7 +332,11 @@ def test_create_appointment_service_not_offered(client_factory, service_factory,
     }
 
     client = APIClient()
+    refresh = RefreshToken.for_user(stylist_user)
+    refresh['tenant_id'] = stylist_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=stylist_user)
+    
     response = client.post(reverse("appointment-list"), data, format="json")
     assert response.status_code == 400
     assert "no ofrece este servicio" in str(response.data)

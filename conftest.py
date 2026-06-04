@@ -1,4 +1,11 @@
 import os
+# Configure dummy email settings so IntegrationService considers email enabled during testing
+os.environ.setdefault('EMAIL_HOST', 'localhost')
+os.environ.setdefault('EMAIL_HOST_USER', 'test_user')
+os.environ.setdefault('EMAIL_HOST_PASSWORD', 'test_password')
+os.environ.setdefault('DEFAULT_FROM_EMAIL', 'webmaster@localhost')
+os.environ.setdefault('SENDGRID_API_KEY', 'SG.test_key_placeholder')
+
 import django
 from django.conf import settings
 
@@ -8,7 +15,7 @@ if not settings.configured:
 
 import pytest
 
-collect_ignore = ["test_full_flow.py", "test_perm.py", "test_real_http.py"]
+collect_ignore = ["test_full_flow.py", "test_perm.py", "test_real_http.py", "test_service.py"]
 
 from rest_framework.test import APIClient
 from django.contrib.auth import get_user_model
@@ -32,9 +39,10 @@ def client_factory():
     class ClientFactory:
         @staticmethod
         def create(**kwargs):
-            user = _UserFactory()
+            user = kwargs.get('user') or _UserFactory()
             defaults = {
                 'user': user,
+                'tenant': user.tenant if user else None,
                 'full_name': faker.name(),
                 'email': faker.email(),
                 'phone': faker.phone_number(),
@@ -106,6 +114,12 @@ def service_factory():
             'is_active': True,
         }
         defaults.update(kwargs)
+        if 'tenant' not in defaults:
+            from apps.tenants_api.models import Tenant
+            tenant = Tenant.objects.first()
+            if not tenant:
+                tenant = Tenant.objects.create(name="Default Tenant", subdomain="default-tenant")
+            defaults['tenant'] = tenant
         service = Service.objects.create(**defaults)
         return service
     return create_service

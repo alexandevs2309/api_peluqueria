@@ -91,6 +91,14 @@ class MultiTenantSecurityTests(TestCase):
     
     def test_login_requires_explicit_tenant_for_client_users(self):
         """Login de cliente debe fallar sin tenant explícito."""
+        # Crear usuario con mismo email en tenant B para forzar la ambigüedad
+        User.objects.create_user(
+            email='admin@tenant-a.com',
+            password='pass1234_other',
+            full_name='Admin Tenant B Dupe',
+            tenant=self.tenant_b,
+            role='Client-Admin'
+        )
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
             'password': 'pass1234'
@@ -101,6 +109,14 @@ class MultiTenantSecurityTests(TestCase):
     @override_settings(ALLOWED_HOSTS=['testserver', 'api-peluqueria-p25h.onrender.com'])
     def test_login_does_not_infer_tenant_from_technical_host(self):
         """Hosts técnicos de Render/Netlify no deben convertirse en tenants."""
+        # Crear usuario con mismo email en tenant B para forzar la ambigüedad
+        User.objects.create_user(
+            email='admin@tenant-a.com',
+            password='pass1234_other',
+            full_name='Admin Tenant B Dupe',
+            tenant=self.tenant_b,
+            role='Client-Admin'
+        )
         response = self.client.post(
             '/api/auth/login/',
             {
@@ -142,7 +158,7 @@ class MultiTenantSecurityTests(TestCase):
             'tenant_subdomain': 'tenant-a'
         })
         self.assertEqual(response.status_code, 200)
-        self.assertIn('access', response.data)
+        self.assertIn('access_token', response.cookies)
         self.assertIn('tenant', response.data)
         self.assertEqual(response.data['tenant']['subdomain'], 'tenant-a')
     
@@ -248,7 +264,7 @@ class MultiTenantSecurityTests(TestCase):
         # Decodificar JWT y verificar claims
         import jwt
         from django.conf import settings
-        token = response.data['access']
+        token = response.cookies.get('access_token').value
         signing_key = getattr(settings, 'JWT_SIGNING_KEY', settings.SECRET_KEY)
         decoded = jwt.decode(token, signing_key, algorithms=['HS256'])
         

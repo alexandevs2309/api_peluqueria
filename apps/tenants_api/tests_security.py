@@ -36,7 +36,13 @@ class IDORSecurityTests(TestCase):
             is_active=True,
             max_employees=50,
             max_users=100,
-            features={},
+            features={
+                "appointments": True,
+                "cash_register": True,
+                "inventory": True,
+                "basic_reports": True,
+                "advanced_reports": True,
+            },
         )
 
     @staticmethod
@@ -225,6 +231,7 @@ class IDORSecurityTests(TestCase):
         self.assertEqual(response.data["id"], self.employee_a.id)
 
 
+
 class AdminPanelSecurityTests(TestCase):
     """Tests de seguridad del Django Admin."""
 
@@ -238,7 +245,13 @@ class AdminPanelSecurityTests(TestCase):
             is_active=True,
             max_employees=50,
             max_users=100,
-            features={},
+            features={
+                "appointments": True,
+                "cash_register": True,
+                "inventory": True,
+                "basic_reports": True,
+                "advanced_reports": True,
+            },
         )
 
     def setUp(self):

@@ -86,10 +86,13 @@ def role_permission_for(roles):
     """
     Genera dinámicamente un permiso específico para los roles indicados.
     """
+    def __init__(self):
+        RolePermission.__init__(self, allowed_roles=roles)
+
     return type(
         f'RolePermissionFor{"_".join(roles)}',
         (RolePermission,),
         {
-            '__init__': lambda self: RolePermission.__init__(self, allowed_roles=roles)
+            '__init__': __init__
         }
     )

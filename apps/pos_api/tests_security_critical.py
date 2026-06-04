@@ -8,12 +8,26 @@ from rest_framework.test import APIClient
 from rest_framework import status
 from apps.tenants_api.models import Tenant
 from apps.pos_api.models import Sale, Product, CashRegister
+from rest_framework_simplejwt.tokens import RefreshToken
 from decimal import Decimal
 from datetime import timedelta
 from django.utils import timezone
 import threading
 
 User = get_user_model()
+
+
+def authenticate_client(client, user):
+    client.force_authenticate(user=user)
+    if user:
+        refresh = RefreshToken.for_user(user)
+        if getattr(user, 'tenant_id', None):
+            refresh['tenant_id'] = user.tenant_id
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
+        client.cookies['access_token'] = str(refresh.access_token)
+    else:
+        client.credentials()
+        client.cookies.clear()
 
 
 def _setup_rbac(user, tenant):
@@ -82,7 +96,7 @@ class IDORSecurityTests(TestCase):
     
     def test_idor_sale_cross_tenant_blocked(self):
         """CRÍTICO: Usuario de Tenant B NO puede ver ventas de Tenant A"""
-        self.client.force_authenticate(user=self.user_b)
+        authenticate_client(self.client, self.user_b)
         response = self.client.get('/api/pos/sales/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -90,7 +104,7 @@ class IDORSecurityTests(TestCase):
     
     def test_idor_sale_own_tenant_allowed(self):
         """Usuario de Tenant A SÍ puede ver sus propias ventas"""
-        self.client.force_authenticate(user=self.user_a)
+        authenticate_client(self.client, self.user_a)
         response = self.client.get('/api/pos/sales/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -99,7 +113,7 @@ class IDORSecurityTests(TestCase):
     
     def test_idor_cash_register_cross_tenant_blocked(self):
         """CRÍTICO: Usuario de Tenant B NO puede ver cajas de Tenant A"""
-        self.client.force_authenticate(user=self.user_b)
+        authenticate_client(self.client, self.user_b)
         response = self.client.get('/api/pos/cashregisters/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -108,7 +122,7 @@ class IDORSecurityTests(TestCase):
     def test_idor_superuser_sees_all(self):
         """Superusuario SÍ puede ver todas las ventas (sin tenant)"""
         superuser = create_test_user("admin@test.com", is_superuser=True)
-        self.client.force_authenticate(user=superuser)
+        authenticate_client(self.client, superuser)
         response = self.client.get('/api/pos/sales/')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -131,6 +145,9 @@ class RaceConditionStockTests(TransactionTestCase):
     
     def test_concurrent_stock_updates_no_race_condition(self):
         """CRÍTICO: Actualizaciones concurrentes de stock deben ser atómicas"""
+        from django.db import connection
+        if connection.vendor == 'sqlite':
+            self.skipTest("SQLite no soporta select_for_update concurrente real")
         initial_stock = self.product.stock
         errors = []
         
@@ -197,14 +214,14 @@ class RefundTenantValidationTests(TestCase):
     
     def test_refund_cross_tenant_blocked(self):
         """CRÍTICO: Usuario de Tenant B NO puede reembolsar venta de Tenant A"""
-        self.client.force_authenticate(user=self.user_b)
+        authenticate_client(self.client, self.user_b)
         response = self.client.post(f'/api/pos/sales/{self.sale_a.id}/refund/', {'reason': 'Test refund cross tenant'}, format='json')
         
         self.assertIn(response.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_404_NOT_FOUND])
     
     def test_refund_own_tenant_allowed(self):
         """Usuario de Tenant A SÍ puede reembolsar su propia venta"""
-        self.client.force_authenticate(user=self.user_a)
+        authenticate_client(self.client, self.user_a)
         response = self.client.post(f'/api/pos/sales/{self.sale_a.id}/refund/', {'reason': 'Valid refund long enough'}, format='json')
         
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -225,7 +242,7 @@ class DiscountValidationTests(TestCase):
             tenant=self.tenant, user=self.user, initial_cash=1000
         )
         self.client = APIClient()
-        self.client.force_authenticate(user=self.user)
+        authenticate_client(self.client, self.user)
     
     def _sale_data(self, **overrides):
         data = {
@@ -272,14 +289,14 @@ class TenantMiddlewareTests(TestCase):
     
     def test_admin_path_requires_superuser(self):
         """CRÍTICO: Rutas /admin/ requieren superusuario"""
-        self.client.force_authenticate(user=self.regular_user)
+        authenticate_client(self.client, self.regular_user)
         response = self.client.get('/admin/')
         
         self.assertIn(response.status_code, [status.HTTP_403_FORBIDDEN, status.HTTP_302_FOUND])
     
     def test_superuser_can_access_admin(self):
         """Superusuario SÍ puede acceder a /admin/"""
-        self.client.force_authenticate(user=self.superuser)
+        authenticate_client(self.client, self.superuser)
         response = self.client.get('/admin/')
         
         self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_302_FOUND])
@@ -291,7 +308,7 @@ class TenantMiddlewareTests(TestCase):
         self.tenant.access_until = timezone.now() - timedelta(days=10)
         self.tenant.save(update_fields=['subscription_status', 'is_active', 'access_until', 'updated_at'])
 
-        self.client.force_authenticate(user=self.regular_user)
+        authenticate_client(self.client, self.regular_user)
 
         locale_response = self.client.get('/api/tenants/locale/')
         current_response = self.client.get('/api/tenants/current/')
@@ -308,7 +325,7 @@ class TenantMiddlewareTests(TestCase):
         self.tenant.access_until = timezone.now() - timedelta(days=10)
         self.tenant.save(update_fields=['subscription_status', 'is_active', 'access_until', 'updated_at'])
 
-        self.client.force_authenticate(user=self.regular_user)
+        authenticate_client(self.client, self.regular_user)
         response = self.client.get('/api/appointments/appointments/')
 
         self.assertIn(response.status_code, [status.HTTP_402_PAYMENT_REQUIRED, status.HTTP_403_FORBIDDEN])

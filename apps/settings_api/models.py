@@ -5,6 +5,7 @@ from django.utils.translation import gettext_lazy as _
 
 # Importar modelos adicionales
 from .audit_models import SettingsAuditLog
+from .barbershop_models import BarbershopSettings
 
 
 class Branch(models.Model):

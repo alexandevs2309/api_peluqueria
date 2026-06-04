@@ -45,8 +45,11 @@ class Command(BaseCommand):
                 f'[ensure_superadmin] Superadmin creado: {email}'
             ))
         else:
-            # Garantizar flags correctos aunque el usuario ya existiera
+            # Garantizar flags correctos y contraseña actualizada
             changed = False
+            if not user.check_password(password):
+                user.set_password(password)
+                changed = True
             if not user.is_superuser:
                 user.is_superuser = True
                 changed = True
@@ -59,8 +62,13 @@ class Command(BaseCommand):
             if user.tenant is not None:
                 user.tenant = None
                 changed = True
+            
             if changed:
-                user.save(update_fields=['is_superuser', 'is_staff', 'is_active', 'tenant'])
-            self.stdout.write(self.style.SUCCESS(
-                f'[ensure_superadmin] Superadmin ya existe: {email} (flags verificados)'
-            ))
+                user.save()
+                self.stdout.write(self.style.SUCCESS(
+                    f'[ensure_superadmin] Superadmin actualizado: {email}'
+                ))
+            else:
+                self.stdout.write(self.style.SUCCESS(
+                    f'[ensure_superadmin] Superadmin ya está actualizado: {email}'
+                ))

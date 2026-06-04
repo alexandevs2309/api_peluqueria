@@ -49,6 +49,21 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     def perform_create(self, serializer):
         appointment_datetime = serializer.validated_data['date_time']
         stylist = serializer.validated_data['stylist']
+        service = serializer.validated_data.get('service')
+        
+        # Validar que el estilista tiene un perfil de empleado
+        if not hasattr(stylist, 'employee_profile') or not stylist.employee_profile:
+            raise serializers.ValidationError(
+                "El estilista seleccionado no tiene un perfil de empleado"
+            )
+
+        # Validar que el estilista ofrece el servicio
+        if service:
+            from apps.services_api.models import StylistService
+            if not StylistService.objects.filter(stylist=stylist, service=service).exists():
+                raise serializers.ValidationError(
+                    "El estilista no ofrece este servicio"
+                )
         
         # Asignar tenant automáticamente
         tenant = None

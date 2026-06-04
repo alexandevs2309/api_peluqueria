@@ -42,7 +42,7 @@ class ServiceCategoryIdsField(serializers.ListField):
 
 class ServiceSerializer(serializers.ModelSerializer):
     allowed_roles = serializers.PrimaryKeyRelatedField(
-        queryset=lambda: Role.objects.all(),
+        queryset=Role.objects.all(),
         many=True,
         required=False,
         allow_empty=True,

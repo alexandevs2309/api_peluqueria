@@ -32,7 +32,8 @@ from .serializers import (
     ActiveSessionSerializer, RegisterSerializer, LoginSerializer,
     PasswordChangeSerializer, PasswordResetRequestSerializer,
     PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
-    EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input
+    EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input,
+    ResendVerificationSerializer
 )
 from .role_utils import (
     get_effective_role_api,
@@ -705,6 +706,52 @@ class VerifyEmailView(APIView):
             return Response({"detail": "Correo verificado exitosamente."}, status=status.HTTP_200_OK)
         except User.DoesNotExist:
             return Response({"error": "Token inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+class ResendVerificationView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResendVerificationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email'].strip().lower()
+
+        # Respuesta genérica por seguridad (evitar enumeración de usuarios)
+        generic_response = Response(
+            {"detail": "Si el correo está registrado y no verificado, se ha enviado un nuevo enlace de verificación."},
+            status=status.HTTP_200_OK
+        )
+
+        try:
+            # Buscamos todos los usuarios no verificados asociados a este correo
+            users = User.objects.filter(email=email, is_email_verified=False)
+            if not users.exists():
+                return generic_response
+
+            for user in users:
+                if not user.email_verification_token:
+                    user.email_verification_token = uuid.uuid4().hex
+                    user.save(update_fields=['email_verification_token'])
+
+                email_subject = "Verifica tu correo"
+                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+                verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
+                email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
+                email_html = _build_branded_email_html(
+                    user=user,
+                    title=email_subject,
+                    message_html=(
+                        f"<p>Hola {escape(user.full_name or user.email)},</p>"
+                        "<p>Activa tu cuenta para continuar usando la plataforma.</p>"
+                    ),
+                    cta_url=verify_url,
+                    cta_label="Verificar correo"
+                )
+                _deliver_user_email(user, email_subject, email_body, email_html)
+
+            return generic_response
+        except Exception as e:
+            logger.error(f"Error reenviando email de verificación a {email}: {str(e)}")
+            return generic_response
 
 class MFASetupView(APIView):
     permission_classes = [IsAuthenticated]

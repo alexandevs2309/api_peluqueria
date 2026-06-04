@@ -217,6 +217,9 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.save()
         return user
 
+class ResendVerificationSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+
 class MFASetupSerializer(serializers.Serializer):
     pass
 

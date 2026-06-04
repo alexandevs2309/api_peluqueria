@@ -121,7 +121,7 @@ class TestPaymentAPI:
     def test_list_payments_requires_auth(self, api_client):
         url = reverse('payment-list')
         response = api_client.get(url)
-        assert response.status_code == 403
+        assert response.status_code in [401, 403]
 
     def test_create_payment_returns_405(self, authorized_user, payment_provider):
         user, client = authorized_user

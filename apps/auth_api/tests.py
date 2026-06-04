@@ -85,11 +85,12 @@ def test_login_with_mfa():
 
 @pytest.mark.django_db
 def test_logout():
+    from .views import hash_token
     user = UserFactory(is_email_verified=True)
     refresh = RefreshToken.for_user(user)
     ActiveSession.objects.create(
         user=user,
-        refresh_token=str(refresh),
+        refresh_token=hash_token(str(refresh)),
         token_jti=refresh.access_token.get('jti') or 'test-jti',
         ip_address='127.0.0.1',
         user_agent='test-agent',
@@ -124,7 +125,7 @@ def test_change_password():
     }, format='json')
 
     assert login_response.status_code == 200
-    access_token = login_response.data['access']
+    access_token = login_response.cookies['access_token'].value
     
     # Debug: verificar qué usuario está en el token
     print(">>> LOGIN RESPONSE:", login_response.data)
@@ -325,3 +326,27 @@ def test_terminate_session_not_found():
     client.force_authenticate(user)
     response = client.delete(reverse('terminate-session', args=["no-existe-jti"]))
     assert response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_resend_verification_email():
+    user = UserFactory(is_email_verified=False)
+    user.email_verification_token = None
+    user.save()
+
+    client = APIClient()
+    response = client.post(reverse('resend-verification'), {"email": user.email})
+    assert response.status_code == 200
+    assert "Si el correo está registrado" in response.data["detail"]
+
+    user.refresh_from_db()
+    assert user.email_verification_token is not None
+
+
+@pytest.mark.django_db
+def test_resend_verification_email_non_existent():
+    client = APIClient()
+    response = client.post(reverse('resend-verification'), {"email": "nonexistent@example.com"})
+    assert response.status_code == 200
+    assert "Si el correo está registrado" in response.data["detail"]
+

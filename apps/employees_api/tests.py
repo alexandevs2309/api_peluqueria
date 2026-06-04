@@ -17,35 +17,87 @@ from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
 User = get_user_model()
 
 @pytest.fixture
-def admin_client(db):
-    user = UserFactory(is_email_verified=True, is_superuser=True , is_staff=True)
+def admin_tenant(db):
+    plan, _ = SubscriptionPlan.objects.get_or_create(
+        name='basic',
+        defaults={
+            'description': 'Plan base test',
+            'price': 0,
+            'duration_month': 1,
+            'max_employees': 50,
+            'max_users': 50,
+            'is_active': True,
+            'features': {}
+        }
+    )
+    return Tenant.objects.create(
+        name="Admin Test Tenant",
+        subdomain="admin-test-tenant",
+        is_active=True,
+        subscription_plan=plan,
+        subscription_status='active',
+    )
+
+@pytest.fixture
+def admin_user(admin_tenant):
+    user = User.objects.create_user(
+        email='admin.employees@example.com',
+        password='testpassword123',
+        full_name='Admin Employees',
+        tenant=admin_tenant,
+        is_email_verified=True
+    )
+    role, _ = Role.objects.get_or_create(
+        name='Client-Admin',
+        defaults={'scope': 'TENANT', 'description': 'Client admin test role'}
+    )
+    perms = Permission.objects.filter(
+        content_type__app_label='employees_api'
+    )
+    role.permissions.add(*perms)
+    UserRole.objects.get_or_create(user=user, role=role, tenant=admin_tenant)
+    return user
+
+@pytest.fixture
+def admin_client(admin_user):
     client = APIClient()
-    client.force_authenticate(user=user)
+    refresh = RefreshToken.for_user(admin_user)
+    refresh['tenant_id'] = admin_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
+    client.force_authenticate(user=admin_user)
     return client
 
 @pytest.fixture
-def stylist_user(db):
-    user = UserFactory(is_email_verified=True)
+def stylist_user(admin_tenant):
+    user = UserFactory(is_email_verified=True, tenant=admin_tenant)
     stylist_role, _ = Role.objects.get_or_create(name='Stylist')
-    UserRole.objects.get_or_create(user=user, role=stylist_role)
+    UserRole.objects.get_or_create(user=user, role=stylist_role, tenant=admin_tenant)
     return user
 
 @pytest.fixture
 def normal_client(db):
     user = UserFactory(is_email_verified=True)
     client = APIClient()
+    refresh = RefreshToken.for_user(user)
+    refresh['tenant_id'] = user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=user)
     return client
 
 @pytest.mark.django_db
 def test_create_employee_success(admin_client, stylist_user):
-    # Crear plan con 5 empleados permitidos
+    # Asignar plan con 5 empleados permitidos al tenant del stylist_user
     plan = SubscriptionPlan.objects.create(
         name="Pro",
         price=0,
         duration_month=1,
         max_employees=5
     )
+    tenant = stylist_user.tenant
+    tenant.subscription_plan = plan
+    tenant.subscription_status = 'active'
+    tenant.save()
+
     # Suscripción activa para el stylist_user
     UserSubscription.objects.create(
         user=stylist_user,
@@ -58,7 +110,7 @@ def test_create_employee_success(admin_client, stylist_user):
 
     payload = {
         'user_id': stylist_user.id,
-        'specialty': 'Hair Stylist',
+        'specialty': 'stylist',
         'phone': '1234567890',
         'hire_date': '2025-06-01',
         'is_active': True
@@ -86,8 +138,11 @@ def test_list_employees_denied_to_non_admin(normal_client):
 @pytest.mark.django_db
 def test_create_schedule_denied_for_stylist(stylist_user):
     client = APIClient()
+    refresh = RefreshToken.for_user(stylist_user)
+    refresh['tenant_id'] = stylist_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=stylist_user)
-    employee = Employee.objects.create(user=stylist_user, specialty='Stylist')
+    employee = Employee.objects.create(user=stylist_user, specialty='stylist', tenant=stylist_user.tenant)
     payload = {
         'employee': employee.id,
         'day_of_week': 'monday',
@@ -100,11 +155,14 @@ def test_create_schedule_denied_for_stylist(stylist_user):
 @pytest.mark.django_db
 def test_stylist_cannot_create_other_employee(stylist_user):
     client = APIClient()
+    refresh = RefreshToken.for_user(stylist_user)
+    refresh['tenant_id'] = stylist_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=stylist_user)
-    other_user = UserFactory(is_email_verified=True)
+    other_user = UserFactory(is_email_verified=True, tenant=stylist_user.tenant)
     payload = {
         'user_email': other_user.id,
-        'specialty': 'Nail Technician',
+        'specialty': 'barber',
         'phone': '0987654321',
         'hire_date': '2025-06-01',
         'is_active': True
@@ -114,14 +172,18 @@ def test_stylist_cannot_create_other_employee(stylist_user):
 
 @pytest.mark.django_db
 def test_update_employee_denied_for_non_admin(normal_client):
-    employee = Employee.objects.create(user=UserFactory(), specialty="Stylist")
-    response = normal_client.put(reverse("employee-detail", args=[employee.id]), {"specialty": "Updated"})
+    target_user = UserFactory()
+    employee = Employee.objects.create(user=target_user, specialty="stylist", tenant=target_user.tenant)
+    response = normal_client.put(reverse("employee-detail", args=[employee.id]), {"specialty": "stylist"})
     assert response.status_code in [403, 401]
 
 @pytest.mark.django_db
 def test_permission_denied_if_inactive():
     user = UserFactory(is_email_verified=True, is_active=False)
     client = APIClient()
+    refresh = RefreshToken.for_user(user)
+    refresh['tenant_id'] = user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=user)
     response = client.get(reverse("employee-list"))
     assert response.status_code in [403, 401]
@@ -129,8 +191,12 @@ def test_permission_denied_if_inactive():
 @pytest.mark.django_db
 def test_delete_employee_permission_denied_other_roles():
     user = UserFactory(is_email_verified=True)
-    employee = Employee.objects.create(user=UserFactory(), specialty="Stylist")
+    target_user = UserFactory()
+    employee = Employee.objects.create(user=target_user, specialty="stylist", tenant=target_user.tenant)
     client = APIClient()
+    refresh = RefreshToken.for_user(user)
+    refresh['tenant_id'] = user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=user)
     response = client.delete(reverse("employee-detail", args=[employee.id]))
     assert response.status_code in [403, 401]
@@ -289,6 +355,9 @@ def payroll_admin_user(tenant_for_schedules):
 @pytest.fixture
 def payroll_admin_client(payroll_admin_user):
     client = APIClient()
+    refresh = RefreshToken.for_user(payroll_admin_user)
+    refresh['tenant_id'] = payroll_admin_user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     client.force_authenticate(user=payroll_admin_user)
     return client
 

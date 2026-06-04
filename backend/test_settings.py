@@ -25,6 +25,7 @@ INSTALLED_APPS = [
     'mptt',
     'simple_history',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'apps.auth_api',
     'apps.roles_api',
     'apps.tenants_api',
@@ -51,6 +52,7 @@ MIDDLEWARE = [
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'apps.tenants_api.middleware.TenantMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -81,3 +83,47 @@ MIGRATION_MODULES = {app: None for app in [
 CELERY_TASK_ALWAYS_EAGER = True
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 STRIPE_SECRET_KEY = 'sk_test_placeholder_for_tests'
+STRIPE_PUBLISHABLE_KEY = 'pk_test_public_key'
+STRIPE_WEBHOOK_SECRET = 'whsec_test_secret'
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'apps.auth_api.authentication.DualJWTAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_FILTER_BACKENDS': [
+        'django_filters.rest_framework.DjangoFilterBackend',
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'PAGE_SIZE': 100,
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': '10000/hour',
+        'anon': '200/hour',
+        'login': '10/min',
+        'register': '5/hour',
+        'password_reset': '5/hour',
+    },
+}
+
+SIMPLE_JWT = {
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': SECRET_KEY,
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_BLACKLIST_ENABLED': True,
+}
+
+AUTHENTICATION_BACKENDS = [
+    'apps.roles_api.backends.RoleBasedPermissionBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
+

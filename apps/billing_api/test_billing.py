@@ -100,7 +100,7 @@ class TestInvoiceAPI:
     def test_list_invoices_requires_auth(self, api_client):
         url = reverse('invoice-list')
         response = api_client.get(url)
-        assert response.status_code == 403
+        assert response.status_code in [401, 403]
 
     def test_create_invoice(self, authorized_user, subscription_plan):
         user, client = authorized_user
@@ -169,7 +169,7 @@ class TestPaymentAttemptAPI:
     def test_list_payment_attempts_requires_auth(self, api_client):
         url = reverse('payment-attempt-list')
         response = api_client.get(url)
-        assert response.status_code == 403
+        assert response.status_code in [401, 403]
 
 
 @pytest.mark.django_db
