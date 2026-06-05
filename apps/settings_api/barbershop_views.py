@@ -137,6 +137,11 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             return Response({
                 'name': '',
                 'logo': None,
+                'brand_colors': {
+                    'primary': '#2563EB',
+                    'secondary': '#4F46E5',
+                    'accent': '#059669',
+                },
                 'currency': 'COP',
                 'currency_symbol': '$',
                 'business_hours': {
@@ -184,6 +189,11 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             return Response({
                 'name': '',
                 'logo': None,
+                'brand_colors': {
+                    'primary': '#2563EB',
+                    'secondary': '#4F46E5',
+                    'accent': '#059669',
+                },
                 'currency': 'COP',
                 'currency_symbol': '$',
                 'business_hours': {

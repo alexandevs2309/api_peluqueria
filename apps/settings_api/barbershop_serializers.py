@@ -8,12 +8,14 @@ class BarbershopPublicSerializer(serializers.ModelSerializer):
     Solo campos necesarios para operación diaria.
     """
     logo = serializers.SerializerMethodField()
+    brand_colors = serializers.SerializerMethodField()
     
     class Meta:
         model = BarbershopSettings
         fields = [
             'name',
             'logo',
+            'brand_colors',
             'currency',
             'currency_symbol',
             'business_hours',
@@ -23,6 +25,13 @@ class BarbershopPublicSerializer(serializers.ModelSerializer):
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None
 
+    def get_brand_colors(self, obj):
+        return {
+            'primary': obj.primary_color,
+            'secondary': obj.secondary_color,
+            'accent': obj.accent_color,
+        }
+
 
 class BarbershopAdminSerializer(serializers.ModelSerializer):
     """
@@ -30,12 +39,14 @@ class BarbershopAdminSerializer(serializers.ModelSerializer):
     Incluye campos financieros y críticos solo para ClientAdmin.
     """
     logo = serializers.SerializerMethodField()
+    brand_colors = serializers.SerializerMethodField()
     
     class Meta:
         model = BarbershopSettings
         fields = [
             'name',
             'logo',
+            'brand_colors',
             'currency',
             'currency_symbol',
             'business_hours',
@@ -48,6 +59,13 @@ class BarbershopAdminSerializer(serializers.ModelSerializer):
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None
 
+    def get_brand_colors(self, obj):
+        return {
+            'primary': obj.primary_color,
+            'secondary': obj.secondary_color,
+            'accent': obj.accent_color,
+        }
+
 
 class BarbershopWriteSerializer(serializers.ModelSerializer):
     """
@@ -58,11 +76,29 @@ class BarbershopWriteSerializer(serializers.ModelSerializer):
         model = BarbershopSettings
         fields = [
             'name',
+            'primary_color',
+            'secondary_color',
+            'accent_color',
             'currency',
             'currency_symbol',
             'business_hours',
             'contact',
         ]
+
+    def validate_primary_color(self, value):
+        return self._validate_hex_color(value, 'primary_color')
+
+    def validate_secondary_color(self, value):
+        return self._validate_hex_color(value, 'secondary_color')
+
+    def validate_accent_color(self, value):
+        return self._validate_hex_color(value, 'accent_color')
+
+    def _validate_hex_color(self, value, field_name):
+        import re
+        if not re.match(r'^#[0-9A-Fa-f]{6}$', value):
+            raise serializers.ValidationError(f"{field_name} debe ser un color hex válido (ej: #2563EB)")
+        return value
     
     def validate_currency(self, value):
         """Validar formato ISO 4217"""
