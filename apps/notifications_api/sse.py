@@ -78,6 +78,10 @@ async def notification_sse(request):
     if not user or not user.is_authenticated:
         return HttpResponse(status=401)
 
+    import os
+    if os.environ.get("RUNNING_SSE") != "true":
+        return HttpResponse("SSE is only supported under the dedicated ASGI server.", status=501)
+
     async def event_stream():
         channel = REDIS_PUBSUB_CHANNEL_TPL.format(user.id)
 
