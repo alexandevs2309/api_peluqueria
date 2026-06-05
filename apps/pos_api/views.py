@@ -972,7 +972,7 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         ).first()
         
         if not register:
-            return Response({'error': 'No hay caja abierta'}, status=status.HTTP_404_NOT_FOUND)
+            return Response({'register': None, 'is_open': False})
         
         # Asegurar valores no null
         if register.initial_cash is None:

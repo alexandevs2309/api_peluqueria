@@ -294,10 +294,14 @@ class PayrollViewSet(viewsets.ViewSet):
         """Enviar notificación de pago"""
         try:
             from apps.auth_api.tasks import send_email_async
-            
+            from apps.emails.service import EmailRenderer
+
             employee_email = period.employee.user.email
             employee_name = period.employee.user.full_name or employee_email
-            
+
+            tenant = period.employee.tenant
+            business_name = tenant.name if tenant else 'Auron Suite'
+
             subject = f'Pago Procesado - {period.period_display}'
             message = f'''Hola {employee_name},
 
@@ -312,28 +316,47 @@ Detalles:
 
 Saludos,
 Equipo de Nómina'''
-            
+
+            html_body = EmailRenderer.render('payroll_notification.html', {
+                'business_name': business_name,
+                'title': subject,
+                'user_full_name': employee_name,
+                'message': f'Tu pago del período <strong>{period.period_display}</strong> ha sido procesado exitosamente.',
+                'details': [
+                    ('Monto Bruto', f'${period.gross_amount:,.2f}'),
+                    ('Deducciones', f'${period.deductions_total:,.2f}'),
+                    ('Monto Neto', f'${period.net_amount:,.2f}'),
+                    ('Método', period.get_payment_method_display()),
+                    ('Referencia', period.payment_reference or 'N/A'),
+                ],
+            })
+
             send_email_async.delay(
                 subject=subject,
                 message=message,
                 from_email='',
                 recipient_list=[employee_email],
+                html_message=html_body,
             )
-            
+
             period.notification_sent = True
             period.notification_sent_at = timezone.now()
             period.save()
         except Exception as e:
             logger.error("Error sending payment notification for period %s: %s", period.id, e)
-    
+
     def _send_approval_notification(self, period):
         """Enviar notificación de aprobación"""
         try:
             from apps.auth_api.tasks import send_email_async
-            
+            from apps.emails.service import EmailRenderer
+
             employee_email = period.employee.user.email
             employee_name = period.employee.user.full_name or employee_email
-            
+
+            tenant = period.employee.tenant
+            business_name = tenant.name if tenant else 'Auron Suite'
+
             subject = f'Período Aprobado - {period.period_display}'
             message = f'''Hola {employee_name},
 
@@ -345,24 +368,40 @@ El pago será procesado próximamente.
 
 Saludos,
 Equipo de Nómina'''
-            
+
+            html_body = EmailRenderer.render('payroll_notification.html', {
+                'business_name': business_name,
+                'title': subject,
+                'user_full_name': employee_name,
+                'message': f'Tu período de nómina <strong>{period.period_display}</strong> ha sido aprobado.',
+                'details': [
+                    ('Monto a recibir', f'${period.net_amount:,.2f}'),
+                ],
+                'extra_note': 'El pago será procesado próximamente.',
+            })
+
             send_email_async.delay(
                 subject=subject,
                 message=message,
                 from_email='',
                 recipient_list=[employee_email],
+                html_message=html_body,
             )
         except Exception as e:
             logger.error("Error sending approval notification for period %s: %s", period.id, e)
-    
+
     def _send_rejection_notification(self, period):
         """Enviar notificación de rechazo"""
         try:
             from apps.auth_api.tasks import send_email_async
-            
+            from apps.emails.service import EmailRenderer
+
             employee_email = period.employee.user.email
             employee_name = period.employee.user.full_name or employee_email
-            
+
+            tenant = period.employee.tenant
+            business_name = tenant.name if tenant else 'Auron Suite'
+
             subject = f'Período Rechazado - {period.period_display}'
             message = f'''Hola {employee_name},
 
@@ -374,12 +413,24 @@ Por favor, contacta con el departamento de nómina para más información.
 
 Saludos,
 Equipo de Nómina'''
-            
+
+            html_body = EmailRenderer.render('payroll_notification.html', {
+                'business_name': business_name,
+                'title': subject,
+                'user_full_name': employee_name,
+                'message': f'Tu período de nómina <strong>{period.period_display}</strong> ha sido rechazado.',
+                'details': [
+                    ('Motivo', period.rejection_reason),
+                ],
+                'extra_note': 'Contacta con el departamento de nómina para más información.',
+            })
+
             send_email_async.delay(
                 subject=subject,
                 message=message,
                 from_email='',
                 recipient_list=[employee_email],
+                html_message=html_body,
             )
         except Exception as e:
             logger.error("Error sending rejection notification for period %s: %s", period.id, e)

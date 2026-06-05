@@ -18,7 +18,7 @@ from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
 from django.core.mail import send_mail
-from django.conf import settings
+from apps.emails.service import EmailRenderer
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
 from django.conf import settings
@@ -48,7 +48,6 @@ from apps.subscriptions_api.models import SubscriptionPlan
 from apps.roles_api.models import Role, UserRole
 from apps.roles_api.default_permissions import ensure_role_default_permissions
 import re
-from html import escape
 from datetime import timedelta
 from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
@@ -133,30 +132,18 @@ def _resolve_business_branding(user, request=None):
 
     return business_name, logo_url
 
-def _build_branded_email_html(user, title, message_html, cta_url=None, cta_label=None, request=None):
+def _render_email_html(template_name, user, title, content='', cta_url=None, cta_label=None, request=None):
     business_name, logo_url = _resolve_business_branding(user, request=request)
-    safe_title = escape(title)
-    safe_business_name = escape(business_name)
-    logo_block = f'<img src="{escape(logo_url)}" alt="Logo" style="max-height:64px;max-width:180px;object-fit:contain;margin-bottom:12px;" />' if logo_url else ''
-    cta_block = (
-        f'<p style="margin:24px 0;"><a href="{escape(cta_url)}" '
-        'style="background:#2563eb;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;display:inline-block;font-weight:600;">'
-        f'{escape(cta_label or "Abrir enlace")}</a></p>'
-    ) if cta_url else ''
-
-    return f"""
-    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
-      <div style="max-width:620px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
-        <div style="text-align:center;border-bottom:1px solid #e5e7eb;padding-bottom:12px;margin-bottom:16px;">
-          {logo_block}
-          <h2 style="margin:0;color:#111827;">{safe_business_name}</h2>
-        </div>
-        <h3 style="margin:0 0 12px 0;color:#111827;">{safe_title}</h3>
-        <div style="color:#374151;font-size:14px;line-height:1.6;">{message_html}</div>
-        {cta_block}
-      </div>
-    </div>
-    """
+    return EmailRenderer.render(template_name, {
+        'business_name': business_name,
+        'logo_url': logo_url,
+        'title': title,
+        'content': content,
+        'cta_url': cta_url,
+        'cta_label': cta_label or 'Abrir enlace',
+        'user_full_name': user.full_name or user.email,
+        'support_url': getattr(settings, 'SUPPORT_URL', ''),
+    })
 
 def _send_email_resend(to_email, subject, html_body):
     api_key = getattr(settings, 'RESEND_API_KEY', '')
@@ -269,15 +256,12 @@ class RegisterView(generics.CreateAPIView):
         frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
         verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
         email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
-        email_html = _build_branded_email_html(
+        email_html = _render_email_html(
+            'verify_email.html',
             user=user,
             title=email_subject,
-            message_html=(
-                f"<p>Hola {escape(user.full_name or user.email)},</p>"
-                "<p>Activa tu cuenta para continuar usando la plataforma.</p>"
-            ),
             cta_url=verify_url,
-            cta_label="Verificar correo"
+            cta_label='Verificar correo',
         )
         _deliver_user_email(user, email_subject, email_body, email_html)
 
@@ -504,14 +488,11 @@ class ChangePasswordView(generics.UpdateAPIView):
 
             subject = "Cambio de contraseña exitoso"
             text_body = f"Hola {user.full_name}, tu contraseña ha sido cambiada exitosamente."
-            html_body = _build_branded_email_html(
+            html_body = _render_email_html(
+                'password_changed.html',
                 user=user,
                 title=subject,
-                message_html=(
-                    f"<p>Hola {escape(user.full_name or user.email)},</p>"
-                    "<p>Tu contraseña fue actualizada correctamente.</p>"
-                ),
-                request=request
+                request=request,
             )
             _deliver_user_email(user, subject, text_body, html_body)
 
@@ -578,16 +559,13 @@ class PasswordResetRequestView(APIView):
             
             subject = "Restablecer contraseña"
             text_body = f"Hola {user.full_name}, para restablecer tu contraseña haz clic en el siguiente enlace:\n{reset_url}"
-            html_body = _build_branded_email_html(
+            html_body = _render_email_html(
+                'password_reset.html',
                 user=user,
                 title=subject,
-                message_html=(
-                    f"<p>Hola {escape(user.full_name or user.email)},</p>"
-                    "<p>Recibimos una solicitud para restablecer tu contraseña.</p>"
-                ),
                 cta_url=reset_url,
-                cta_label="Restablecer contraseña",
-                request=request
+                cta_label='Restablecer contraseña',
+                request=request,
             )
             try:
                 _deliver_user_email(user, subject, text_body, html_body)
@@ -619,14 +597,11 @@ class PasswordResetConfirmView(APIView):
 
         subject = "Contraseña restablecida"
         text_body = f"Hola {user.full_name}, tu contraseña ha sido restablecida exitosamente."
-        html_body = _build_branded_email_html(
+        html_body = _render_email_html(
+            'password_reset_confirmed.html',
             user=user,
             title=subject,
-            message_html=(
-                f"<p>Hola {escape(user.full_name or user.email)},</p>"
-                "<p>Tu contraseña fue restablecida exitosamente.</p>"
-            ),
-            request=request
+            request=request,
         )
         _deliver_user_email(user, subject, text_body, html_body)
 
@@ -736,15 +711,12 @@ class ResendVerificationView(APIView):
                 frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
                 verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
                 email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
-                email_html = _build_branded_email_html(
+                email_html = _render_email_html(
+                    'verify_email.html',
                     user=user,
                     title=email_subject,
-                    message_html=(
-                        f"<p>Hola {escape(user.full_name or user.email)},</p>"
-                        "<p>Activa tu cuenta para continuar usando la plataforma.</p>"
-                    ),
                     cta_url=verify_url,
-                    cta_label="Verificar correo"
+                    cta_label='Verificar correo',
                 )
                 _deliver_user_email(user, email_subject, email_body, email_html)
 

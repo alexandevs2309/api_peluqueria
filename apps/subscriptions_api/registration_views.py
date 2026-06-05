@@ -297,6 +297,7 @@ def generate_random_password(length=12):
 def send_welcome_email(user, password, tenant):
     """Envía email de bienvenida real con credenciales"""
     from apps.auth_api.tasks import send_email_async
+    from apps.emails.service import EmailRenderer
     from django.conf import settings as django_settings
 
     frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:4200')
@@ -315,24 +316,17 @@ def send_welcome_email(user, password, tenant):
         f"El equipo de BarberSaaS"
     )
 
-    html_body = f"""
-    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
-      <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
-        <h2 style="color:#111827;">¡Bienvenido a BarberSaaS!</h2>
-        <p>Hola <strong>{user.full_name}</strong>,</p>
-        <p>Tu cuenta ha sido creada exitosamente.</p>
-        <div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;">
-          <p style="margin:4px 0;"><strong>Barbería:</strong> {tenant.name}</p>
-          <p style="margin:4px 0;"><strong>Email:</strong> {user.email}</p>
-          <p style="margin:4px 0;"><strong>Contraseña temporal:</strong> <code style="background:#e5e7eb;padding:2px 6px;border-radius:4px;">{password}</code></p>
-        </div>
-        <p style="margin:24px 0;">
-          <a href="{login_url}" style="background:#2563eb;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;display:inline-block;font-weight:600;">Iniciar Sesión</a>
-        </p>
-        <p style="color:#6b7280;font-size:13px;">Por seguridad, cambia tu contraseña después de iniciar sesión.</p>
-      </div>
-    </div>
-    """
+    html_body = EmailRenderer.render('welcome.html', {
+        'business_name': tenant.name or 'BarberSaaS',
+        'title': subject,
+        'user_full_name': user.full_name or user.email,
+        'user_email': user.email,
+        'tenant_name': tenant.name,
+        'temp_password': password,
+        'cta_url': login_url,
+        'cta_label': 'Iniciar Sesión',
+        'support_url': getattr(django_settings, 'SUPPORT_URL', ''),
+    })
 
     logger.info("Sending welcome email to user_id=%s tenant_id=%s", user.id, tenant.id)
     send_email_async.delay(subject, text_body, '', [user.email], html_message=html_body)

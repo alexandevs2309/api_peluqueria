@@ -37,9 +37,10 @@ logger = logging.getLogger(__name__)
 def send_purchase_confirmation(user, tenant, plan, amount, months, payment_method='stripe'):
     """Enviar confirmación de compra de plan"""
     from apps.auth_api.tasks import send_email_async
+    from apps.emails.service import EmailRenderer
     from django.conf import settings as django_settings
 
-    frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:4200')
+    frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
     login_url = f"{frontend_url}/auth/login"
 
     subject = f"¡Pago confirmado! - {plan.get_name_display()}"
@@ -57,29 +58,19 @@ def send_purchase_confirmation(user, tenant, plan, amount, months, payment_metho
         f"El equipo de Auron Suite"
     )
 
-    html_body = f"""
-    <div style="font-family:Arial,sans-serif;background:#f8fafc;padding:20px;">
-      <div style="max-width:600px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:24px;">
-        <div style="text-align:center;margin-bottom:20px;">
-          <h2 style="color:#111827;margin:0;">✅ Pago Confirmado</h2>
-        </div>
-        <p>Hola <strong>{user.full_name}</strong>,</p>
-        <p>Tu pago ha sido procesado exitosamente.</p>
-        <div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;">
-          <p style="margin:4px 0;"><strong>Plan:</strong> {plan.get_name_display()}</p>
-          <p style="margin:4px 0;"><strong>Duración:</strong> {months} mes(es)</p>
-          <p style="margin:4px 0;"><strong>Monto:</strong> ${amount:,.2f}</p>
-          <p style="margin:4px 0;"><strong>Barbería:</strong> {tenant.name}</p>
-          <p style="margin:4px 0;"><strong>Método de pago:</strong> {payment_method}</p>
-        </div>
-        <p>Ya puedes disfrutar de todas las funcionalidades de tu plan.</p>
-        <p style="margin:24px 0;">
-          <a href="{login_url}" style="background:#2563eb;color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;display:inline-block;font-weight:600;">Ir a mi cuenta</a>
-        </p>
-        <p style="color:#6b7280;font-size:13px;">El equipo de Auron Suite</p>
-      </div>
-    </div>
-    """
+    html_body = EmailRenderer.render('purchase_confirmation.html', {
+        'business_name': tenant.name or 'Auron Suite',
+        'title': subject,
+        'user_full_name': user.full_name or user.email,
+        'plan_name': plan.get_name_display(),
+        'plan_duration': f'{months} mes(es)',
+        'plan_amount': f'${amount:,.2f}',
+        'tenant_name': tenant.name,
+        'payment_method': payment_method,
+        'cta_url': login_url,
+        'cta_label': 'Ir a mi cuenta',
+        'support_url': getattr(django_settings, 'SUPPORT_URL', ''),
+    })
 
     logger.info("Sending purchase confirmation to user_id=%s plan=%s amount=%s", user.id, plan.id, amount)
     send_email_async.delay(subject, text_body, '', [user.email], html_message=html_body)
