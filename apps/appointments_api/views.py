@@ -12,7 +12,7 @@ from apps.subscriptions_api.permissions import HasFeaturePermission
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
-from apps.employees_api.models import Employee, WorkSchedule
+from apps.employees_api.models import Employee, EmployeeService, WorkSchedule
 
 User = get_user_model() 
 
@@ -57,10 +57,10 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 "El estilista seleccionado no tiene un perfil de empleado"
             )
 
-        # Validar que el estilista ofrece el servicio
+        # Validar que el estilista ofrece el servicio (via EmployeeService, que es lo que puebla el frontend)
         if service:
-            from apps.services_api.models import StylistService
-            if not StylistService.objects.filter(stylist=stylist, service=service).exists():
+            employee = getattr(stylist, 'employee_profile', None)
+            if not employee or not EmployeeService.objects.filter(employee=employee, service=service).exists():
                 raise serializers.ValidationError(
                     "El estilista no ofrece este servicio"
                 )
@@ -142,7 +142,13 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         current_time = datetime.combine(target_date, start_time_t)
         end_time = datetime.combine(target_date, end_time_t)
         
+        now = timezone.now()
         while current_time < end_time:
+            # Saltar slots que ya pasaron (solo para hoy)
+            if current_time <= now:
+                current_time += timedelta(minutes=30)
+                continue
+
             # Verificar si hay cita en este horario
             existing_appointment = Appointment.objects.filter(
                 stylist=stylist,
