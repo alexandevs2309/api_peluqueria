@@ -712,6 +712,9 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         if user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return WorkSchedule.objects.filter(employee__tenant=tenant)
             return WorkSchedule.objects.all()
 
         if not hasattr(self.request, 'tenant') or not self.request.tenant:
@@ -777,6 +780,9 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
         user = self.request.user
 
         if user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return self.queryset.filter(employee__tenant=tenant)
             return self.queryset
 
         if not hasattr(self.request, 'tenant') or not self.request.tenant:

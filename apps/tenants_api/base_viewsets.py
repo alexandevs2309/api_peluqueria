@@ -30,6 +30,9 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
         queryset = super().get_queryset()
 
         if self.request.user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return queryset.filter(tenant=tenant)
             return queryset
 
         if not hasattr(self.request, 'tenant') or not self.request.tenant:
@@ -68,6 +71,9 @@ class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
         queryset = super().get_queryset()
 
         if self.request.user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return queryset.filter(tenant=tenant)
             return queryset
 
         if not hasattr(self.request, 'tenant') or not self.request.tenant:

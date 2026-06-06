@@ -134,12 +134,11 @@ def low_stock_alerts(request):
         stock__lte=F('min_stock'),
         is_active=True
     )
-    if not request.user.is_superuser:
-        tenant = getattr(request, 'tenant', None) or request.user.tenant
-        if tenant:
-            qs = qs.filter(tenant=tenant)
-        else:
-            qs = Product.objects.none()
+    tenant = getattr(request, 'tenant', None) or (None if request.user.is_superuser else request.user.tenant)
+    if tenant:
+        qs = qs.filter(tenant=tenant)
+    elif not request.user.is_superuser:
+        qs = Product.objects.none()
     
     data = ProductSerializer(qs, many=True).data
     return Response({
@@ -179,6 +178,9 @@ class StockMovementViewSet(TenantScopedReadOnlyViewSet):
         user = self.request.user
         
         if user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return StockMovement.objects.filter(product__tenant=tenant)
             return StockMovement.objects.all()
         
         if not hasattr(self.request, 'tenant') or not self.request.tenant:

@@ -3,7 +3,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status, serializers
 from django.utils import timezone
-from django.db.models import Prefetch
+from django.db.models import Prefetch, Q
 from datetime import datetime, timedelta, time
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
@@ -77,6 +77,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         
         # Validar que no hay conflictos de horario
         conflicting_appointments = Appointment.objects.filter(
+            tenant=tenant,
             stylist=stylist,
             date_time=appointment_datetime,
             status__in=['scheduled', 'completed']
@@ -245,10 +246,14 @@ def calendar_events(request):
     base_filter = Q(date_time__gte=start_date, date_time__lte=end_date)
 
     # Filtro de tenant obligatorio - previene fuga cross-tenant
+    tenant = getattr(request, 'tenant', None)
     if not request.user.is_superuser:
-        if not hasattr(request, 'tenant') or not request.tenant:
+        if not tenant:
             return Response([], status=200)
-        base_filter &= Q(client__tenant=request.tenant)
+        base_filter &= Q(client__tenant=tenant)
+    else:
+        if tenant:
+            base_filter &= Q(client__tenant=tenant)
 
     appointments = Appointment.objects.filter(base_filter).select_related('client', 'stylist', 'service')
 
@@ -310,6 +315,7 @@ def reschedule_appointment(request, pk):
         
         # Validar disponibilidad
         conflicting = Appointment.objects.filter(
+            tenant=appointment.tenant,
             stylist=appointment.stylist,
             date_time=new_dt,
             status__in=['scheduled', 'completed']

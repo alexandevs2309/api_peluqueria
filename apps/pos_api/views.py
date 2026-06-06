@@ -494,9 +494,15 @@ class SaleViewSet(viewsets.ModelViewSet):
         
         # SuperAdmin: acceso total
         if user.is_superuser:
-            qs = Sale.objects.select_related(
-                'client', 'employee', 'user', 'user__tenant', 'tenant'
-            ).prefetch_related('details', 'details__content_type').all()
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                qs = Sale.objects.select_related(
+                    'client', 'employee', 'user', 'user__tenant', 'tenant'
+                ).prefetch_related('details', 'details__content_type').filter(tenant=tenant)
+            else:
+                qs = Sale.objects.select_related(
+                    'client', 'employee', 'user', 'user__tenant', 'tenant'
+                ).prefetch_related('details', 'details__content_type').all()
         else:
             # Usuario sin tenant: sin acceso
             if not hasattr(self.request, 'tenant') or not self.request.tenant:
@@ -631,7 +637,11 @@ class SaleViewSet(viewsets.ModelViewSet):
             # CRÍTICO: Bloquear venta Y validar tenant
             try:
                 if request.user.is_superuser:
-                    sale = Sale.objects.select_for_update().get(pk=pk)
+                    tenant = getattr(request, 'tenant', None)
+                    if tenant:
+                        sale = Sale.objects.select_for_update().get(pk=pk, tenant=tenant)
+                    else:
+                        sale = Sale.objects.select_for_update().get(pk=pk)
                 else:
                     # Usuario sin tenant: sin acceso
                     if not hasattr(request, 'tenant') or not request.tenant:
@@ -948,6 +958,9 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         
         # SuperAdmin: acceso total
         if user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return CashRegister.objects.filter(tenant=tenant)
             return CashRegister.objects.all()
         
         # Usuario sin tenant: sin acceso
@@ -1099,6 +1112,11 @@ class PosConfigurationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         if user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                return PosConfiguration.objects.filter(
+                    Q(tenant=tenant) | Q(tenant__isnull=True, user__tenant=tenant)
+                )
             return PosConfiguration.objects.all()
         tenant = getattr(self.request, 'tenant', None) or getattr(user, 'tenant', None)
         if not tenant:
@@ -1118,10 +1136,14 @@ def daily_summary(request):
         today = timezone.localdate()
         
         # Determinar filtro base según usuario
+        tenant = getattr(request, 'tenant', None)
         if request.user.is_superuser:
-            base_filter = Q()
-        elif hasattr(request, 'tenant') and request.tenant:
-            base_filter = Q(tenant=request.tenant)
+            if tenant:
+                base_filter = Q(tenant=tenant)
+            else:
+                base_filter = Q()
+        elif tenant:
+            base_filter = Q(tenant=tenant)
         else:
             return Response({
                 'date': today,
@@ -1133,11 +1155,13 @@ def daily_summary(request):
             })
         
         # Obtener sesión de caja abierta
-        open_register = CashRegister.objects.filter(
-            user=request.user,
-            tenant=request.tenant,
-            is_open=True
-        ).first()
+        open_register = None
+        if tenant:
+            open_register = CashRegister.objects.filter(
+                user=request.user,
+                tenant=tenant,
+                is_open=True
+            ).first()
         
         if open_register:
             # Filtrar ventas de esta sesión de caja
@@ -1219,16 +1243,21 @@ def dashboard_stats(request):
     else:
         end_date = today
 
-    cache_key = f'dashboard_stats_{request.user.id}_{getattr(request.user.tenant, "id", "none")}_{start_date}_{end_date}'
+    tenant = getattr(request, 'tenant', None)
+    tenant_id = getattr(tenant, 'id', None) or getattr(request.user.tenant, 'id', 'none')
+    cache_key = f'dashboard_stats_{request.user.id}_{tenant_id}_{start_date}_{end_date}'
     cached_data = cache.get(cache_key)
     if cached_data:
         return Response(cached_data)
 
     base_filter = Q(pk__isnull=True)
     if request.user.is_superuser:
-        base_filter = Q(user=request.user) | Q(employee__user=request.user)
-    elif hasattr(request, 'tenant') and request.tenant:
-        base_filter = Q(tenant=request.tenant)
+        if tenant:
+            base_filter = Q(tenant=tenant)
+        else:
+            base_filter = Q()
+    elif tenant:
+        base_filter = Q(tenant=tenant)
 
     range_filter = base_filter & Q(date_time__date__gte=start_date) & Q(date_time__date__lte=end_date)
     today_filter = base_filter & Q(date_time__date=today)
