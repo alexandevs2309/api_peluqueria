@@ -11,6 +11,7 @@ from django.views.decorators.http import require_http_methods
 from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 from apps.settings_api.views import SystemSettingsRetrieveUpdateView, SystemSettingsResetView
+from ops.monitoring.health_views import cron_run
 
 
 @require_http_methods(["GET"])
@@ -78,6 +79,7 @@ urlpatterns = [
 
         path("healthz/", health_check, name="health_check"),
         path("sentry-test/", sentry_test, name="sentry_test"),
+        path("cron/run/", cron_run, name="cron_run"),
     ])),
 ]
 

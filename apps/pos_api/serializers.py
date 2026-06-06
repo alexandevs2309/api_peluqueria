@@ -143,7 +143,7 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         read_only_fields = ['user', 'user_name', 'opened_at', 'closed_at', 'sales_amount']
     
     def get_sales_amount(self, obj):
-        """Calcular ventas del día"""
+        """Calcular ventas en efectivo asociadas a esta sesión de caja"""
         from django.db.models import Sum
         from .models import Sale
         
@@ -151,9 +151,10 @@ class CashRegisterSerializer(serializers.ModelSerializer):
             return 0.0
         
         sales_total = Sale.objects.filter(
-            user=obj.user,
-            date_time__date=obj.opened_at.date()
-        ).aggregate(total=Sum('total'))['total'] or 0
+            cash_register=obj,
+            payment_method='cash',
+            status='confirmed'
+        ).aggregate(total=Sum('paid'))['total'] or 0
         
         return float(sales_total)
 

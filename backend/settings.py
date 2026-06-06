@@ -391,6 +391,10 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.notifications_api.tasks.notify_upcoming_appointments',
         'schedule': crontab(minute=0),  # Cada hora
     },
+    'send-appointment-reminders': {
+        'task': 'apps.notifications_api.tasks.send_appointment_reminders',
+        'schedule': crontab(hour=20, minute=0),  # Diario a las 8:00 PM (avisa para mañana)
+    },
     'cleanup-old-notifications': {
         'task': 'apps.notifications_api.tasks.cleanup_old_notifications',
         'schedule': crontab(hour=3, minute=0, day_of_week=0),  # Domingos a las 3:00 AM
@@ -405,6 +409,7 @@ CELERY_BEAT_SCHEDULE = {
 # Financial reconciliation alerts
 FINANCE_ALERT_EMAILS = env.list('FINANCE_ALERT_EMAILS', default=['finance@yourdomain.com'])
 STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
+CRON_API_KEY = env('CRON_API_KEY', default='')
 
 
 

@@ -33,18 +33,22 @@ def appointment_created(sender, instance, created, **kwargs):
     """Enviar notificación cuando se crea una cita"""
     if created:
         from .models import InAppNotification
+        stylist = instance.stylist
+        client = instance.client
+        client_name = client.full_name if client else 'Cliente'
         
-        # Notificación in-app para el usuario que creó la cita
-        InAppNotification.objects.create(
-            recipient=instance.stylist,
-            type='appointment',
-            title='Nueva cita programada',
-            message=f"Cita con {instance.client.full_name} el {instance.date_time.strftime('%d/%m/%Y a las %H:%M')}"
-        )
+        # Notificación in-app para el estilista
+        if stylist:
+            InAppNotification.objects.create(
+                recipient=stylist,
+                type='appointment',
+                title='Nueva cita programada',
+                message=f"Cita con {client_name} el {instance.date_time.strftime('%d/%m/%Y a las %H:%M')}"
+            )
         
-        # Notificación SMS al cliente (async via Celery)
-        if instance.client and instance.client.phone:
-            phone = instance.client.phone
+        # Notificación SMS al cliente
+        if client and client.phone:
+            phone = client.phone
             if not phone.startswith('+'):
                 phone = f'+1{phone}' if phone.isdigit() else phone
             from .tasks import send_sms
@@ -56,7 +60,7 @@ def appointment_created(sender, instance, created, **kwargs):
         # Notificación por email (si existe template)
         service = NotificationService()
         try:
-            tenant = getattr(instance.stylist, 'tenant', None) if instance.stylist else None
+            tenant = getattr(stylist, 'tenant', None) if stylist else None
             template = NotificationTemplate.objects.get(
                 Q(notification_type='appointment_confirmation'),
                 Q(type='email'),
@@ -65,55 +69,64 @@ def appointment_created(sender, instance, created, **kwargs):
             )
             
             context = {
-                'client_name': instance.client.full_name,
+                'client_name': client_name,
                 'appointment_date': instance.date_time.strftime('%d/%m/%Y'),
                 'appointment_time': instance.date_time.strftime('%H:%M'),
-                'stylist_name': instance.stylist.full_name if instance.stylist else 'Por asignar',
+                'stylist_name': stylist.full_name if stylist else 'Por asignar',
                 'service_name': instance.service.name if instance.service else 'Por definir'
             }
             
-            service.create_notification(
-                recipient=instance.client.user if hasattr(instance.client, 'user') else None,
-                template=template,
-                context_data=context
-            )
+            recipient_user = client.user if client and hasattr(client, 'user') else None
+            if recipient_user:
+                service.create_notification(
+                    recipient=recipient_user,
+                    template=template,
+                    context_data=context
+                )
         except NotificationTemplate.DoesNotExist:
             pass
 
 @receiver(pre_save, sender='appointments_api.Appointment')
 def appointment_status_changed(sender, instance, **kwargs):
     """Notificar cuando cambia el estado de una cita"""
-    if instance.pk:  # Solo si la cita ya existe
-        try:
-            from .models import InAppNotification
-            old_instance = sender.objects.get(pk=instance.pk)
-            
-            # Detectar cambio de estado
-            if old_instance.status != instance.status:
-                status_messages = {
-                    'completed': f"✅ Cita completada con {instance.client.full_name}",
-                    'cancelled': f"❌ Cita cancelada: {instance.client.full_name} - {instance.date_time.strftime('%d/%m/%Y %H:%M')}",
-                    'no_show': f"🚫 Cliente no asistió: {instance.client.full_name} - {instance.date_time.strftime('%d/%m/%Y %H:%M')}",
-                }
-                
-                if instance.status in status_messages:
-                    InAppNotification.objects.create(
-                        recipient=instance.stylist,
-                        type='appointment',
-                        title=f'Cambio de estado: {instance.get_status_display()}',
-                        message=status_messages[instance.status]
-                    )
-            
-            # Detectar reprogramación
-            if old_instance.date_time != instance.date_time:
+    if not instance.pk:
+        return
+    try:
+        from .models import InAppNotification
+        old_instance = sender.objects.get(pk=instance.pk)
+        stylist = instance.stylist
+        client = instance.client
+        client_name = client.full_name if client else 'Cliente'
+
+        if not stylist:
+            return
+
+        # Detectar cambio de estado
+        if old_instance.status != instance.status:
+            status_messages = {
+                'completed': f"Cita completada con {client_name}",
+                'cancelled': f"Cita cancelada: {client_name} - {instance.date_time.strftime('%d/%m/%Y %H:%M')}",
+                'no_show': f"Cliente no asistió: {client_name} - {instance.date_time.strftime('%d/%m/%Y %H:%M')}",
+            }
+
+            if instance.status in status_messages:
                 InAppNotification.objects.create(
-                    recipient=instance.stylist,
+                    recipient=stylist,
                     type='appointment',
-                    title='📅 Cita reprogramada',
-                    message=f"Cita con {instance.client.full_name} movida de {old_instance.date_time.strftime('%d/%m/%Y %H:%M')} a {instance.date_time.strftime('%d/%m/%Y %H:%M')}"
+                    title=f'Cambio de estado: {instance.get_status_display()}',
+                    message=status_messages[instance.status]
                 )
-        except sender.DoesNotExist:
-            pass
+
+        # Detectar reprogramación
+        if old_instance.date_time != instance.date_time:
+            InAppNotification.objects.create(
+                recipient=stylist,
+                type='appointment',
+                title='Cita reprogramada',
+                message=f"Cita con {client_name} movida de {old_instance.date_time.strftime('%d/%m/%Y %H:%M')} a {instance.date_time.strftime('%d/%m/%Y %H:%M')}"
+            )
+    except sender.DoesNotExist:
+        pass
 
 @receiver(post_save, sender='pos_api.Sale')
 def sale_completed(sender, instance, created, **kwargs):
@@ -227,55 +240,4 @@ def subscription_expiring(sender, instance, **kwargs):
             except NotificationTemplate.DoesNotExist:
                 pass
 
-# Función para crear recordatorios de citas
-def create_appointment_reminders():
-    """Función para ejecutar con Celery - crear recordatorios de citas"""
-    from apps.appointments_api.models import Appointment
-    
-    # Citas para mañana
-    tomorrow = timezone.now().date() + timedelta(days=1)
-    appointments = Appointment.objects.filter(
-        date_time__date=tomorrow,
-        status='scheduled'
-    ).select_related('client', 'stylist', 'service')
-    
-    service = NotificationService()
-    
-    for appointment in appointments:
-        # SMS recordatorio (async via Celery)
-        if appointment.client and appointment.client.phone:
-            phone = appointment.client.phone
-            if not phone.startswith('+'):
-                phone = f'+1{phone}' if phone.isdigit() else phone
-            from .tasks import send_sms
-            send_sms.delay(
-                phone=phone,
-                message=f"Recordatorio: Tu cita en la barbería es mañana {appointment.date_time.strftime('%d/%m/%Y')} a las {appointment.date_time.strftime('%H:%M')}. Te esperamos!"
-            )
 
-        # Buscar template para el tenant del stylist (o global)
-        tenant = getattr(appointment.stylist, 'tenant', None) if appointment.stylist else None
-        try:
-            template = NotificationTemplate.objects.get(
-                Q(notification_type='appointment_reminder'),
-                Q(type='email'),
-                Q(tenant=tenant) | Q(tenant__isnull=True),
-                is_active=True
-            )
-        except NotificationTemplate.DoesNotExist:
-            continue
-
-        context = {
-            'client_name': appointment.client.full_name,
-            'appointment_date': appointment.date_time.strftime('%d/%m/%Y'),
-            'appointment_time': appointment.date_time.strftime('%H:%M'),
-            'stylist_name': appointment.stylist.full_name if appointment.stylist else 'Por asignar',
-            'service_name': appointment.service.name if appointment.service else 'Por definir'
-        }
-        
-        service.create_notification(
-            recipient=appointment.client.user if hasattr(appointment.client, 'user') else None,
-            template=template,
-            context_data=context,
-            scheduled_at=timezone.now() + timedelta(hours=1)  # Enviar en 1 hora
-        )
