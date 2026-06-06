@@ -33,7 +33,6 @@ class Appointment(models.Model):
         ]
         verbose_name = 'Cita'
         verbose_name_plural = 'Citas'
-        unique_together = ['stylist', 'date_time']
         ordering = ['-date_time']
         indexes = [
             models.Index(fields=['tenant', 'date_time']),
