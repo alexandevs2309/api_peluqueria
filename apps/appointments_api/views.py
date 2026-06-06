@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status, serializers
 from django.utils import timezone
 from django.db.models import Prefetch
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
@@ -131,15 +131,16 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         ).first()
         
         if not work_schedule:
-            return Response({
-                'available_slots': [],
-                'message': f'El estilista no trabaja los {day_of_week}s'
-            })
-        
+            start_time_t = time(9, 0)
+            end_time_t = time(18, 0)
+        else:
+            start_time_t = work_schedule.start_time
+            end_time_t = work_schedule.end_time
+
         # Generar slots de 30 minutos
         slots = []
-        current_time = datetime.combine(target_date, work_schedule.start_time)
-        end_time = datetime.combine(target_date, work_schedule.end_time)
+        current_time = datetime.combine(target_date, start_time_t)
+        end_time = datetime.combine(target_date, end_time_t)
         
         while current_time < end_time:
             # Verificar si hay cita en este horario
