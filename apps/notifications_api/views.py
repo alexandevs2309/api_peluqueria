@@ -23,13 +23,6 @@ class NotificationListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        tenant = getattr(self.request, 'tenant', getattr(user, 'tenant', None))
-        
-        # Administradores ven todas las notificaciones
-        if _can_manage_tenant_notifications(user, tenant=tenant):
-            return InAppNotification.objects.filter(recipient__tenant=tenant).order_by('-created_at')
-        
-        # Usuarios normales solo ven sus notificaciones
         return InAppNotification.objects.filter(recipient=user).order_by('-created_at')
 
 class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -45,13 +38,6 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        tenant = getattr(self.request, 'tenant', getattr(user, 'tenant', None))
-        
-        # Administradores pueden actualizar todas las notificaciones de su tenant
-        if _can_manage_tenant_notifications(user, tenant=tenant):
-            return InAppNotification.objects.filter(recipient__tenant=tenant)
-        
-        # Usuarios normales solo sus notificaciones
         return InAppNotification.objects.filter(recipient=user)
 
 class NotificationTemplateListView(generics.ListCreateAPIView):
