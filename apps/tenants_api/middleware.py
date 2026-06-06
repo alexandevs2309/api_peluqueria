@@ -74,8 +74,8 @@ class TenantMiddleware(MiddlewareMixin):
             'message': message,
             'tenant_id': getattr(tenant, 'id', None),
             'tenant_subdomain': getattr(tenant, 'subdomain', None),
-            'support_email': getattr(settings, 'SUPPORT_EMAIL', 'soporte@auron-suite.com'),
-            'support_url': getattr(settings, 'SUPPORT_URL', 'https://auron-suite.com/soporte'),
+            'support_email': getattr(settings, 'SUPPORT_EMAIL', 'soporte@auronsuite.com'),
+            'support_url': getattr(settings, 'SUPPORT_URL', 'https://auronsuite.com/soporte'),
         }, status=403)
 
     @staticmethod

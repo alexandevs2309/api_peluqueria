@@ -49,8 +49,8 @@ if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):
         release=env('SENTRY_RELEASE', default='1.0.0'),
     )
 
-SUPPORT_EMAIL = env('SUPPORT_EMAIL', default='soporte@auron-suite.com')
-SUPPORT_URL = env('SUPPORT_URL', default='https://auron-suite.com/soporte')
+SUPPORT_EMAIL = env('SUPPORT_EMAIL', default='soporte@auronsuite.com')
+SUPPORT_URL = env('SUPPORT_URL', default='https://auronsuite.com/soporte')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=False)

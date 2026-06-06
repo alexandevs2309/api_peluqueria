@@ -676,7 +676,7 @@ class OnboardingView(APIView):
     @action(detail=False, methods=['post'])
     def activate_subscription(self, request):
         """Activar suscripción después de pago"""
-        tenant = getattr(request, 'tenant', None)
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
         
@@ -1151,7 +1151,7 @@ class RenewSubscriptionView(APIView):
                 'is_superadmin': True
             }, status=200)
             
-        tenant = getattr(request, 'tenant', request.user.tenant)
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
         
@@ -1179,7 +1179,7 @@ class RenewSubscriptionView(APIView):
         if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
             return Response({'error': 'SuperAdmin does not need subscription renewal'}, status=400)
             
-        tenant = getattr(request, 'tenant', request.user.tenant)
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
         if not tenant:
             return Response({'error': 'No tenant found'}, status=400)
 

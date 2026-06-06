@@ -50,6 +50,7 @@ services:
     volumes:
       - ./apps:/code/apps
       - ./backend:/code/backend
+      - ./ops:/code/ops
       - static_volume:/code/staticfiles
       - media_volume:/code/media
     env_file:
