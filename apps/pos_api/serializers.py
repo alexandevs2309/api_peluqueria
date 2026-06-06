@@ -102,7 +102,7 @@ class SaleSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         validated_data['user'] = user
 
-        appointment = validated_data.get('appointment')
+        appointment = validated_data.pop('appointment', None)
         sale = Sale.objects.create(**validated_data)
 
         # Crear detalles

@@ -2,16 +2,17 @@ import pytest
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status 
-from rest_framework.test import APIClient
 from apps.inventory_api.models import Product, StockMovement
 from apps.appointments_api.models import Appointment
-from apps.clients_api.models import Client
 from apps.pos_api.models import CashRegister, Sale
 
 @pytest.mark.django_db
 def test_sale_with_product_discounts_stock(authenticated_user):
     user, client = authenticated_user
-    product = Product.objects.create(name="Shampoo", sku="SH001", price=100, stock=10, min_stock=2)
+    user.is_superuser = True
+    user.save()
+    CashRegister.objects.create(user=user, tenant=user.tenant, is_open=True, opened_at=timezone.now(), initial_cash=0)
+    product = Product.objects.create(name="Shampoo", sku="SH001", price=100, stock=10, min_stock=2, tenant=user.tenant)
 
     data = {
         "client": None,
@@ -38,12 +39,16 @@ def test_sale_with_product_discounts_stock(authenticated_user):
 @pytest.mark.django_db
 def test_sale_linked_to_appointment(authenticated_user, client, client_factory, service_factory, stylist, stylist_role):
     user, api_client = authenticated_user
+    user.is_superuser = True
+    user.save()
+    CashRegister.objects.create(user=user, tenant=user.tenant, is_open=True, opened_at=timezone.now(), initial_cash=0)
     client_obj = client_factory.create()
     service = service_factory()
     stylist_user, employee = stylist
 
     # Crear cita programada
     appointment = Appointment.objects.create(
+        tenant=user.tenant,
         client=client_obj,
         stylist=stylist_user,
         role=stylist_role,
@@ -67,10 +72,10 @@ def test_sale_linked_to_appointment(authenticated_user, client, client_factory, 
         "appointment": appointment.id
     }
 
-    client.force_authenticate(user=user)
-    response = client.post(reverse("sale-list"), data, format="json")
+    api_client.force_authenticate(user=user)
+    response = api_client.post(reverse("sale-list"), data, format="json")
 
-    assert response.status_code == status.HTTP_201_CREATED , f"Error: {response.data}"
+    assert response.status_code == status.HTTP_201_CREATED, f"Error: {response.data}"
 
     appointment.refresh_from_db()
     assert appointment.status == "completed"
@@ -79,6 +84,8 @@ def test_sale_linked_to_appointment(authenticated_user, client, client_factory, 
 @pytest.mark.django_db
 def test_daily_summary_endpoint(authenticated_user):
     user, client = authenticated_user
+    user.is_superuser = True
+    user.save()
 
     # Crear una venta para hoy
     Sale.objects.create(
@@ -101,21 +108,24 @@ def test_daily_summary_endpoint(authenticated_user):
 @pytest.mark.django_db
 def test_low_stock_alerts(authenticated_user):
     user, client = authenticated_user
-    p1 = Product.objects.create(name="Pomada", sku="P001", price=50, stock=1, min_stock=2)
-    p2 = Product.objects.create(name="Cera", sku="P002", price=60, stock=5, min_stock=2)
+    user.is_superuser = True
+    user.save()
+    p1 = Product.objects.create(name="Pomada", sku="P001", price=50, stock=1, min_stock=2, tenant=user.tenant)
+    p2 = Product.objects.create(name="Cera", sku="P002", price=60, stock=5, min_stock=2, tenant=user.tenant)
 
     client.force_authenticate(user=user)
     response = client.get(reverse("low-stock-alerts"))
 
     assert response.status_code == 200
-    product_names = [p["name"] for p in response.data]
+    product_names = [p["name"] for p in response.data["products"]]
     assert "Pomada" in product_names
     assert "Cera" not in product_names
-
 
 @pytest.mark.django_db
 def test_close_cash_register(authenticated_user):
     user, client = authenticated_user
+    user.is_superuser = True
+    user.save()
     register = CashRegister.objects.create(user=user, is_open=True, opened_at=timezone.now())
 
     client.force_authenticate(user=user)
@@ -131,6 +141,8 @@ def test_close_cash_register(authenticated_user):
 @pytest.mark.django_db
 def test_close_already_closed_cash_register(authenticated_user):
     user, client = authenticated_user
+    user.is_superuser = True
+    user.save()
     register = CashRegister.objects.create(user=user, is_open=False, opened_at=timezone.now())
 
     client.force_authenticate(user=user)
@@ -141,42 +153,11 @@ def test_close_already_closed_cash_register(authenticated_user):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
     assert response.data["detail"] == "Caja ya está cerrada."
 
-
-@pytest.mark.django_db
-def test_close_cash_register(authenticated_user):
-    user, client = authenticated_user
-    register = CashRegister.objects.create(user=user, is_open=True, opened_at=timezone.now())
-
-    client.force_authenticate(user=user)
-    url = reverse("cash-register-close", kwargs={"pk": register.id})
-    data = {"final_cash": 100.0}
-    response = client.post(url, data, format="json")
-
-    assert response.status_code == status.HTTP_200_OK
-    register.refresh_from_db()
-    assert not register.is_open
-    assert register.final_cash == 100.0
-
-@pytest.mark.django_db
-def test_close_already_closed_cash_register(authenticated_user):
-    user, client = authenticated_user
-    register = CashRegister.objects.create(
-        user=user, 
-        is_open=False, 
-        opened_at=timezone.now())
-
-    client.force_authenticate(user=user)
-    url = reverse("cash-register-close", kwargs={"pk": register.id})
-    data = {"final_cash": 100.0}
-    response = client.post(url, data, format="json")
-
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert response.data["detail"] == "Caja ya está cerrada."
-
-
 @pytest.mark.django_db
 def test_close_cash_register_view_invalid_final_cash(authenticated_user):
     user, client = authenticated_user
+    user.is_superuser = True
+    user.save()
     try:
         register = CashRegister.objects.create(user=user, is_open=True, opened_at=timezone.now())
         

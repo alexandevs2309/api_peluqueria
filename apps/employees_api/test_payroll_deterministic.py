@@ -39,8 +39,8 @@ class TestPayrollDeterministic:
         period = PayrollPeriod.objects.create(
             employee=employee,
             period_type='biweekly',
-            period_start=timezone.now().date(),
-            period_end=timezone.now().date() + timedelta(days=14),
+            period_start=timezone.localdate(),
+            period_end=timezone.localdate() + timedelta(days=14),
             status='open',
             base_salary=Decimal('1000.00'),
             commission_earnings=Decimal('0.00'),
@@ -277,7 +277,7 @@ class TestPayrollDeterministic:
         # Crear historial con tasa diferente
         EmployeeCompensationHistory.objects.create(
             employee=employee,
-            effective_date=timezone.now().date() - timedelta(days=1),
+            effective_date=timezone.localdate() - timedelta(days=1),
             payment_type='commission',
             commission_rate=Decimal('15.00'),
             fixed_salary=Decimal('0.00')

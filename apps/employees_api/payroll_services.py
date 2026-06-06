@@ -21,10 +21,19 @@ class PayrollCalculationService:
         from apps.employees_api.adjustment_models import CommissionAdjustment
         
         # 1. Sumar comisiones desde snapshots de ventas
+        import datetime
+        from django.utils.timezone import make_aware
+        
+        start_dt = make_aware(datetime.datetime.combine(period.period_start, datetime.time.min))
+        end_dt = make_aware(datetime.datetime.combine(period.period_end, datetime.time.max))
+        print(f"\nDEBUG: start_dt={start_dt}, end_dt={end_dt}")
+        for s in Sale.objects.all():
+            print(f"DEBUG SALE: id={s.id}, employee_id={s.employee_id}, date={s.date_time}, status={s.status}, snapshot={s.commission_amount_snapshot}, user_tenant={s.user.tenant_id if s.user else None}, tenant_id={s.tenant_id}")
+        
         sales_commission = Sale.objects.filter(
             employee=period.employee,
-            date_time__date__gte=period.period_start,
-            date_time__date__lte=period.period_end,
+            date_time__gte=start_dt,
+            date_time__lte=end_dt,
             status='confirmed',
             commission_amount_snapshot__isnull=False,
             user__tenant=period.employee.tenant  # FIX 4: Filtro explícito por tenant

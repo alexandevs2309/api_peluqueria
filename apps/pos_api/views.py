@@ -6,6 +6,7 @@ from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from django.utils import timezone
 from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
 from django.db.models import Sum, Q
@@ -96,7 +97,7 @@ class SaleViewSet(viewsets.ModelViewSet):
             raise
 
     def _validate_cash_register(self):
-        tenant = getattr(self.request, 'tenant', self.request.user.tenant)
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         open_register = CashRegister.objects.filter(
             user=self.request.user,
             tenant=tenant,
@@ -289,7 +290,8 @@ class SaleViewSet(viewsets.ModelViewSet):
                         try:
                             object_id = int(detail.get('object_id'))
                             # LOCK: Bloquear fila para actualización
-                            product = Product.objects.select_for_update().get(id=object_id, tenant=self.request.tenant)
+                            tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+                            product = Product.objects.select_for_update().get(id=object_id, tenant=tenant)
                             
                             if not product.is_active:
                                 raise serializers.ValidationError(f"El producto {product.name} no está activo")
@@ -353,7 +355,7 @@ class SaleViewSet(viewsets.ModelViewSet):
                 active_period = self._get_or_create_active_period(sale_employee)
             
             # Guardar venta - asignar sesión de caja Y tenant
-            tenant_to_assign = self.request.tenant if hasattr(self.request, 'tenant') else None
+            tenant_to_assign = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
             sale = serializer.save(
                 user=self.request.user,
                 employee=sale_employee,
@@ -596,7 +598,7 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def current_register(self, request):
-        tenant = getattr(request, 'tenant', request.user.tenant)
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
         today = timezone.localdate()
         register = CashRegister.objects.filter(
             user=request.user,
@@ -1039,8 +1041,8 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
         ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
         return cash_sales
 # Nuevos ViewSets
-class PromotionViewSet(viewsets.ModelViewSet):
-    queryset = Promotion.objects.none()
+class PromotionViewSet(TenantScopedViewSet):
+    queryset = Promotion.objects.all()
     serializer_class = PromotionSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'cash_register'
@@ -1053,14 +1055,6 @@ class PromotionViewSet(viewsets.ModelViewSet):
         'destroy': 'pos_api.delete_promotion',
         'apply_promotion': 'pos_api.view_promotion',
     }
-    
-    def get_queryset(self):
-        qs = Promotion.objects.filter(is_active=True)
-        if self.request.user.is_superuser:
-            return qs
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return qs.none()
-        return qs.filter(tenant=self.request.tenant)
     
     @action(detail=True, methods=['post'])
     def apply_promotion(self, request, pk=None):
