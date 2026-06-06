@@ -142,10 +142,11 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         current_time = datetime.combine(target_date, start_time_t)
         end_time = datetime.combine(target_date, end_time_t)
         
-        now = timezone.now()
+        now_naive = timezone.make_naive(timezone.now())
+        is_today = target_date == now_naive.date()
         while current_time < end_time:
             # Saltar slots que ya pasaron (solo para hoy)
-            if current_time <= now:
+            if is_today and current_time.time() <= now_naive.time():
                 current_time += timedelta(minutes=30)
                 continue
 
