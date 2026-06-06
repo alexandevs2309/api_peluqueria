@@ -144,19 +144,9 @@ class CashRegisterSerializer(serializers.ModelSerializer):
     
     def get_sales_amount(self, obj):
         """Calcular ventas en efectivo asociadas a esta sesión de caja"""
-        from django.db.models import Sum
-        from .models import Sale
-        
         if not obj.opened_at:
             return 0.0
-        
-        sales_total = Sale.objects.filter(
-            cash_register=obj,
-            payment_method='cash',
-            status='confirmed'
-        ).aggregate(total=Sum('paid'))['total'] or 0
-        
-        return float(sales_total)
+        return obj.sales_amount
 
     def get_user_name(self, obj):
         return getattr(getattr(obj, 'user', None), 'full_name', None) or getattr(getattr(obj, 'user', None), 'email', None)

@@ -964,13 +964,11 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def current(self, request):
         """Obtener la caja abierta actual del usuario"""
-        today = timezone.localdate()
         tenant = self._get_request_tenant()
         register = CashRegister.objects.filter(
             tenant=tenant,
             user=request.user,
-            is_open=True,
-            opened_at__date=today
+            is_open=True
         ).first()
         
         if not register:
@@ -1138,8 +1136,7 @@ def daily_summary(request):
         open_register = CashRegister.objects.filter(
             user=request.user,
             tenant=request.tenant,
-            is_open=True,
-            opened_at__date=today
+            is_open=True
         ).first()
         
         if open_register:

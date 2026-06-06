@@ -258,18 +258,20 @@ class CashRegister(models.Model):
     
     @property
     def sales_amount(self):
-        """Calcular ventas del día en el mismo tenant"""
-        from django.db.models import Sum, Q
+        """Calcular ventas en efectivo asociadas a esta sesión de caja"""
+        from django.db.models import Sum
+        from .models import Payment
         if not self.opened_at:
             return 0.00
         
-        # Incluir ventas con empleado del tenant y ventas sin empleado del usuario
-        sales_total = Sale.objects.filter(
-            Q(employee__tenant=self.user.tenant) | Q(user__tenant=self.user.tenant, employee__isnull=True),
-            date_time__date=self.opened_at.date()
-        ).aggregate(total=Sum('total'))['total'] or 0
+        sales_total = Payment.objects.filter(
+            sale__cash_register=self,
+            method='cash',
+            sale__status='confirmed'
+        ).aggregate(total=Sum('amount'))['total'] or 0
         
         return float(sales_total)
+
     
     @property
     def display_amount(self):
