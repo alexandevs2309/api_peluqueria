@@ -119,15 +119,13 @@ TASKS_REGISTRY = {
     'send_trial_warnings': 'apps.subscriptions_api.tasks.send_trial_expiration_warnings',
     'daily_subscription_check': 'apps.subscriptions_api.tasks.daily_subscription_check',
     'daily_reconciliation': 'apps.billing_api.tasks.daily_financial_reconciliation',
+    'check_trial_expirations': 'apps.subscriptions_api.tasks.check_trial_expirations',
 }
 
-ALL_TASK_KEYS = {
+FREQUENT_TASK_KEYS = {
     'mark_expired_appointments',
-    'send_daily_reminders',
     'notify_upcoming_appointments',
-    'send_appointment_reminders',
     'check_expired_subscriptions',
-    'daily_subscription_check',
 }
 
 DAILY_TASK_KEYS = {
@@ -137,6 +135,7 @@ DAILY_TASK_KEYS = {
     'send_trial_warnings',
     'cleanup_expired_trials',
     'daily_reconciliation',
+    'check_trial_expirations',
 }
 
 HOURLY_TASK_KEYS = {
@@ -149,8 +148,8 @@ WEEKLY_TASK_KEYS = {
 }
 
 TASK_GROUPS = {
-    'all': ALL_TASK_KEYS | DAILY_TASK_KEYS | HOURLY_TASK_KEYS | WEEKLY_TASK_KEYS,
-    'frequent': ALL_TASK_KEYS,
+    'all': FREQUENT_TASK_KEYS | DAILY_TASK_KEYS | HOURLY_TASK_KEYS | WEEKLY_TASK_KEYS,
+    'frequent': FREQUENT_TASK_KEYS,
     'daily': DAILY_TASK_KEYS,
     'hourly': HOURLY_TASK_KEYS,
     'weekly': WEEKLY_TASK_KEYS,
