@@ -25,6 +25,9 @@ urlpatterns = [
     path('live-dashboard/', realtime_views.LiveDashboardView.as_view(), name='live-dashboard'),
     path('alerts/', realtime_views.PerformanceAlertsView.as_view(), name='performance-alerts'),
     
+    # Export reports (Enterprise only)
+    path('export/', views.export_report, name='export-report'),
+
     # SuperAdmin reports
     path('admin/', views.AdminReportsView.as_view(), name='admin-reports'),
 ]

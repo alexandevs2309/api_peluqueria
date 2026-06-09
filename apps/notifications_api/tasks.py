@@ -129,6 +129,16 @@ def send_sms(self, phone, message):
         logger.error("Error sending SMS to %s: %s", phone, str(e))
         raise self.retry(exc=e)
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600)
+def send_whatsapp(self, phone, message):
+    """Send WhatsApp message asynchronously via Twilio"""
+    try:
+        from apps.settings_api.integration_service import IntegrationService
+        IntegrationService.send_whatsapp(phone=phone, message=message)
+    except Exception as e:
+        logger.error("Error sending WhatsApp to %s: %s", phone, str(e))
+        raise self.retry(exc=e)
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True)
 def send_appointment_reminders(self):
     """Send SMS and email reminders for tomorrow's appointments"""
@@ -147,6 +157,7 @@ def send_appointment_reminders(self):
         service = NotificationService()
         sms_count = 0
         email_count = 0
+        wa_count = 0
 
         for appointment in appointments:
             # SMS recordatorio
@@ -188,12 +199,33 @@ def send_appointment_reminders(self):
             )
             email_count += 1
 
+            # WhatsApp recordatorio
+            try:
+                wa_template = NotificationTemplate.objects.get(
+                    Q(notification_type='appointment_reminder'),
+                    Q(type='whatsapp'),
+                    Q(tenant=tenant) | Q(tenant__isnull=True),
+                    is_active=True
+                )
+                wa_recipient = appointment.client.user if hasattr(appointment.client, 'user') else None
+                if wa_recipient:
+                    service.create_notification(
+                        recipient=wa_recipient,
+                        template=wa_template,
+                        context_data=context,
+                        scheduled_at=timezone.now() + timedelta(hours=1)
+                    )
+                    wa_count += 1
+            except NotificationTemplate.DoesNotExist:
+                pass
+
         logger.info(
-            "Sent appointment reminders for tomorrow: sms=%s emails=%s",
+            "Sent appointment reminders for tomorrow: sms=%s emails=%s whatsapp=%s",
             sms_count,
             email_count,
+            wa_count,
         )
-        return f"Sent {sms_count} SMS and {email_count} email reminders for tomorrow"
+        return f"Sent {sms_count} SMS, {email_count} email, and {wa_count} WhatsApp reminders for tomorrow"
     except Exception as e:
         logger.error(f"Error sending appointment reminders: {str(e)}")
         raise self.retry(exc=e)

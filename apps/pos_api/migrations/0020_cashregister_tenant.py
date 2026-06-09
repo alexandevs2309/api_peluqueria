@@ -4,7 +4,7 @@ from django.db import migrations, models
 
 def backfill_tenant(apps, schema_editor):
     CashRegister = apps.get_model('pos_api', 'CashRegister')
-    for cr in CashRegister.objects.select_related('user__tenant').filter(tenant__isnull=True):
+    for cr in CashRegister.objects.filter(tenant__isnull=True):
         tenant = cr.user.tenant if hasattr(cr.user, 'tenant') else None
         if tenant:
             cr.tenant = tenant

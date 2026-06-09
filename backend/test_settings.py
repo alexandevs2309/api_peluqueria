@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'apps.reports_api',
     'apps.settings_api',
     'apps.utils',
+    'apps.support_api',
 ]
 
 MIDDLEWARE = [
@@ -75,7 +76,7 @@ MIGRATION_MODULES = {app: None for app in [
     'auth_api', 'roles_api', 'tenants_api', 'subscriptions_api', 'billing_api',
     'payments_api', 'notifications_api', 'audit_api', 'employees_api',
     'clients_api', 'services_api', 'appointments_api', 'pos_api',
-    'inventory_api', 'reports_api', 'settings_api',
+    'inventory_api', 'reports_api', 'settings_api', 'support_api',
 ]}
 CELERY_TASK_ALWAYS_EAGER = True
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'

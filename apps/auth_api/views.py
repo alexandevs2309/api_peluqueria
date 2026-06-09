@@ -883,6 +883,7 @@ class MFALoginVerifyView(APIView):
                 'email': user.email,
                 'full_name': user.full_name,
                 'role': user_role,
+                'branch_id': user.employee_profile.branch_id if hasattr(user, 'employee_profile') and user.employee_profile else None,
             },
             'message': 'Inicio de sesión con MFA exitoso'
         }
@@ -1311,6 +1312,7 @@ class VerifyAuthView(APIView):
             'user': {
                 'id': request.user.id,
                 'email': request.user.email,
-                'role': get_effective_role_api(request.user, tenant=getattr(request, 'tenant', None))
+                'role': get_effective_role_api(request.user, tenant=getattr(request, 'tenant', None)),
+                'branch_id': request.user.employee_profile.branch_id if hasattr(request.user, 'employee_profile') and request.user.employee_profile else None,
             }
         })

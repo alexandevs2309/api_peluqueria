@@ -18,11 +18,14 @@ from apps.audit_api.models import AuditLog
 from django.core.exceptions import ValidationError as DjangoValidationError
 from apps.subscriptions_api.permissions import HasFeaturePermission
 
-class SaleViewSet(viewsets.ModelViewSet):
-    queryset = Sale.objects.none()  # Seguro por defecto
+class SaleViewSet(TenantScopedViewSet):
+    queryset = Sale.objects.all()
     serializer_class = SaleSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'cash_register'
+
+    def _get_request_tenant(self):
+        return getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
     
     # Mapeo de permisos por acción
     permission_map = {
@@ -354,14 +357,19 @@ class SaleViewSet(viewsets.ModelViewSet):
             if sale_employee:
                 active_period = self._get_or_create_active_period(sale_employee)
             
-            # Guardar venta - asignar sesión de caja Y tenant
+            # Guardar venta - asignar sesión de caja Y tenant Y sucursal
             tenant_to_assign = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+            branch_to_assign = open_register.branch
+            if not branch_to_assign and sale_employee:
+                branch_to_assign = sale_employee.branch
+
             sale = serializer.save(
                 user=self.request.user,
                 employee=sale_employee,
                 period=active_period,
                 cash_register=open_register,
                 tenant=tenant_to_assign,
+                branch=branch_to_assign,
                 total=total_with_discount
             )
 
@@ -491,34 +499,17 @@ class SaleViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = super().get_queryset()
         
-        # SuperAdmin: acceso total
-        if user.is_superuser:
-            tenant = getattr(self.request, 'tenant', None)
-            if tenant:
-                qs = Sale.objects.select_related(
-                    'client', 'employee', 'user', 'user__tenant', 'tenant'
-                ).prefetch_related('details', 'details__content_type').filter(tenant=tenant)
-            else:
-                qs = Sale.objects.select_related(
-                    'client', 'employee', 'user', 'user__tenant', 'tenant'
-                ).prefetch_related('details', 'details__content_type').all()
-        else:
-            # Usuario sin tenant: sin acceso
-            if not hasattr(self.request, 'tenant') or not self.request.tenant:
-                return Sale.objects.none()
-            
-            # Filtrar por tenant del request
-            qs = Sale.objects.select_related(
-                'client', 'employee', 'user', 'user__tenant', 'tenant'
-            ).prefetch_related('details', 'details__content_type').filter(
-                tenant=self.request.tenant
-            )
-            
-            # Si no es staff, solo sus propias ventas
-            if not user.is_staff:
-                qs = qs.filter(user=user)
+        # Enriquecer queryset con select_related y prefetch_related
+        qs = qs.select_related(
+            'client', 'employee', 'user', 'user__tenant', 'tenant'
+        ).prefetch_related('details', 'details__content_type')
         
+        # Si no es superusuario ni staff, solo sus propias ventas
+        if not user.is_superuser and not user.is_staff:
+            qs = qs.filter(user=user)
+            
         # Filtro por teléfono del cliente (protegido contra SQL injection)
         client_phone = self.request.query_params.get('client_phone')
         if client_phone:
@@ -564,24 +555,39 @@ class SaleViewSet(viewsets.ModelViewSet):
         today = timezone.localdate()
         tenant = self._get_request_tenant()
         
-        # Cerrar cualquier caja abierta anterior del usuario en este tenant (por seguridad)
-        CashRegister.objects.filter(
-            tenant=tenant,
-            user=request.user, 
-            is_open=True
-        ).update(
+        branch_id = request.data.get('branch_id') or request.data.get('branch') or request.query_params.get('branch_id') or request.query_params.get('branch')
+        user = request.user
+        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+
+        close_filters = {
+            'tenant': tenant,
+            'user': request.user, 
+            'is_open': True
+        }
+        if branch_id:
+            close_filters['branch_id'] = branch_id
+            
+        # Cerrar cualquier caja abierta anterior del usuario en esta sucursal (por seguridad)
+        CashRegister.objects.filter(**close_filters).update(
             is_open=False,
             closed_at=timezone.now(),
             final_cash=0
         )
         
+        open_filters = {
+            'tenant': tenant,
+            'user': request.user, 
+            'is_open': True,
+            'opened_at__date': today
+        }
+        if branch_id:
+            open_filters['branch_id'] = branch_id
+            
         # Verificar que no hay caja abierta hoy
-        open_register = CashRegister.objects.filter(
-            tenant=tenant,
-            user=request.user, 
-            is_open=True,
-            opened_at__date=today
-        ).first()
+        open_register = CashRegister.objects.filter(**open_filters).first()
         
         if open_register:
             return Response(
@@ -597,6 +603,7 @@ class SaleViewSet(viewsets.ModelViewSet):
         register = CashRegister.objects.create(
             user=request.user,
             tenant=tenant,
+            branch_id=branch_id,
             initial_cash=serializer.validated_data['initial_cash']
         )
         
@@ -606,12 +613,24 @@ class SaleViewSet(viewsets.ModelViewSet):
     def current_register(self, request):
         tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
         today = timezone.localdate()
-        register = CashRegister.objects.filter(
-            user=request.user,
-            tenant=tenant,
-            is_open=True,
-            opened_at__date=today
-        ).first()
+        
+        branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
+        user = request.user
+        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+
+        filters = {
+            'user': request.user,
+            'tenant': tenant,
+            'is_open': True,
+            'opened_at__date': today
+        }
+        if branch_id:
+            filters['branch_id'] = branch_id
+
+        register = CashRegister.objects.filter(**filters).first()
         
         if not register:
             return Response({'error': 'No hay caja abierta'}, status=status.HTTP_404_NOT_FOUND)
@@ -933,8 +952,8 @@ class SaleViewSet(viewsets.ModelViewSet):
 
    
 
-class CashRegisterViewSet(viewsets.ModelViewSet):
-    queryset = CashRegister.objects.none()  # Seguro por defecto
+class CashRegisterViewSet(TenantScopedViewSet):
+    queryset = CashRegister.objects.all()
     serializer_class = CashRegisterSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'cash_register'
@@ -953,36 +972,39 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
     def _get_request_tenant(self):
         return getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
     
-    def get_queryset(self):
-        user = self.request.user
-        
-        # SuperAdmin: acceso total
-        if user.is_superuser:
-            tenant = getattr(self.request, 'tenant', None)
-            if tenant:
-                return CashRegister.objects.filter(tenant=tenant)
-            return CashRegister.objects.all()
-        
-        # Usuario sin tenant: sin acceso
-        tenant = self._get_request_tenant()
-        if not tenant:
-            return CashRegister.objects.none()
-        
-        # Filtrar por tenant del request
-        return CashRegister.objects.filter(tenant=tenant)
-    
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user, tenant=self._get_request_tenant())
+        tenant = self._get_request_tenant()
+        
+        branch_id = self.request.data.get('branch_id') or self.request.data.get('branch') or self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
+        user = self.request.user
+        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+                
+        serializer.save(user=self.request.user, tenant=tenant, branch_id=branch_id)
 
     @action(detail=False, methods=['get'])
     def current(self, request):
         """Obtener la caja abierta actual del usuario"""
         tenant = self._get_request_tenant()
-        register = CashRegister.objects.filter(
-            tenant=tenant,
-            user=request.user,
-            is_open=True
-        ).first()
+        
+        branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
+        user = request.user
+        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+
+        filters = {
+            'tenant': tenant,
+            'user': request.user,
+            'is_open': True
+        }
+        if branch_id:
+            filters['branch_id'] = branch_id
+
+        register = CashRegister.objects.filter(**filters).first()
         
         if not register:
             return Response({'register': None, 'is_open': False})
@@ -1154,6 +1176,10 @@ def daily_summary(request):
                 'by_type': {'services': 0, 'products': 0}
             })
         
+        branch_id = request.GET.get('branch_id') or request.GET.get('branch')
+        if branch_id:
+            base_filter = base_filter & Q(branch_id=branch_id)
+        
         # Obtener sesión de caja abierta
         open_register = None
         if tenant:
@@ -1226,6 +1252,7 @@ def dashboard_stats(request):
 
     start_date = request.GET.get('start_date')
     end_date = request.GET.get('end_date')
+    branch_id = request.GET.get('branch_id') or request.GET.get('branch')
 
     if start_date:
         try:
@@ -1245,7 +1272,7 @@ def dashboard_stats(request):
 
     tenant = getattr(request, 'tenant', None)
     tenant_id = getattr(tenant, 'id', None) or getattr(request.user.tenant, 'id', 'none')
-    cache_key = f'dashboard_stats_{request.user.id}_{tenant_id}_{start_date}_{end_date}'
+    cache_key = f'dashboard_stats_{request.user.id}_{tenant_id}_{start_date}_{end_date}_{branch_id or "all"}'
     cached_data = cache.get(cache_key)
     if cached_data:
         return Response(cached_data)
@@ -1258,6 +1285,9 @@ def dashboard_stats(request):
             base_filter = Q()
     elif tenant:
         base_filter = Q(tenant=tenant)
+
+    if branch_id:
+        base_filter = base_filter & Q(branch_id=branch_id)
 
     range_filter = base_filter & Q(date_time__date__gte=start_date) & Q(date_time__date__lte=end_date)
     today_filter = base_filter & Q(date_time__date=today)

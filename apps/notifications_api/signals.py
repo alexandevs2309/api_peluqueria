@@ -86,6 +86,32 @@ def appointment_created(sender, instance, created, **kwargs):
         except NotificationTemplate.DoesNotExist:
             pass
 
+        # WhatsApp al cliente (si existe template y tiene teléfono)
+        if client and client.phone:
+            try:
+                wa_template = NotificationTemplate.objects.get(
+                    Q(notification_type='appointment_confirmation'),
+                    Q(type='whatsapp'),
+                    Q(tenant=tenant) | Q(tenant__isnull=True),
+                    is_active=True
+                )
+                wa_context = {
+                    'client_name': client_name,
+                    'appointment_date': instance.date_time.strftime('%d/%m/%Y'),
+                    'appointment_time': instance.date_time.strftime('%H:%M'),
+                    'stylist_name': stylist.full_name if stylist else 'Por asignar',
+                    'service_name': instance.service.name if instance.service else 'Por definir'
+                }
+                recipient_user = client.user if hasattr(client, 'user') else None
+                if recipient_user:
+                    service.create_notification(
+                        recipient=recipient_user,
+                        template=wa_template,
+                        context_data=wa_context
+                    )
+            except NotificationTemplate.DoesNotExist:
+                pass
+
 @receiver(pre_save, sender='appointments_api.Appointment')
 def appointment_status_changed(sender, instance, **kwargs):
     """Notificar cuando cambia el estado de una cita"""
@@ -142,19 +168,43 @@ def sale_completed(sender, instance, created, **kwargs):
                 Q(tenant=tenant) | Q(tenant__isnull=True),
                 is_active=True
             )
-            
+
             context = {
                 'employee_name': instance.employee.user.full_name,
                 'sale_amount': f"${instance.total:,.2f}",
                 'sale_date': instance.date_time.strftime('%d/%m/%Y %H:%M'),
                 'commission_rate': instance.employee.commission_rate or 40
             }
-            
+
             service.create_notification(
                 recipient=instance.employee.user,
                 template=template,
                 context_data=context
             )
+        except NotificationTemplate.DoesNotExist:
+            pass
+
+        # WhatsApp al empleado
+        try:
+            tenant = getattr(instance.employee.user, 'tenant', None) if instance.employee else None
+            wa_template = NotificationTemplate.objects.get(
+                Q(notification_type='earnings_available'),
+                Q(type='whatsapp'),
+                Q(tenant=tenant) | Q(tenant__isnull=True),
+                is_active=True
+            )
+            wa_context = {
+                'employee_name': instance.employee.user.full_name,
+                'sale_amount': f"${instance.total:,.2f}",
+                'sale_date': instance.date_time.strftime('%d/%m/%Y %H:%M'),
+                'commission_rate': instance.employee.commission_rate or 40
+            }
+            if hasattr(instance.employee.user, 'phone') and instance.employee.user.phone:
+                service.create_notification(
+                    recipient=instance.employee.user,
+                    template=wa_template,
+                    context_data=wa_context
+                )
         except NotificationTemplate.DoesNotExist:
             pass
 
@@ -197,6 +247,32 @@ def product_low_stock(sender, instance, **kwargs):
         except NotificationTemplate.DoesNotExist:
             pass
 
+        # WhatsApp a administradores
+        try:
+            wa_template = NotificationTemplate.objects.get(
+                Q(notification_type='stock_alert'),
+                Q(type='whatsapp'),
+                Q(tenant=instance.tenant) | Q(tenant__isnull=True),
+                is_active=True
+            )
+            wa_context = {
+                'product_name': instance.name,
+                'current_stock': instance.stock,
+                'min_stock': instance.min_stock,
+                'supplier': instance.supplier.name if instance.supplier else 'Sin proveedor'
+            }
+            for admin in admins:
+                if hasattr(admin, 'phone') and admin.phone:
+                    service.create_notification(
+                        recipient=admin,
+                        template=wa_template,
+                        context_data=wa_context,
+                        priority='high'
+                    )
+        except NotificationTemplate.DoesNotExist:
+            pass
+
+
 @receiver(post_save, sender='subscriptions_api.Subscription')
 def subscription_expiring(sender, instance, **kwargs):
     """Notificar cuando una suscripción está por vencer"""
@@ -237,6 +313,38 @@ def subscription_expiring(sender, instance, **kwargs):
                         context_data=context,
                         priority='urgent' if days_until_expiry <= 1 else 'high'
                     )
+            except NotificationTemplate.DoesNotExist:
+                pass
+
+        # WhatsApp a administradores
+        if end_date and days_until_expiry in [7, 3, 1]:
+            try:
+                tenant = getattr(instance, 'tenant', None)
+                wa_template = NotificationTemplate.objects.get(
+                    Q(notification_type='subscription_expiring'),
+                    Q(type='whatsapp'),
+                    Q(tenant=tenant) | Q(tenant__isnull=True),
+                    is_active=True
+                )
+                wa_context = {
+                    'tenant_name': instance.tenant.name,
+                    'plan_name': instance.plan.name,
+                    'expiry_date': end_date.strftime('%d/%m/%Y'),
+                    'days_remaining': days_until_expiry
+                }
+                from apps.auth_api.models import User
+                admins = User.objects.filter(
+                    tenant=instance.tenant,
+                    roles__name='Client-Admin'
+                )
+                for admin in admins:
+                    if hasattr(admin, 'phone') and admin.phone:
+                        service.create_notification(
+                            recipient=admin,
+                            template=wa_template,
+                            context_data=wa_context,
+                            priority='urgent' if days_until_expiry <= 1 else 'high'
+                        )
             except NotificationTemplate.DoesNotExist:
                 pass
 

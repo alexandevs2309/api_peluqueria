@@ -50,7 +50,7 @@ class AppointmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Appointment
         fields = [
-            'id', 'client', 'stylist', 'role', 'service', 'stylist_info',
+            'id', 'branch', 'client', 'stylist', 'role', 'service', 'stylist_info',
             'status', 'created_at', 'description', 'updated_at', 'date_time', 'sale',
             'client_name', 'stylist_name', 'service_name'
         ]
@@ -93,6 +93,14 @@ class AppointmentSerializer(serializers.ModelSerializer):
             if service.tenant_id != tenant.id:
                 raise serializers.ValidationError({
                     'service': _('Service does not belong to your tenant')
+                })
+        
+        # Validar branch pertenece al tenant
+        branch = attrs.get('branch')
+        if branch and hasattr(branch, 'tenant_id'):
+            if branch.tenant_id != tenant.id:
+                raise serializers.ValidationError({
+                    'branch': _('Branch does not belong to your tenant')
                 })
         
         return attrs

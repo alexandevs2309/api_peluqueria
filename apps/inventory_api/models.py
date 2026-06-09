@@ -35,6 +35,7 @@ class Supplier(models.Model):
 class Product(models.Model):
     name = models.CharField(max_length=255)
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='products')
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_products')
     sku = models.CharField(max_length=100)
     barcode = models.CharField(max_length=100, blank=True, null=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -52,12 +53,31 @@ class Product(models.Model):
             ('adjust_stock', 'Can adjust product stock'),
         ]
         constraints = [
-            models.UniqueConstraint(fields=['sku', 'tenant'], name='unique_sku_per_tenant'),
-            models.UniqueConstraint(fields=['barcode', 'tenant'], name='unique_barcode_per_tenant', condition=models.Q(barcode__isnull=False))
+            models.UniqueConstraint(
+                fields=['sku', 'tenant'],
+                condition=models.Q(branch__isnull=True),
+                name='unique_sku_per_tenant_global'
+            ),
+            models.UniqueConstraint(
+                fields=['sku', 'tenant', 'branch'],
+                condition=models.Q(branch__isnull=False),
+                name='unique_sku_per_tenant_branch'
+            ),
+            models.UniqueConstraint(
+                fields=['barcode', 'tenant'],
+                condition=models.Q(barcode__isnull=False) & models.Q(branch__isnull=True),
+                name='unique_barcode_per_tenant_global'
+            ),
+            models.UniqueConstraint(
+                fields=['barcode', 'tenant', 'branch'],
+                condition=models.Q(barcode__isnull=False) & models.Q(branch__isnull=False),
+                name='unique_barcode_per_tenant_branch'
+            ),
         ]
         indexes = [
             models.Index(fields=['tenant', 'sku']),
             models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['tenant', 'branch', 'is_active']),
         ]
 
     @property

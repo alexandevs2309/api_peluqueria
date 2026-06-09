@@ -11,6 +11,19 @@ from apps.pos_api.models import Sale
 from apps.appointments_api.models import Appointment
 from apps.services_api.models import Service
 
+
+def get_report_branch_id(request):
+    branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
+    user = request.user
+    if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=getattr(request, 'tenant', user.tenant))
+        if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+    return branch_id
+
+
 class AdvancedAnalyticsView(APIView):
     """Analytics avanzados con métricas de negocio"""
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
@@ -21,13 +34,14 @@ class AdvancedAnalyticsView(APIView):
 
     def get(self, request):
         tenant = request.user.tenant
+        branch_id = get_report_branch_id(request)
         period = request.GET.get('period', '30')  # dias
         days = int(period)
 
-        retention_data = calculate_client_retention(tenant, days)
-        employee_performance = calculate_employee_performance(tenant, days)
-        service_trends = calculate_service_trends(tenant, days)
-        predictions = calculate_predictions(tenant, days)
+        retention_data = calculate_client_retention(tenant, days, branch_id)
+        employee_performance = calculate_employee_performance(tenant, days, branch_id)
+        service_trends = calculate_service_trends(tenant, days, branch_id)
+        predictions = calculate_predictions(tenant, days, branch_id)
 
         return Response({
             'period_days': days,
@@ -49,16 +63,18 @@ class BusinessIntelligenceView(APIView):
 
     def get(self, request):
         tenant = request.user.tenant
+        branch_id = get_report_branch_id(request)
+        
         business_kpis = {
-            'customer_lifetime_value': calculate_clv(tenant),
-            'average_revenue_per_user': calculate_arpu(tenant),
-            'churn_rate': calculate_churn_rate(tenant),
-            'growth_rate': calculate_growth_rate(tenant),
-            'capacity_utilization': calculate_capacity_utilization(tenant)
+            'customer_lifetime_value': calculate_clv(tenant, branch_id),
+            'average_revenue_per_user': calculate_arpu(tenant, branch_id),
+            'churn_rate': calculate_churn_rate(tenant, branch_id),
+            'growth_rate': calculate_growth_rate(tenant, branch_id),
+            'capacity_utilization': calculate_capacity_utilization(tenant, branch_id)
         }
 
-        seasonal_analysis = calculate_seasonal_patterns(tenant)
-        benchmarks = calculate_internal_benchmarks(tenant)
+        seasonal_analysis = calculate_seasonal_patterns(tenant, branch_id)
+        benchmarks = calculate_internal_benchmarks(tenant, branch_id)
 
         return Response({
             'business_kpis': business_kpis,
@@ -78,37 +94,39 @@ class PredictiveAnalyticsView(APIView):
 
     def get(self, request):
         tenant = request.user.tenant
+        branch_id = get_report_branch_id(request)
 
         return Response({
-            'demand_forecast': predict_demand(tenant),
-            'revenue_forecast': predict_revenue(tenant),
-            'at_risk_clients': identify_at_risk_clients(tenant),
-            'growth_opportunities': identify_growth_opportunities(tenant)
+            'demand_forecast': predict_demand(tenant, branch_id),
+            'revenue_forecast': predict_revenue(tenant, branch_id),
+            'at_risk_clients': identify_at_risk_clients(tenant, branch_id),
+            'growth_opportunities': identify_growth_opportunities(tenant, branch_id)
         })
 
-def calculate_client_retention(tenant, days):
+
+def calculate_client_retention(tenant, days, branch_id=None):
     """Calcular métricas de retención de clientes"""
     start_date = timezone.now() - timedelta(days=days)
     
+    client_filter = {'tenant': tenant, 'last_visit__gte': start_date}
+    new_client_filter = {'tenant': tenant, 'created_at__gte': start_date}
+    recurring_filter = {'tenant': tenant, 'client_appointments__date_time__gte': start_date}
+    
+    if branch_id:
+        client_filter['client_appointments__branch_id'] = branch_id
+        new_client_filter['client_appointments__branch_id'] = branch_id
+        recurring_filter['client_appointments__branch_id'] = branch_id
+        
     # Clientes activos en el período
-    active_clients = Client.objects.filter(
-        tenant=tenant,
-        last_visit__gte=start_date
-    ).count()
+    active_clients = Client.objects.filter(**client_filter).distinct().count()
     
     # Clientes nuevos
-    new_clients = Client.objects.filter(
-        tenant=tenant,
-        created_at__gte=start_date
-    ).count()
+    new_clients = Client.objects.filter(**new_client_filter).distinct().count()
     
     # Clientes recurrentes (más de 1 cita)
-    recurring_clients = Client.objects.filter(
-        tenant=tenant,
-        client_appointments__date_time__gte=start_date
-    ).annotate(
+    recurring_clients = Client.objects.filter(**recurring_filter).annotate(
         appointment_count=Count('client_appointments')
-    ).filter(appointment_count__gt=1).count()
+    ).filter(appointment_count__gt=1).distinct().count()
     
     # Tasa de retención
     retention_rate = (recurring_clients / active_clients * 100) if active_clients > 0 else 0
@@ -120,25 +138,32 @@ def calculate_client_retention(tenant, days):
         'retention_rate': round(retention_rate, 2)
     }
 
-def calculate_employee_performance(tenant, days):
+
+def calculate_employee_performance(tenant, days, branch_id=None):
     """Análisis de rendimiento de empleados"""
     start_date = timezone.now() - timedelta(days=days)
     
-    employees = Employee.objects.filter(tenant=tenant, is_active=True)
+    employee_filter = {'tenant': tenant, 'is_active': True}
+    if branch_id:
+        employee_filter['branch_id'] = branch_id
+        
+    employees = Employee.objects.filter(**employee_filter)
     performance_data = []
     
     for emp in employees:
         # Ventas del empleado
-        sales = Sale.objects.filter(
-            employee=emp,
-            date_time__gte=start_date
-        )
+        sales_filter = {'employee': emp, 'date_time__gte': start_date}
+        if branch_id:
+            sales_filter['branch_id'] = branch_id
+            
+        sales = Sale.objects.filter(**sales_filter)
         
         # Citas del empleado
-        appointments = Appointment.objects.filter(
-            stylist=emp.user,
-            date_time__gte=start_date
-        )
+        appointments_filter = {'stylist': emp.user, 'date_time__gte': start_date}
+        if branch_id:
+            appointments_filter['branch_id'] = branch_id
+            
+        appointments = Appointment.objects.filter(**appointments_filter)
         
         total_sales = sales.aggregate(total=Sum('total'))['total'] or 0
         total_appointments = appointments.count()
@@ -161,15 +186,20 @@ def calculate_employee_performance(tenant, days):
     
     return sorted(performance_data, key=lambda x: x['total_sales'], reverse=True)
 
-def calculate_service_trends(tenant, days):
+
+def calculate_service_trends(tenant, days, branch_id=None):
     """Análisis de tendencias de servicios"""
     start_date = timezone.now() - timedelta(days=days)
     
+    services_filter = {
+        'tenant': tenant,
+        'appointments__date_time__gte': start_date
+    }
+    if branch_id:
+        services_filter['appointments__branch_id'] = branch_id
+        
     # Servicios más populares
-    popular_services = Service.objects.filter(
-        tenant=tenant,
-        appointments__date_time__gte=start_date
-    ).annotate(
+    popular_services = Service.objects.filter(**services_filter).annotate(
         booking_count=Count('appointments'),
         revenue=Sum('appointments__sale__total')
     ).order_by('-booking_count')[:5]
@@ -185,13 +215,18 @@ def calculate_service_trends(tenant, days):
     
     return trends
 
-def calculate_predictions(tenant, days):
+
+def calculate_predictions(tenant, days, branch_id=None):
     """Predicciones básicas basadas en tendencias"""
+    sales_filter = {
+        'user__tenant': tenant,
+        'date_time__gte': timezone.now() - timedelta(days=days*2)
+    }
+    if branch_id:
+        sales_filter['branch_id'] = branch_id
+        
     # Datos históricos
-    historical_sales = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__gte=timezone.now() - timedelta(days=days*2)
-    ).extra(
+    historical_sales = Sale.objects.filter(**sales_filter).extra(
         select={'day': 'date(date_time)'}
     ).values('day').annotate(
         daily_total=Sum('total')
@@ -209,71 +244,86 @@ def calculate_predictions(tenant, days):
     return {
         'next_week_revenue': round(next_week_prediction, 2),
         'daily_average': round(recent_avg, 2),
-        'confidence': 'medium'  # Básico por ahora
+        'confidence': 'medium'
     }
 
-def calculate_clv(tenant):
+
+def calculate_clv(tenant, branch_id=None):
     """Customer Lifetime Value básico"""
-    clients = Client.objects.filter(tenant=tenant, is_active=True)
+    clients_filter = {'tenant': tenant, 'is_active': True}
+    sales_filter = {'client__tenant': tenant}
+    appointments_filter = {'client__tenant': tenant}
+    
+    if branch_id:
+        clients_filter['client_appointments__branch_id'] = branch_id
+        sales_filter['branch_id'] = branch_id
+        appointments_filter['branch_id'] = branch_id
+        
+    clients = Client.objects.filter(**clients_filter).distinct()
     
     if not clients.exists():
         return 0
     
     # Promedio de gasto por cliente
-    avg_spending = Sale.objects.filter(
-        client__tenant=tenant
-    ).aggregate(avg=Avg('total'))['avg'] or 0
+    avg_spending = Sale.objects.filter(**sales_filter).aggregate(avg=Avg('total'))['avg'] or 0
     
     # Frecuencia promedio (citas por mes)
-    avg_frequency = Appointment.objects.filter(
-        client__tenant=tenant
-    ).count() / max(clients.count(), 1)
+    avg_frequency = Appointment.objects.filter(**appointments_filter).count() / max(clients.count(), 1)
     
     # CLV básico (6 meses)
     clv = float(avg_spending) * avg_frequency * 6
     
     return round(clv, 2)
 
-def calculate_arpu(tenant):
+
+def calculate_arpu(tenant, branch_id=None):
     """Average Revenue Per User"""
-    total_revenue = Sale.objects.filter(
-        user__tenant=tenant
-    ).aggregate(total=Sum('total'))['total'] or 0
+    sales_filter = {'user__tenant': tenant}
+    clients_filter = {'tenant': tenant, 'is_active': True}
     
-    active_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
+    if branch_id:
+        sales_filter['branch_id'] = branch_id
+        clients_filter['client_appointments__branch_id'] = branch_id
+        
+    total_revenue = Sale.objects.filter(**sales_filter).aggregate(total=Sum('total'))['total'] or 0
+    active_clients = Client.objects.filter(**clients_filter).distinct().count()
     
     arpu = float(total_revenue) / max(active_clients, 1)
     return round(arpu, 2)
 
-def calculate_churn_rate(tenant):
+
+def calculate_churn_rate(tenant, branch_id=None):
     """Tasa de abandono de clientes"""
-    # Clientes que no han venido en 60 días
     cutoff_date = timezone.now() - timedelta(days=60)
     
-    total_clients = Client.objects.filter(tenant=tenant).count()
-    inactive_clients = Client.objects.filter(
-        tenant=tenant,
-        last_visit__lt=cutoff_date
-    ).count()
+    clients_filter = {'tenant': tenant}
+    inactive_filter = {'tenant': tenant, 'last_visit__lt': cutoff_date}
+    
+    if branch_id:
+        clients_filter['client_appointments__branch_id'] = branch_id
+        inactive_filter['client_appointments__branch_id'] = branch_id
+        
+    total_clients = Client.objects.filter(**clients_filter).distinct().count()
+    inactive_clients = Client.objects.filter(**inactive_filter).distinct().count()
     
     churn_rate = (inactive_clients / max(total_clients, 1)) * 100
     return round(churn_rate, 2)
 
-def calculate_growth_rate(tenant):
+
+def calculate_growth_rate(tenant, branch_id=None):
     """Tasa de crecimiento mensual"""
     current_month = timezone.now().replace(day=1)
     last_month = (current_month - timedelta(days=1)).replace(day=1)
     
-    current_revenue = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__gte=current_month
-    ).aggregate(total=Sum('total'))['total'] or 0
+    current_filter = {'user__tenant': tenant, 'date_time__gte': current_month}
+    last_filter = {'user__tenant': tenant, 'date_time__gte': last_month, 'date_time__lt': current_month}
     
-    last_revenue = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__gte=last_month,
-        date_time__lt=current_month
-    ).aggregate(total=Sum('total'))['total'] or 0
+    if branch_id:
+        current_filter['branch_id'] = branch_id
+        last_filter['branch_id'] = branch_id
+        
+    current_revenue = Sale.objects.filter(**current_filter).aggregate(total=Sum('total'))['total'] or 0
+    last_revenue = Sale.objects.filter(**last_filter).aggregate(total=Sum('total'))['total'] or 0
     
     if last_revenue > 0:
         growth_rate = ((float(current_revenue) - float(last_revenue)) / float(last_revenue)) * 100
@@ -282,37 +332,42 @@ def calculate_growth_rate(tenant):
     
     return round(growth_rate, 2)
 
-def calculate_capacity_utilization(tenant):
+
+def calculate_capacity_utilization(tenant, branch_id=None):
     """Utilización de capacidad"""
-    # Horas trabajadas vs horas disponibles (simplificado)
     today = timezone.now().date()
     week_start = today - timedelta(days=today.weekday())
     
-    total_appointments = Appointment.objects.filter(
-        client__tenant=tenant,
-        date_time__date__gte=week_start,
-        status='completed'
-    ).count()
+    appointments_filter = {
+        'client__tenant': tenant,
+        'date_time__date__gte': week_start,
+        'status': 'completed'
+    }
+    if branch_id:
+        appointments_filter['branch_id'] = branch_id
+        
+    total_appointments = Appointment.objects.filter(**appointments_filter).count()
     
     # Asumiendo 8 horas por día, 6 días por semana, citas de 30 min
-    available_slots = 8 * 2 * 6  # 96 slots por semana
+    available_slots = 8 * 2 * 6
     
     utilization = (total_appointments / available_slots) * 100 if available_slots > 0 else 0
     return round(utilization, 2)
 
-def calculate_seasonal_patterns(tenant):
+
+def calculate_seasonal_patterns(tenant, branch_id=None):
     """Análisis de patrones estacionales"""
-    # Ventas por día de la semana
-    daily_patterns = Sale.objects.filter(
-        user__tenant=tenant
-    ).extra(
+    sales_filter = {'user__tenant': tenant}
+    if branch_id:
+        sales_filter['branch_id'] = branch_id
+        
+    daily_patterns = Sale.objects.filter(**sales_filter).extra(
         select={'weekday': 'EXTRACT(dow FROM date_time)'}
     ).values('weekday').annotate(
         avg_sales=Avg('total'),
         count=Count('id')
     ).order_by('weekday')
     
-    # Mapear números a nombres de días
     day_names = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb']
     
     patterns = []
@@ -326,22 +381,25 @@ def calculate_seasonal_patterns(tenant):
     
     return patterns
 
-def calculate_internal_benchmarks(tenant):
+
+def calculate_internal_benchmarks(tenant, branch_id=None):
     """Benchmarks internos"""
+    sales_filter = {'user__tenant': tenant}
+    employee_filter = {'tenant': tenant, 'sales__isnull': False}
+    
+    if branch_id:
+        sales_filter['branch_id'] = branch_id
+        employee_filter['branch_id'] = branch_id
+        
     # Mejor mes del año
-    best_month = Sale.objects.filter(
-        user__tenant=tenant
-    ).extra(
+    best_month = Sale.objects.filter(**sales_filter).extra(
         select={'month': 'EXTRACT(month FROM date_time)'}
     ).values('month').annotate(
         total=Sum('total')
     ).order_by('-total').first()
     
     # Mejor empleado
-    best_employee = Employee.objects.filter(
-        tenant=tenant,
-        sales__isnull=False
-    ).annotate(
+    best_employee = Employee.objects.filter(**employee_filter).annotate(
         total_sales=Sum('sales__total')
     ).order_by('-total_sales').first()
     
@@ -351,6 +409,7 @@ def calculate_internal_benchmarks(tenant):
         'best_employee': best_employee.user.full_name if best_employee else None,
         'best_employee_sales': float(best_employee.total_sales) if best_employee else 0
     }
+
 
 def generate_recommendations(kpis):
     """Generar recomendaciones basadas en KPIs"""
@@ -379,13 +438,17 @@ def generate_recommendations(kpis):
     
     return recommendations
 
-def predict_demand(tenant):
+
+def predict_demand(tenant, branch_id=None):
     """Predicción básica de demanda"""
-    # Análisis de citas por hora del día
-    hourly_demand = Appointment.objects.filter(
-        client__tenant=tenant,
-        date_time__gte=timezone.now() - timedelta(days=30)
-    ).extra(
+    appointments_filter = {
+        'client__tenant': tenant,
+        'date_time__gte': timezone.now() - timedelta(days=30)
+    }
+    if branch_id:
+        appointments_filter['branch_id'] = branch_id
+        
+    hourly_demand = Appointment.objects.filter(**appointments_filter).extra(
         select={'hour': 'EXTRACT(hour FROM date_time)'}
     ).values('hour').annotate(
         count=Count('id')
@@ -401,13 +464,17 @@ def predict_demand(tenant):
     
     return sorted(peak_hours, key=lambda x: x['appointments'], reverse=True)[:5]
 
-def predict_revenue(tenant):
+
+def predict_revenue(tenant, branch_id=None):
     """Predicción de ingresos"""
-    # Tendencia de los últimos 30 días
-    daily_revenue = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__gte=timezone.now() - timedelta(days=30)
-    ).extra(
+    sales_filter = {
+        'user__tenant': tenant,
+        'date_time__gte': timezone.now() - timedelta(days=30)
+    }
+    if branch_id:
+        sales_filter['branch_id'] = branch_id
+        
+    daily_revenue = Sale.objects.filter(**sales_filter).extra(
         select={'day': 'date(date_time)'}
     ).values('day').annotate(
         total=Sum('total')
@@ -425,32 +492,41 @@ def predict_revenue(tenant):
         'daily_average': round(recent_avg, 2)
     }
 
-def identify_at_risk_clients(tenant):
+
+def identify_at_risk_clients(tenant, branch_id=None):
     """Identificar clientes en riesgo de abandono"""
-    # Clientes que no han venido en 30-60 días
     risk_period_start = timezone.now() - timedelta(days=60)
     risk_period_end = timezone.now() - timedelta(days=30)
     
-    at_risk = Client.objects.filter(
-        tenant=tenant,
-        last_visit__gte=risk_period_start,
-        last_visit__lte=risk_period_end,
-        is_active=True
-    ).values('full_name', 'email', 'phone', 'last_visit')[:10]
+    clients_filter = {
+        'tenant': tenant,
+        'last_visit__gte': risk_period_start,
+        'last_visit__lte': risk_period_end,
+        'is_active': True
+    }
+    if branch_id:
+        clients_filter['client_appointments__branch_id'] = branch_id
+        
+    at_risk = Client.objects.filter(**clients_filter).distinct().values('full_name', 'email', 'phone', 'last_visit')[:10]
     
     return list(at_risk)
 
-def identify_growth_opportunities(tenant):
+
+def identify_growth_opportunities(tenant, branch_id=None):
     """Identificar oportunidades de crecimiento"""
     opportunities = []
     
     # Servicios con baja demanda pero alta rentabilidad
-    underperforming_services = Service.objects.filter(
-        tenant=tenant,
-        price__gt=50  # Servicios caros
-    ).annotate(
+    services_filter = {
+        'tenant': tenant,
+        'price__gt': 50
+    }
+    if branch_id:
+        services_filter['appointments__branch_id'] = branch_id
+        
+    underperforming_services = Service.objects.filter(**services_filter).annotate(
         booking_count=Count('appointments')
-    ).filter(booking_count__lt=5)  # Pocas reservas
+    ).filter(booking_count__lt=5)
     
     if underperforming_services.exists():
         opportunities.append({
@@ -460,9 +536,11 @@ def identify_growth_opportunities(tenant):
         })
     
     # Horarios con baja ocupación
-    low_demand_hours = Appointment.objects.filter(
-        client__tenant=tenant
-    ).extra(
+    appointments_filter = {'client__tenant': tenant}
+    if branch_id:
+        appointments_filter['branch_id'] = branch_id
+        
+    low_demand_hours = Appointment.objects.filter(**appointments_filter).extra(
         select={'hour': 'EXTRACT(hour FROM date_time)'}
     ).values('hour').annotate(
         count=Count('id')

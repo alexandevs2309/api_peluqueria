@@ -42,6 +42,7 @@ class Employee(models.Model):
 
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_employees')
     specialty = models.CharField(max_length=100, choices=SPECIALTY_CHOICES, blank=True)
     phone = models.CharField(max_length=20, blank=True)
     hire_date = models.DateField(null=True, blank=True)

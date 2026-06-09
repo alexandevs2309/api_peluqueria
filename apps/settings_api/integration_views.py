@@ -31,6 +31,14 @@ class IntegrationTestView(views.APIView):
                     return response.Response({'success': True, 'message': 'SMS de prueba enviado'})
                 return response.Response({'success': False, 'message': 'Twilio no esta habilitado'})
 
+            if integration_type == 'whatsapp':
+                if IntegrationService.is_twilio_enabled():
+                    from django.conf import settings
+                    test_phone = getattr(settings, 'WHATSAPP_TEST_PHONE', None) or request.data.get('test_phone', '+18299999999')
+                    IntegrationService.send_whatsapp(phone=test_phone, message='Test WhatsApp from Auron Suite')
+                    return response.Response({'success': True, 'message': f'WhatsApp de prueba enviado a {test_phone}'})
+                return response.Response({'success': False, 'message': 'Twilio no esta habilitado'})
+
             if integration_type in ('sendgrid', 'email'):
                 if not IntegrationService.is_sendgrid_enabled():
                     return response.Response({'success': False, 'message': 'Email no configurado'})

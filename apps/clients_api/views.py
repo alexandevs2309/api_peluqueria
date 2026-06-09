@@ -37,7 +37,7 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
         filters.SearchFilter,
         filters.OrderingFilter
     ]
-    filterset_fields = ['gender', 'is_active', 'preferred_stylist']
+    filterset_fields = ['gender', 'is_active', 'preferred_stylist', 'branch']
     search_fields = ['full_name', 'email', 'phone']
     ordering_fields = ['created_at', 'updated_at', 'last_visit']
     ordering = ['-created_at']

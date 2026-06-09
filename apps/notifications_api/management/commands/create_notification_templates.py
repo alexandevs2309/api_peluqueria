@@ -21,6 +21,107 @@ class Command(BaseCommand):
             except Tenant.DoesNotExist:
                 raise CommandError(f'Tenant con ID {tenant_id} no existe.')
 
+        wa_templates = [
+            {
+                'name': 'WhatsApp - Confirmación de Cita',
+                'type': 'whatsapp',
+                'notification_type': 'appointment_confirmation',
+                'subject': 'Cita Confirmada',
+                'body': '''Hola {{client_name}},
+
+Tu cita ha sido confirmada para el {{appointment_date}} a las {{appointment_time}}.
+
+Estilista: {{stylist_name}}
+Servicio: {{service_name}}
+
+¡Te esperamos!''',
+                'available_variables': {
+                    'client_name': 'Nombre del cliente',
+                    'appointment_date': 'Fecha de la cita',
+                    'appointment_time': 'Hora de la cita',
+                    'stylist_name': 'Nombre del estilista',
+                    'service_name': 'Nombre del servicio'
+                }
+            },
+            {
+                'name': 'WhatsApp - Recordatorio de Cita',
+                'type': 'whatsapp',
+                'notification_type': 'appointment_reminder',
+                'subject': 'Recordatorio de Cita',
+                'body': '''Hola {{client_name}},
+
+Te recordamos que tienes una cita mañana {{appointment_date}} a las {{appointment_time}}.
+
+Estilista: {{stylist_name}}
+Servicio: {{service_name}}
+
+Si necesitas cancelar o reprogramar, contáctanos.''',
+                'available_variables': {
+                    'client_name': 'Nombre del cliente',
+                    'appointment_date': 'Fecha de la cita',
+                    'appointment_time': 'Hora de la cita',
+                    'stylist_name': 'Nombre del estilista',
+                    'service_name': 'Nombre del servicio'
+                }
+            },
+            {
+                'name': 'WhatsApp - Ganancias Disponibles',
+                'type': 'whatsapp',
+                'notification_type': 'earnings_available',
+                'subject': 'Nueva venta registrada',
+                'body': '''Hola {{employee_name}},
+
+Se registró una venta por {{sale_amount}} el {{sale_date}}.
+
+Tu comisión ({{commission_rate}}%) irá a tu próximo pago.
+
+¡Sigue así!''',
+                'available_variables': {
+                    'employee_name': 'Nombre del empleado',
+                    'sale_amount': 'Monto de la venta',
+                    'sale_date': 'Fecha de la venta',
+                    'commission_rate': 'Porcentaje de comisión'
+                }
+            },
+            {
+                'name': 'WhatsApp - Alerta de Stock Bajo',
+                'type': 'whatsapp',
+                'notification_type': 'stock_alert',
+                'subject': 'Stock Bajo',
+                'body': '''Alerta de inventario:
+
+"{{product_name}}" tiene stock bajo.
+
+Stock actual: {{current_stock}}
+Stock mínimo: {{min_stock}}
+
+Recomendamos hacer pedido pronto.''',
+                'available_variables': {
+                    'product_name': 'Nombre del producto',
+                    'current_stock': 'Stock actual',
+                    'min_stock': 'Stock mínimo',
+                    'supplier': 'Proveedor'
+                }
+            },
+            {
+                'name': 'WhatsApp - Suscripción por Vencer',
+                'type': 'whatsapp',
+                'notification_type': 'subscription_expiring',
+                'subject': 'Suscripción por vencer',
+                'body': '''Hola {{tenant_name}},
+
+Tu suscripción al plan {{plan_name}} vence el {{expiry_date}} ({{days_remaining}} días).
+
+Renueva antes para evitar interrupción del servicio.''',
+                'available_variables': {
+                    'tenant_name': 'Nombre del negocio',
+                    'plan_name': 'Nombre del plan',
+                    'expiry_date': 'Fecha de vencimiento',
+                    'days_remaining': 'Días restantes'
+                }
+            }
+        ]
+
         templates = [
             {
                 'name': 'Confirmación de Cita',
@@ -141,7 +242,8 @@ Equipo de Soporte''',
         ]
 
         created_count = 0
-        for template_data in templates:
+        all_templates = templates + wa_templates
+        for template_data in all_templates:
             template, created = NotificationTemplate.objects.get_or_create(
                 name=template_data['name'],
                 tenant=tenant,

@@ -3,13 +3,43 @@ from .models import Setting, Branch, SystemSettings, SECRET_FIELDS
 
 
 class BranchSerializer(serializers.ModelSerializer):
+    employee_count = serializers.SerializerMethodField()
+    is_main = serializers.BooleanField(default=False)
+
     class Meta:
         model = Branch
         fields = [
             "id",
             "name",
             "address",
+            "is_main",
+            "is_active",
+            "employee_count",
         ]
+        read_only_fields = ["employee_count"]
+
+    def get_employee_count(self, obj):
+        return obj.branch_employees.count() if hasattr(obj, 'branch_employees') else 0
+
+
+class BranchWriteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Branch
+        fields = ["id", "name", "address", "is_main", "is_active"]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        if request and attrs.get("is_main"):
+            tenant = getattr(request, "tenant", None) or getattr(request.user, "tenant", None)
+            if tenant:
+                existing_main = Branch.objects.filter(tenant=tenant, is_main=True)
+                if self.instance:
+                    existing_main = existing_main.exclude(pk=self.instance.pk)
+                if existing_main.exists():
+                    raise serializers.ValidationError(
+                        {"is_main": "Ya existe una sucursal principal"}
+                    )
+        return attrs
 
 
 class SettingSerializer(serializers.ModelSerializer):

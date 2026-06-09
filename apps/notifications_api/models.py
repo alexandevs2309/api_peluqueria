@@ -38,6 +38,7 @@ class NotificationTemplate(models.Model):
         ('email', 'Email'),
         ('sms', 'SMS'),
         ('push', 'Push Notification'),
+        ('whatsapp', 'WhatsApp'),
     ]
 
     NOTIFICATION_TYPES = [
@@ -155,6 +156,7 @@ class NotificationPreference(models.Model):
     email_enabled = models.BooleanField(default=True)
     sms_enabled = models.BooleanField(default=False)
     push_enabled = models.BooleanField(default=True)
+    whatsapp_enabled = models.BooleanField(default=False)
 
     # Tipos de notificación específicos
     appointment_reminders = models.BooleanField(default=True)
@@ -183,6 +185,7 @@ class NotificationLog(models.Model):
         ('email', 'Email'),
         ('sms', 'SMS'),
         ('push', 'Push'),
+        ('whatsapp', 'WhatsApp'),
     ])
     provider = models.CharField(max_length=50, help_text="SendGrid, Twilio, Firebase, etc.")
     external_id = models.CharField(max_length=255, blank=True, help_text="ID del proveedor externo")

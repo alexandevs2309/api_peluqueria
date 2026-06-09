@@ -98,10 +98,18 @@ def get_tenant_plan_features(tenant, expected_keys: list[str] | tuple[str, ...] 
     expected_keys = list(expected_keys or [])
     settings = getattr(tenant, "settings", None) or {}
     stored_features = settings.get(PLAN_SETTINGS_FEATURES_KEY)
+    subscription_plan = getattr(tenant, "subscription_plan", None)
+
     if isinstance(stored_features, dict):
+        if subscription_plan is not None:
+            plan_features = get_plan_features(subscription_plan)
+            merged = dict(plan_features)
+            for k, v in stored_features.items():
+                if k not in plan_features:
+                    merged[k] = v
+            return normalize_features_dict(merged, expected_keys)
         return normalize_features_dict(stored_features, expected_keys)
 
-    subscription_plan = getattr(tenant, "subscription_plan", None)
     if subscription_plan is not None:
         return get_plan_features(subscription_plan, expected_keys)
 

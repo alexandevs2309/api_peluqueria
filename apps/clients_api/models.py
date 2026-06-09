@@ -22,6 +22,7 @@ class Client(models.Model):
 
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, related_name='clients_created', db_index=True)
+    branch = models.ForeignKey('settings_api.Branch', on_delete=models.SET_NULL, null=True, blank=True, related_name='branch_clients')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

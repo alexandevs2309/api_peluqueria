@@ -21,10 +21,16 @@ class ProductCategorySerializer(serializers.ModelSerializer):
         return obj.products.filter(is_active=True).count()
 
 
+from apps.settings_api.models import Branch
+
+
 class ProductSerializer(serializers.ModelSerializer):
     sku = serializers.CharField(required=False, allow_blank=True, max_length=100)
     category = serializers.PrimaryKeyRelatedField(
         queryset=ProductCategory.objects.all(), allow_null=True, required=False
+    )
+    branch = serializers.PrimaryKeyRelatedField(
+        queryset=Branch.objects.all(), allow_null=True, required=False
     )
 
     def __init__(self, *args, **kwargs):
@@ -32,6 +38,7 @@ class ProductSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if request and hasattr(request, 'tenant') and request.tenant:
             self.fields['category'].queryset = ProductCategory.objects.filter(tenant=request.tenant)
+            self.fields['branch'].queryset = Branch.objects.filter(tenant=request.tenant)
         if 'image' in self.fields:
             self.fields['image'].error_messages['invalid_image'] = 'El archivo debe ser una imagen válida (JPEG, PNG, WebP, GIF).'
     category_name = serializers.SerializerMethodField()
@@ -42,7 +49,7 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = ['id', 'name', 'sku', 'barcode', 'price', 'stock', 'min_stock', 
                   'unit', 'is_active', 'description', 'category', 'category_name', 
-                  'image', 'image_url']
+                  'image', 'image_url', 'branch']
         read_only_fields = ['id', 'category_name', 'image_url']
 
     def validate_image(self, value):

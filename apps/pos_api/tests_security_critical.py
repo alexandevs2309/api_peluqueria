@@ -20,11 +20,12 @@ User = get_user_model()
 def authenticate_client(client, user):
     client.force_authenticate(user=user)
     if user:
-        refresh = RefreshToken.for_user(user)
+        from rest_framework_simplejwt.tokens import AccessToken
+        token = AccessToken.for_user(user)
         if getattr(user, 'tenant_id', None):
-            refresh['tenant_id'] = user.tenant_id
-        client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
-        client.cookies['access_token'] = str(refresh.access_token)
+            token['tenant_id'] = user.tenant_id
+        client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(token)}")
+        client.cookies['access_token'] = str(token)
     else:
         client.credentials()
         client.cookies.clear()

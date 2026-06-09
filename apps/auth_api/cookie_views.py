@@ -192,6 +192,7 @@ class CookieLoginView(APIView):
                 'is_active': user.is_active,
                 'date_joined': user.date_joined,
                 'avatar_url': user.avatar.url if user.avatar else None,
+                'branch_id': user.employee_profile.branch_id if hasattr(user, 'employee_profile') and user.employee_profile else None,
             },
             'message': 'Login exitoso con cookies'
         }

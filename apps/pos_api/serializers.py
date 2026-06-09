@@ -35,7 +35,7 @@ class SaleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Sale
-        fields = ['id', 'client', 'client_name', 'employee_name', 'user', 'user_name', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments' , 'appointment', 'points_earned', 'points_redeemed']
+        fields = ['id', 'branch', 'client', 'client_name', 'employee_name', 'user', 'user_name', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments', 'appointment', 'points_earned', 'points_redeemed']
         read_only_fields = ['user', 'user_name', 'date_time', 'closed', 'client_name', 'employee_name', 'points_earned', 'points_redeemed']
 
     def get_employee_name(self, obj):
@@ -139,7 +139,7 @@ class CashRegisterSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = CashRegister
-        fields = ['id', 'user', 'user_name', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
+        fields = ['id', 'user', 'user_name', 'branch', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
         read_only_fields = ['user', 'user_name', 'opened_at', 'closed_at', 'sales_amount']
     
     def get_sales_amount(self, obj):

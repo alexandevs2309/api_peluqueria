@@ -5,6 +5,7 @@ from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
 from apps.services_api.serializers import ServiceSerializer
 from django.contrib.auth import get_user_model
 from apps.auth_api.role_utils import get_effective_role_api
+from apps.settings_api.models import Branch
 
 User = get_user_model()
 
@@ -38,12 +39,22 @@ class EmployeeSerializer(serializers.ModelSerializer):
     user_id_read = serializers.IntegerField(source='user.id', read_only=True)
     service_ids = serializers.SerializerMethodField()
     services_count = serializers.SerializerMethodField()
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=False, allow_null=True)
 
     class Meta:
         model = Employee
-        fields = ['id', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'service_ids', 'services_count', 'created_at', 'updated_at']
+        fields = ['id', 'branch', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'service_ids', 'services_count', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
     
+    def validate_branch(self, value):
+        if value:
+            request = self.context.get('request')
+            if request and not request.user.is_superuser:
+                tenant = getattr(request, 'tenant', None)
+                if tenant and value.tenant_id != tenant.id:
+                    raise serializers.ValidationError("La sucursal seleccionada no pertenece a este negocio")
+        return value
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         # Asegurar que el usuario tenga la información completa

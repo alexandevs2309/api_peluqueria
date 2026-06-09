@@ -15,6 +15,7 @@ TENANT_ADMIN_APPS = [
     'notifications_api',
     'audit_api',
     'subscriptions_api',
+    'support_api',
 ]
 
 
@@ -50,6 +51,8 @@ ROLE_PERMISSIONS = {
         ('reports_api', 'view_kpi_dashboard'),
         ('settings_api', 'view_barbershopsettings'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
     ],
     'Client-Staff': [
         ('auth_api', 'view_user'),
@@ -67,6 +70,8 @@ ROLE_PERMISSIONS = {
         ('employees_api', 'change_attendancerecord'),
         ('settings_api', 'view_barbershopsettings'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
     ],
     'Cajera': [
         ('auth_api', 'view_user'),
@@ -144,6 +149,8 @@ ROLE_PERMISSIONS = {
         ('inventory_api', 'view_product'),
         ('settings_api', 'view_barbershopsettings'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
     ],
     'professional': [
         ('auth_api', 'view_user'),
@@ -164,6 +171,8 @@ ROLE_PERMISSIONS = {
         ('employees_api', 'view_employee_payroll'),
         ('settings_api', 'view_barbershopsettings'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
     ],
     'internal_support': [
         ('auth_api', 'view_user'),
@@ -174,6 +183,9 @@ ROLE_PERMISSIONS = {
         ('pos_api', 'view_posconfiguration'),
         ('settings_api', 'view_barbershopsettings'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
+        ('support_api', 'change_supportticket'),
     ],
 }
 

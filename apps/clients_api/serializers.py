@@ -9,7 +9,7 @@ class ClientSerializer(serializers.ModelSerializer):
             'id', 'full_name', 'email', 'phone', 'birthday', 'gender',
             'preferred_stylist', 'loyalty_points', 'last_visit', 'source',
             'notes', 'is_active', 'created_by', 'created_at', 'updated_at',
-            'user', 'tenant',
+            'user', 'tenant', 'branch',
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at', 'last_visit', 'loyalty_points', 'user', 'tenant']
 

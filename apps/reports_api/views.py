@@ -16,6 +16,18 @@ from apps.settings_api.policy_utils import (
     calculate_platform_commission,
     calculate_platform_net_revenue,
 )
+from django.http import HttpResponse
+
+def get_report_branch_id(request):
+    branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
+    user = request.user
+    if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=getattr(request, 'tenant', user.tenant))
+        if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+    return branch_id
 
 @api_view(['GET'])
 @permission_classes([tenant_permission('reports_api.view_employee_reports')])
@@ -26,20 +38,26 @@ def employee_report(request):
     from apps.pos_api.models import Sale
     
     tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
     
+    employee_filter = {'tenant': tenant}
+    sale_filter = {'employee__tenant': tenant, 'employee__isnull': False}
+    if branch_id:
+        employee_filter['branch_id'] = branch_id
+        sale_filter['branch_id'] = branch_id
+        
     # Estadísticas básicas
-    total_employees = Employee.objects.filter(tenant=tenant).count()
-    active_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
+    total_employees = Employee.objects.filter(**employee_filter).count()
+    active_employees = Employee.objects.filter(**employee_filter, is_active=True).count()
     
     # Empleados por especialidad
     employees_by_specialty = Employee.objects.filter(
-        tenant=tenant, is_active=True
+        **employee_filter, is_active=True
     ).values('specialty').annotate(count=Count('id'))
     
     # Top performers REALES desde ventas
     top_performers = Sale.objects.filter(
-        employee__tenant=tenant,
-        employee__isnull=False
+        **sale_filter
     ).values(
         'employee__user__full_name',
         'employee__specialty'
@@ -72,17 +90,25 @@ def sales_report(request):
     from datetime import datetime, timedelta
     
     tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+    
+    sale_filter = {'user__tenant': tenant}
+    detail_filter = {'sale__user__tenant': tenant, 'content_type__model': 'service'}
+    if branch_id:
+        sale_filter['branch_id'] = branch_id
+        detail_filter['sale__branch_id'] = branch_id
+
     now = timezone.now()
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
     # Ventas totales
-    total_sales = Sale.objects.filter(user__tenant=tenant).aggregate(
+    total_sales = Sale.objects.filter(**sale_filter).aggregate(
         total=Sum('total')
     )['total'] or 0
     
     # Ventas del mes
     monthly_sales = Sale.objects.filter(
-        user__tenant=tenant,
+        **sale_filter,
         date_time__gte=month_start
     ).aggregate(total=Sum('total'))['total'] or 0
     
@@ -94,7 +120,7 @@ def sales_report(request):
         day_end = day_start + timedelta(days=1)
         
         day_sales = Sale.objects.filter(
-            user__tenant=tenant,
+            **sale_filter,
             date_time__gte=day_start,
             date_time__lt=day_end
         ).aggregate(total=Sum('total'))['total'] or 0
@@ -106,8 +132,7 @@ def sales_report(request):
     
     # Servicios más vendidos REALES
     top_services = SaleDetail.objects.filter(
-        sale__user__tenant=tenant,
-        content_type__model='service'
+        **detail_filter
     ).values('name').annotate(
         total_sold=Sum('quantity'),
         total_revenue=Sum('price')
@@ -131,29 +156,32 @@ def dashboard_stats(request):
     from apps.pos_api.models import Sale
     from apps.appointments_api.models import Appointment
     
-    # Cache key basado en tenant
-    cache_key = f'dashboard_stats_{getattr(getattr(request, 'tenant', request.user.tenant), "id", "none")}'
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+    
+    # Cache key basado en tenant y branch
+    cache_key = f'dashboard_stats_{getattr(tenant, "id", "none")}_branch_{branch_id or "all"}'
     cached_data = cache.get(cache_key)
     
     if cached_data:
         return Response(cached_data)
     
-    tenant = getattr(request, 'tenant', request.user.tenant)
     month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     
-    # Estadísticas básicas que sabemos que funcionan
-    total_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
-    active_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
+    employee_filter = {'tenant': tenant, 'is_active': True}
+    appointment_filter = {'client__tenant': tenant, 'date_time__gte': month_start}
+    sale_filter = {'user__tenant': tenant, 'date_time__gte': month_start}
     
-    monthly_appointments = Appointment.objects.filter(
-        client__tenant=tenant,
-        date_time__gte=month_start
-    ).count()
-
-    monthly_revenue = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__gte=month_start
-    ).aggregate(total=Sum('total'))['total'] or 0
+    if branch_id:
+        employee_filter['branch_id'] = branch_id
+        appointment_filter['branch_id'] = branch_id
+        sale_filter['branch_id'] = branch_id
+        
+    # Estadísticas básicas
+    total_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
+    active_employees = Employee.objects.filter(**employee_filter).count()
+    monthly_appointments = Appointment.objects.filter(**appointment_filter).count()
+    monthly_revenue = Sale.objects.filter(**sale_filter).aggregate(total=Sum('total'))['total'] or 0
 
     data = {
         'total_clients': total_clients,
@@ -174,6 +202,7 @@ def reports_by_type(request):
     """Reportes por tipo (appointments, sales, etc.)"""
     report_type = request.GET.get('type', 'general')
     tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
     
     if report_type == 'appointments':
         from apps.appointments_api.models import Appointment
@@ -187,11 +216,15 @@ def reports_by_type(request):
             month_start = (timezone.now() - timedelta(days=30*i)).replace(day=1)
             month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
             
-            count = Appointment.objects.filter(
-                client__tenant=tenant,
-                date_time__gte=month_start,
-                date_time__lte=month_end
-            ).count()
+            filters = {
+                'client__tenant': tenant,
+                'date_time__gte': month_start,
+                'date_time__lte': month_end
+            }
+            if branch_id:
+                filters['branch_id'] = branch_id
+                
+            count = Appointment.objects.filter(**filters).count()
             
             data.insert(0, count)
             labels.insert(0, month_start.strftime('%b'))
@@ -201,6 +234,7 @@ def reports_by_type(request):
     elif report_type == 'sales':
         from apps.pos_api.models import Sale
         from django.db.models import Sum
+        from datetime import datetime, timedelta
         
         # Últimos 6 meses de ventas
         data = []
@@ -209,11 +243,15 @@ def reports_by_type(request):
             month_start = (timezone.now() - timedelta(days=30*i)).replace(day=1)
             month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
             
-            total = Sale.objects.filter(
-                user__tenant=tenant,
-                date_time__gte=month_start,
-                date_time__lte=month_end
-            ).aggregate(total=Sum('total'))['total'] or 0
+            filters = {
+                'user__tenant': tenant,
+                'date_time__gte': month_start,
+                'date_time__lte': month_end
+            }
+            if branch_id:
+                filters['branch_id'] = branch_id
+                
+            total = Sale.objects.filter(**filters).aggregate(total=Sum('total'))['total'] or 0
             
             data.insert(0, float(total))
             labels.insert(0, month_start.strftime('%b'))
@@ -389,11 +427,16 @@ def appointments_calendar_data(request):
     except ValueError:
         return Response({'error': 'Formato de fecha inválido'}, status=400)
     
-    appointments = Appointment.objects.filter(
-        client__tenant=getattr(request, 'tenant', request.user.tenant),
-        date_time__gte=start,
-        date_time__lte=end
-    ).select_related('client', 'stylist', 'service')
+    branch_id = get_report_branch_id(request)
+    filters = {
+        'client__tenant': getattr(request, 'tenant', request.user.tenant),
+        'date_time__gte': start,
+        'date_time__lte': end
+    }
+    if branch_id:
+        filters['branch_id'] = branch_id
+
+    appointments = Appointment.objects.filter(**filters).select_related('client', 'stylist', 'service')
     
     # Aplicar paginación si hay muchos resultados
     if appointments.count() > 100:
@@ -440,49 +483,49 @@ def kpi_dashboard(request):
     from apps.appointments_api.models import Appointment
     from django.db.models import Sum, Count, Avg
     
-    # Cache key basado en tenant
-    cache_key = f'kpi_dashboard_{getattr(getattr(request, 'tenant', request.user.tenant), "id", "none")}'
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+    
+    # Cache key basado en tenant y sucursal
+    cache_key = f'kpi_dashboard_{getattr(tenant, "id", "none")}_branch_{branch_id or "all"}'
     cached_data = cache.get(cache_key)
     
     if cached_data:
         return Response(cached_data)
     
-    tenant = getattr(request, 'tenant', request.user.tenant)
     today = timezone.now().date()
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
     
-    # KPIs del mes
-    monthly_revenue = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__date__gte=month_start
-    ).aggregate(total=Sum('total'))['total'] or 0
+    sale_monthly_filter = {'user__tenant': tenant, 'date_time__date__gte': month_start}
+    appointment_monthly_filter = {'client__tenant': tenant, 'date_time__date__gte': month_start}
     
-    monthly_appointments = Appointment.objects.filter(
-        client__tenant=tenant,
-        date_time__date__gte=month_start
-    ).count()
+    sale_weekly_filter = {'user__tenant': tenant, 'date_time__date__gte': week_start}
+    appointment_weekly_filter = {'client__tenant': tenant, 'date_time__date__gte': week_start}
+    
+    employee_filter = {'tenant': tenant, 'is_active': True}
+    
+    if branch_id:
+        sale_monthly_filter['branch_id'] = branch_id
+        appointment_monthly_filter['branch_id'] = branch_id
+        sale_weekly_filter['branch_id'] = branch_id
+        appointment_weekly_filter['branch_id'] = branch_id
+        employee_filter['branch_id'] = branch_id
+    
+    # KPIs del mes
+    monthly_revenue = Sale.objects.filter(**sale_monthly_filter).aggregate(total=Sum('total'))['total'] or 0
+    monthly_appointments = Appointment.objects.filter(**appointment_monthly_filter).count()
     
     # KPIs de la semana
-    weekly_revenue = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__date__gte=week_start
-    ).aggregate(total=Sum('total'))['total'] or 0
+    weekly_revenue = Sale.objects.filter(**sale_weekly_filter).aggregate(total=Sum('total'))['total'] or 0
+    weekly_appointments = Appointment.objects.filter(**appointment_weekly_filter).count()
     
-    weekly_appointments = Appointment.objects.filter(
-        client__tenant=tenant,
-        date_time__date__gte=week_start
-    ).count()
-    
-    # KPIs generales
+    # KPIs generales (Clients are global, Employees scoped)
     total_clients = Client.objects.filter(tenant=tenant, is_active=True).count()
-    active_employees = Employee.objects.filter(tenant=tenant, is_active=True).count()
+    active_employees = Employee.objects.filter(**employee_filter).count()
     
     # Ticket promedio
-    avg_ticket = Sale.objects.filter(
-        user__tenant=tenant,
-        date_time__date__gte=month_start
-    ).aggregate(avg=Avg('total'))['avg'] or 0
+    avg_ticket = Sale.objects.filter(**sale_monthly_filter).aggregate(avg=Avg('total'))['avg'] or 0
     
     data = {
         'monthly': {
@@ -515,15 +558,20 @@ def services_performance(request):
     from django.db.models import Sum, Count
     
     tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
     days = int(request.GET.get('days', 30))
     start_date = timezone.now() - timedelta(days=days)
     
+    filters = {
+        'sale__user__tenant': tenant,
+        'sale__date_time__gte': start_date,
+        'content_type__model': 'service'
+    }
+    if branch_id:
+        filters['sale__branch_id'] = branch_id
+
     # Top servicios por ventas
-    services_data = SaleDetail.objects.filter(
-        sale__user__tenant=tenant,
-        sale__date_time__gte=start_date,
-        content_type__model='service'
-    ).values('name').annotate(
+    services_data = SaleDetail.objects.filter(**filters).values('name').annotate(
         total_sales=Sum('price'),
         quantity_sold=Sum('quantity')
     ).order_by('-total_sales')
@@ -553,30 +601,221 @@ def client_analytics(request):
     from django.db.models import Count, Q
     
     tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+    month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    current_month = timezone.now().month
+
+    client_filter = {'tenant': tenant, 'is_active': True}
+    new_client_filter = {'tenant': tenant, 'created_at__gte': month_start}
+    birthday_filter = {'tenant': tenant, 'birthday__month': current_month, 'is_active': True}
+    
+    if branch_id:
+        client_filter['client_appointments__branch_id'] = branch_id
+        new_client_filter['client_appointments__branch_id'] = branch_id
+        birthday_filter['client_appointments__branch_id'] = branch_id
     
     # Clientes por género
-    gender_stats = Client.objects.filter(tenant=tenant, is_active=True).values('gender').annotate(
-        count=Count('id')
+    gender_stats = Client.objects.filter(**client_filter).distinct().values('gender').annotate(
+        count=Count('id', distinct=True)
     )
     
     # Clientes nuevos vs recurrentes (este mes)
-    month_start = timezone.now().replace(day=1)
-    new_clients = Client.objects.filter(
-        tenant=tenant,
-        created_at__gte=month_start
-    ).count()
+    new_clients = Client.objects.filter(**new_client_filter).distinct().count()
     
     # Clientes con cumpleaños este mes
-    current_month = timezone.now().month
-    birthday_clients = Client.objects.filter(
-        tenant=tenant,
-        birthday__month=current_month,
-        is_active=True
-    ).count()
+    birthday_clients = Client.objects.filter(**birthday_filter).distinct().count()
     
     return Response({
         'gender_distribution': list(gender_stats),
         'new_clients_this_month': new_clients,
         'birthday_clients': birthday_clients,
-        'total_active': Client.objects.filter(tenant=tenant, is_active=True).count()
+        'total_active': Client.objects.filter(**client_filter).distinct().count()
     })
+
+
+@api_view(['GET'])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
+@requires_feature('export_reports')
+def export_report(request):
+    """Exportar reportes a Excel - Solo Enterprise"""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    report_type = request.GET.get('type', 'sales')
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+
+    wb = Workbook()
+    ws = wb.active
+
+    header_font = Font(bold=True, color='FFFFFF', size=11)
+    header_fill = PatternFill(start_color='4F46E5', end_color='4F46E5', fill_type='solid')
+    header_alignment = Alignment(horizontal='center', vertical='center')
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    def style_header(ws, headers):
+        for col, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col, value=header)
+            cell.font = header_font
+            cell.fill = header_fill
+            cell.alignment = header_alignment
+            cell.border = thin_border
+        ws.freeze_panes = 'A2'
+
+    filters = {}
+    if branch_id:
+        filters['branch_id'] = branch_id
+
+    if report_type == 'sales':
+        from apps.pos_api.models import Sale
+        headers = ['ID', 'Fecha', 'Cliente', 'Empleado', 'Total', 'Método de pago', 'Estado', 'Sucursal']
+        style_header(ws, headers)
+
+        base_filter = {'user__tenant': tenant}
+        base_filter.update(filters)
+        sales = Sale.objects.filter(**base_filter).select_related(
+            'client', 'employee__user', 'branch'
+        ).order_by('-date_time')[:5000]
+
+        for row_idx, sale in enumerate(sales, 2):
+            ws.cell(row=row_idx, column=1, value=sale.id).border = thin_border
+            ws.cell(row=row_idx, column=2, value=sale.date_time.strftime('%Y-%m-%d %H:%M') if sale.date_time else '').border = thin_border
+            ws.cell(row=row_idx, column=3, value=sale.client.full_name if sale.client else '—').border = thin_border
+            ws.cell(row=row_idx, column=4, value=sale.employee.user.full_name if sale.employee and sale.employee.user else '—').border = thin_border
+            ws.cell(row=row_idx, column=5, value=float(sale.total)).border = thin_border
+            ws.cell(row=row_idx, column=6, value=sale.payment_method or '—').border = thin_border
+            ws.cell(row=row_idx, column=7, value=sale.status or '—').border = thin_border
+            ws.cell(row=row_idx, column=8, value=sale.branch.name if sale.branch else '—').border = thin_border
+        ws.column_dimensions['C'].width = 25
+        ws.column_dimensions['D'].width = 25
+
+    elif report_type == 'appointments':
+        from apps.appointments_api.models import Appointment
+        headers = ['ID', 'Fecha', 'Cliente', 'Servicio', 'Empleado', 'Estado', 'Sucursal']
+        style_header(ws, headers)
+
+        base_filter = {'client__tenant': tenant}
+        base_filter.update(filters)
+        appointments = Appointment.objects.filter(**base_filter).select_related(
+            'client', 'service', 'stylist', 'branch'
+        ).order_by('-date_time')[:5000]
+
+        for row_idx, apt in enumerate(appointments, 2):
+            ws.cell(row=row_idx, column=1, value=apt.id).border = thin_border
+            ws.cell(row=row_idx, column=2, value=apt.date_time.strftime('%Y-%m-%d %H:%M') if apt.date_time else '').border = thin_border
+            ws.cell(row=row_idx, column=3, value=apt.client.full_name if apt.client else '—').border = thin_border
+            ws.cell(row=row_idx, column=4, value=apt.service.name if apt.service else '—').border = thin_border
+            ws.cell(row=row_idx, column=5, value=apt.stylist.full_name if apt.stylist else '—').border = thin_border
+            ws.cell(row=row_idx, column=6, value=apt.status or '—').border = thin_border
+            ws.cell(row=row_idx, column=7, value=apt.branch.name if apt.branch else '—').border = thin_border
+        ws.column_dimensions['C'].width = 25
+        ws.column_dimensions['D'].width = 22
+        ws.column_dimensions['E'].width = 25
+
+    elif report_type == 'employees':
+        from apps.employees_api.models import Employee
+        headers = ['ID', 'Nombre', 'Email', 'Teléfono', 'Rol', 'Especialidad', 'Estado', 'Sucursal']
+        style_header(ws, headers)
+
+        base_filter = {'tenant': tenant}
+        base_filter.update(filters)
+        employees = Employee.objects.filter(**base_filter).select_related('user', 'branch')
+
+        for row_idx, emp in enumerate(employees, 2):
+            ws.cell(row=row_idx, column=1, value=emp.id).border = thin_border
+            ws.cell(row=row_idx, column=2, value=emp.user.full_name if emp.user else '—').border = thin_border
+            ws.cell(row=row_idx, column=3, value=emp.user.email if emp.user else '—').border = thin_border
+            ws.cell(row=row_idx, column=4, value=emp.phone or '—').border = thin_border
+            ws.cell(row=row_idx, column=5, value=emp.user.business_role if emp.user else '—').border = thin_border
+            ws.cell(row=row_idx, column=6, value=emp.specialty or '—').border = thin_border
+            ws.cell(row=row_idx, column=7, value='Activo' if emp.is_active else 'Inactivo').border = thin_border
+            ws.cell(row=row_idx, column=8, value=emp.branch.name if emp.branch else '—').border = thin_border
+        ws.column_dimensions['B'].width = 25
+        ws.column_dimensions['C'].width = 30
+
+    elif report_type == 'clients':
+        from apps.clients_api.models import Client
+        headers = ['ID', 'Nombre', 'Email', 'Teléfono', 'Género', 'Cumpleaños', 'Notas', 'Estado', 'Sucursal']
+        style_header(ws, headers)
+
+        base_filter = {'tenant': tenant}
+        if branch_id:
+            base_filter['branch_id'] = branch_id
+        clients = Client.objects.filter(**base_filter).select_related('branch').order_by('-created_at')[:5000]
+
+        for row_idx, client in enumerate(clients, 2):
+            ws.cell(row=row_idx, column=1, value=client.id).border = thin_border
+            ws.cell(row=row_idx, column=2, value=client.full_name).border = thin_border
+            ws.cell(row=row_idx, column=3, value=client.email or '—').border = thin_border
+            ws.cell(row=row_idx, column=4, value=client.phone or '—').border = thin_border
+            ws.cell(row=row_idx, column=5, value=dict(client.GENDER_CHOICES).get(client.gender, '—') if client.gender else '—').border = thin_border
+            ws.cell(row=row_idx, column=6, value=client.birthday.strftime('%Y-%m-%d') if client.birthday else '—').border = thin_border
+            ws.cell(row=row_idx, column=7, value=client.notes or '—').border = thin_border
+            ws.cell(row=row_idx, column=8, value='Activo' if client.is_active else 'Inactivo').border = thin_border
+            ws.cell(row=row_idx, column=9, value=client.branch.name if client.branch else '—').border = thin_border
+        ws.column_dimensions['B'].width = 25
+        ws.column_dimensions['C'].width = 30
+        ws.column_dimensions['G'].width = 30
+
+    elif report_type == 'services':
+        from apps.pos_api.models import SaleDetail
+        headers = ['Servicio', 'Cantidad vendida', 'Ingresos totales']
+        style_header(ws, headers)
+
+        detail_filters = {
+            'sale__user__tenant': tenant,
+            'content_type__model': 'service'
+        }
+        if branch_id:
+            detail_filters['sale__branch_id'] = branch_id
+
+        services = SaleDetail.objects.filter(**detail_filters).values('name').annotate(
+            total_sold=Sum('quantity'),
+            total_revenue=Sum('price')
+        ).order_by('-total_revenue')[:5000]
+
+        for row_idx, svc in enumerate(services, 2):
+            ws.cell(row=row_idx, column=1, value=svc['name']).border = thin_border
+            ws.cell(row=row_idx, column=2, value=svc['total_sold']).border = thin_border
+            ws.cell(row=row_idx, column=3, value=float(svc['total_revenue'])).border = thin_border
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['C'].width = 18
+
+    elif report_type == 'products':
+        from apps.pos_api.models import SaleDetail
+        headers = ['Producto', 'Cantidad vendida', 'Ingresos totales']
+        style_header(ws, headers)
+
+        detail_filters = {
+            'sale__user__tenant': tenant,
+            'content_type__model': 'product'
+        }
+        if branch_id:
+            detail_filters['sale__branch_id'] = branch_id
+
+        products = SaleDetail.objects.filter(**detail_filters).values('name').annotate(
+            total_sold=Sum('quantity'),
+            total_revenue=Sum('price')
+        ).order_by('-total_revenue')[:5000]
+
+        for row_idx, prod in enumerate(products, 2):
+            ws.cell(row=row_idx, column=1, value=prod['name']).border = thin_border
+            ws.cell(row=row_idx, column=2, value=prod['total_sold']).border = thin_border
+            ws.cell(row=row_idx, column=3, value=float(prod['total_revenue'])).border = thin_border
+        ws.column_dimensions['A'].width = 30
+        ws.column_dimensions['C'].width = 18
+
+    else:
+        return Response({'error': f'Tipo de reporte inválido: {report_type}'}, status=400)
+
+    response = HttpResponse(
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{report_type}_report_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
+    wb.save(response)
+    return response

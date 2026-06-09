@@ -29,11 +29,22 @@ class NotificationSerializer(serializers.ModelSerializer):
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = NotificationPreference
-        fields = ['id', 'email_enabled', 'sms_enabled', 'push_enabled',
+        fields = ['id', 'email_enabled', 'sms_enabled', 'push_enabled', 'whatsapp_enabled',
                   'appointment_reminders', 'payment_notifications',
                   'earnings_notifications', 'system_notifications',
                   'marketing_notifications', 'quiet_hours_start', 'quiet_hours_end',
                   'timezone']
+
+    def validate_whatsapp_enabled(self, value):
+        if not value:
+            return value
+        request = self.context.get('request')
+        if request and not request.user.is_superuser:
+            from apps.subscriptions_api.permissions import tenant_has_feature
+            tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+            if not tenant or not tenant_has_feature(tenant, 'whatsapp_notifications'):
+                raise serializers.ValidationError('Tu plan no incluye notificaciones por WhatsApp. Actualiza a Enterprise.')
+        return value
 
 class NotificationLogSerializer(serializers.ModelSerializer):
     notification_subject = serializers.CharField(source='notification.subject', read_only=True)

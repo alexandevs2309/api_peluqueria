@@ -103,3 +103,4 @@ uvicorn[standard]==0.34.0
 vine==5.1.0
 wcwidth==0.2.13
 twilio==9.10.9
+openpyxl

@@ -143,6 +143,7 @@ INSTALLED_APPS = [
     'apps.audit_api',
     'apps.payments_api',
     'apps.notifications_api',
+    'apps.support_api',
 ]
 
 MIDDLEWARE = [

@@ -22,6 +22,7 @@ class Sale(models.Model):
     
     # ✅ CAMPO TENANT DIRECTO para filtrado eficiente
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='sales', null=True)
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_sales')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='sales', null=True, blank=True)
     employee = models.ForeignKey('employees_api.Employee', on_delete=models.SET_NULL, null=True, blank=True, related_name='sales')
     client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales', db_index=True)
@@ -233,6 +234,7 @@ class Payment(models.Model):
 
 class CashRegister(models.Model):
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='cash_registers', null=True)
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_cash_registers')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='cash_registers')
     opened_at = models.DateTimeField(auto_now_add=True)
     closed_at = models.DateTimeField(null=True, blank=True)

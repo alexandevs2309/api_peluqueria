@@ -65,15 +65,29 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     "El estilista no ofrece este servicio"
                 )
         
-        # Asignar tenant automáticamente
+        # Asignar tenant automáticamente y validar sucursal
         tenant = None
-        if self.request.user.is_superuser:
+        user = self.request.user
+        if user.is_superuser:
             # SuperAdmin: usar tenant del client
             client = serializer.validated_data.get('client')
             if client and hasattr(client, 'tenant'):
                 tenant = client.tenant
         else:
             tenant = self.request.tenant
+
+        save_kwargs = {'tenant': tenant}
+
+        # Restricción y autoset de sucursal para empleados no administradores
+        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(user, tenant=tenant)
+            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user.employee_profile.branch_id:
+                    branch = serializer.validated_data.get('branch')
+                    if branch and branch.id != user.employee_profile.branch_id:
+                        raise serializers.ValidationError("No tienes permiso para programar citas en otra sucursal")
+                    save_kwargs['branch_id'] = user.employee_profile.branch_id
         
         # Validar que no hay conflictos de horario
         conflicting_appointments = Appointment.objects.filter(
@@ -102,7 +116,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     f"El estilista no trabaja en ese horario el {day_of_week}"
                 )
         
-        serializer.save(tenant=tenant)
+        serializer.save(**save_kwargs)
 
     @action(detail=False, methods=['get'])
     def availability(self, request):
@@ -254,6 +268,11 @@ def calendar_events(request):
     else:
         if tenant:
             base_filter &= Q(client__tenant=tenant)
+
+    # Filtrar por sucursal si se solicita
+    branch_id = request.GET.get('branch_id') or request.GET.get('branch')
+    if branch_id:
+        base_filter &= Q(branch_id=branch_id)
 
     appointments = Appointment.objects.filter(base_filter).select_related('client', 'stylist', 'service')
 

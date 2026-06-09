@@ -714,25 +714,40 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
         if user.is_superuser:
             tenant = getattr(self.request, 'tenant', None)
             if tenant:
-                return WorkSchedule.objects.filter(employee__tenant=tenant)
-            return WorkSchedule.objects.all()
-
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+                queryset = WorkSchedule.objects.filter(employee__tenant=tenant)
+            else:
+                queryset = WorkSchedule.objects.all()
+        elif not hasattr(self.request, 'tenant') or not self.request.tenant:
             return WorkSchedule.objects.none()
+        else:
+            is_tenant_admin = UserRole.objects.filter(
+                user=user,
+                tenant=self.request.tenant,
+                role__name__in=['Admin', 'Client-Admin', 'Manager']
+            ).exists()
 
-        is_tenant_admin = UserRole.objects.filter(
-            user=user,
-            tenant=self.request.tenant,
-            role__name__in=['Admin', 'Client-Admin', 'Manager']
-        ).exists()
+            if is_tenant_admin:
+                queryset = WorkSchedule.objects.filter(employee__tenant=self.request.tenant)
+            else:
+                queryset = WorkSchedule.objects.filter(
+                    employee__tenant=self.request.tenant,
+                    employee__user=user
+                )
 
-        if is_tenant_admin:
-            return WorkSchedule.objects.filter(employee__tenant=self.request.tenant)
+        branch_id = self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
+        
+        # Enforce branch restriction for non-admins
+        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(user, tenant=self.request.tenant)
+            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user.employee_profile.branch_id:
+                    branch_id = user.employee_profile.branch_id
 
-        return WorkSchedule.objects.filter(
-            employee__tenant=self.request.tenant,
-            employee__user=user
-        )
+        if branch_id:
+            queryset = queryset.filter(employee__branch_id=branch_id)
+
+        return queryset
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -782,25 +797,40 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
         if user.is_superuser:
             tenant = getattr(self.request, 'tenant', None)
             if tenant:
-                return self.queryset.filter(employee__tenant=tenant)
-            return self.queryset
-
-        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+                queryset = self.queryset.filter(employee__tenant=tenant)
+            else:
+                queryset = self.queryset
+        elif not hasattr(self.request, 'tenant') or not self.request.tenant:
             return AttendanceRecord.objects.none()
+        else:
+            is_tenant_admin = UserRole.objects.filter(
+                user=user,
+                tenant=self.request.tenant,
+                role__name__in=['Admin', 'Client-Admin', 'Manager']
+            ).exists()
 
-        is_tenant_admin = UserRole.objects.filter(
-            user=user,
-            tenant=self.request.tenant,
-            role__name__in=['Admin', 'Client-Admin', 'Manager']
-        ).exists()
+            if is_tenant_admin:
+                queryset = self.queryset.filter(employee__tenant=self.request.tenant)
+            else:
+                queryset = self.queryset.filter(
+                    employee__tenant=self.request.tenant,
+                    employee__user=user
+                )
 
-        if is_tenant_admin:
-            return self.queryset.filter(employee__tenant=self.request.tenant)
+        branch_id = self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
+        
+        # Enforce branch restriction for non-admins
+        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(user, tenant=self.request.tenant)
+            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user.employee_profile.branch_id:
+                    branch_id = user.employee_profile.branch_id
 
-        return self.queryset.filter(
-            employee__tenant=self.request.tenant,
-            employee__user=user
-        )
+        if branch_id:
+            queryset = queryset.filter(employee__branch_id=branch_id)
+
+        return queryset
 
     def perform_create(self, serializer):
         user = self.request.user

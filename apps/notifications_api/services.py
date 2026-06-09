@@ -64,6 +64,10 @@ class NotificationService:
                 if self._send_push(notification):
                     success = True
 
+            if preferences.whatsapp_enabled and notification.template.type == 'whatsapp':
+                if self._send_whatsapp(notification):
+                    success = True
+
             if success:
                 notification.status = 'sent'
                 notification.sent_at = timezone.now()
@@ -150,6 +154,50 @@ class NotificationService:
             )
             return False
 
+    def _send_whatsapp(self, notification):
+        """
+        Enviar notificación por WhatsApp via Twilio
+        """
+        try:
+            from apps.settings_api.integration_service import IntegrationService
+            phone = getattr(notification.recipient, 'phone', None)
+            if not phone or not str(phone).strip():
+                logger.warning("Cannot send WhatsApp notification: recipient has no phone")
+                NotificationLog.objects.create(
+                    notification=notification,
+                    channel='whatsapp',
+                    provider='twilio',
+                    status='failed',
+                    error_message='Recipient has no phone number'
+                )
+                return False
+
+            if not str(phone).startswith('+'):
+                phone = f'+1{phone}' if str(phone).isdigit() else phone
+
+            IntegrationService.send_whatsapp(phone=phone, message=notification.message)
+
+            NotificationLog.objects.create(
+                notification=notification,
+                channel='whatsapp',
+                provider='twilio',
+                status='sent',
+                response_data={'phone': phone}
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"WhatsApp sending failed: {str(e)}")
+            NotificationLog.objects.create(
+                notification=notification,
+                channel='whatsapp',
+                provider='twilio',
+                status='failed',
+                error_message=str(e)
+            )
+            return False
+
     def _send_push(self, notification):
         """
         Enviar notificación push
@@ -200,6 +248,7 @@ class NotificationService:
                 'email_enabled': True,
                 'sms_enabled': False,
                 'push_enabled': True,
+                'whatsapp_enabled': False,
                 'appointment_reminders': True,
                 'payment_notifications': True,
                 'earnings_notifications': True,

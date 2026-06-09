@@ -15,6 +15,7 @@ class Appointment(models.Model):
     ]
 
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='appointments')
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_appointments')
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='client_appointments')
     stylist = models.ForeignKey(User, on_delete=models.CASCADE, related_name='stylist_appointments')
     service = models.ForeignKey(Service, on_delete=models.SET_NULL, null=True, blank=True, related_name='appointments')

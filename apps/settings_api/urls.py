@@ -4,10 +4,11 @@ from .integration_views import IntegrationStatusView, IntegrationTestView
 from .admin_views import SaasMetricsView, SystemMonitorView, test_integration_service, sync_role_permissions
 from .contact_views import demo_request, newsletter_signup
 from .barbershop_views import BarbershopSettingsViewSet
-from .views import PublicBrandingSettingsView
+from .views import BranchViewSet, PublicBrandingSettingsView
 
 router = DefaultRouter()
 router.register(r'barbershop', BarbershopSettingsViewSet, basename='barbershop-settings')
+router.register(r'branches', BranchViewSet, basename='branch')
 
 urlpatterns = [
     path('', include(router.urls)),

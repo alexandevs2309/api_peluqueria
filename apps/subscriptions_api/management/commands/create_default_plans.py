@@ -109,11 +109,12 @@ class Command(BaseCommand):
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    
+
                     'multi_location': True,
                     'role_permissions': True,
-                    'api_access': True,
-                    'custom_branding': True
+                    'custom_branding': True,
+                    'export_reports': False,
+                    'whatsapp_notifications': False
                 },
                 'commercial_benefits': [
                     'Pensado para operaciones con varias areas o sucursales',
@@ -138,12 +139,13 @@ class Command(BaseCommand):
                     'cash_register': True,
                     'client_history': True,
                     'inventory': True,
-                    
+
                     'multi_location': True,
                     'role_permissions': True,
-                    'api_access': True,
                     'custom_branding': True,
-                    'priority_support': True
+                    'priority_support': True,
+                    'export_reports': True,
+                    'whatsapp_notifications': True
                 },
                 'commercial_benefits': [
                     'Escala sin limite de empleados ni usuarios',
