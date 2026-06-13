@@ -61,6 +61,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             '/api/subscriptions/register/',  # Permitir registro
             '/api/subscriptions/register-with-plan/',  # Permitir registro con plan
             '/api/settings/contact/',
+            '/api/booking/',  # Auto-agendamiento público
         ]
         
         for exempt_path in exempt_paths:

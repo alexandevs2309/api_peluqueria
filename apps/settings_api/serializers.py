@@ -54,7 +54,15 @@ class SettingSerializer(serializers.ModelSerializer):
     preferences = serializers.JSONField(required=False)
     logo = serializers.ImageField(required=False, allow_null=True)
     theme = serializers.CharField(required=False)
-    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=True, allow_null=True)
+    branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.none(), required=True, allow_null=True)
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
 
     class Meta:
         model = Setting

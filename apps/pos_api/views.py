@@ -1183,11 +1183,17 @@ def daily_summary(request):
         # Obtener sesión de caja abierta
         open_register = None
         if tenant:
-            open_register = CashRegister.objects.filter(
-                user=request.user,
-                tenant=tenant,
-                is_open=True
-            ).first()
+            if request.user.is_superuser:
+                open_register = CashRegister.objects.filter(
+                    tenant=tenant,
+                    is_open=True
+                ).first()
+            else:
+                open_register = CashRegister.objects.filter(
+                    user=request.user,
+                    tenant=tenant,
+                    is_open=True
+                ).first()
         
         if open_register:
             # Filtrar ventas de esta sesión de caja

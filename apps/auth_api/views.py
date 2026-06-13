@@ -4,8 +4,6 @@ import logging
 import uuid
 import hashlib
 
-import requests
-
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 from rest_framework import generics, status, permissions
@@ -17,7 +15,6 @@ from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
-from django.core.mail import send_mail
 from apps.emails.service import EmailRenderer
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
@@ -72,9 +69,18 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 # Helper function to safely create audit logs
+def _resolve_tenant(request, user=None):
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None:
+        return tenant
+    if user is not None and user.is_authenticated:
+        return getattr(user, 'tenant', None)
+    return None
+
 def safe_create_login_audit(user, request, successful, message):
     """Crear LoginAudit truncando campos largos"""
     return LoginAudit.objects.create(
+        tenant=_resolve_tenant(request, user),
         user=user,
         ip_address=get_client_ip(request),
         user_agent=get_user_agent(request)[:255] if get_user_agent(request) else '',
@@ -86,6 +92,7 @@ def safe_create_login_audit(user, request, successful, message):
 def safe_create_access_log(user, event_type, request):
     """Crear AccessLog truncando campos largos"""
     return AccessLog.objects.create(
+        tenant=_resolve_tenant(request, user),
         user=user,
         event_type=event_type,
         ip_address=get_client_ip(request),
@@ -145,32 +152,15 @@ def _render_email_html(template_name, user, title, content='', cta_url=None, cta
         'support_url': getattr(settings, 'SUPPORT_URL', ''),
     })
 
-def _send_email_resend(to_email, subject, html_body):
-    api_key = getattr(settings, 'RESEND_API_KEY', '')
-
-    resp = requests.post(
-        'https://api.resend.com/emails',
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-        },
-        json={
-            'from': 'Auron Suite <notificaciones@auronsuite.com>',
-            'to': [to_email],
-            'subject': subject,
-            'html': html_body,
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    return resp.json()
-
 def _deliver_user_email(user, subject, text_body, html_body):
-    resend_key = getattr(settings, 'RESEND_API_KEY', '')
-    if resend_key and resend_key.startswith('re_'):
-        _send_email_resend(user.email, subject, html_body)
-    else:
-        send_mail(subject, text_body, settings.DEFAULT_FROM_EMAIL, [user.email], html_message=html_body)
+    from apps.auth_api.tasks import send_email_async
+    send_email_async.delay(
+        subject=subject,
+        message=text_body,
+        from_email='',
+        recipient_list=[user.email],
+        html_message=html_body,
+    )
 
 class RegisterThrottle(AnonRateThrottle):
     scope = 'register'

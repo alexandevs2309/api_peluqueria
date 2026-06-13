@@ -236,4 +236,9 @@ class SystemSettings(models.Model):
                 'enable_mfa': False
             }
         )
+        # Descifrar campos secretos en memoria para que estén listos para usar
+        for field in SECRET_FIELDS:
+            val = getattr(settings, field, '')
+            if val and settings._is_encrypted(val):
+                setattr(settings, field, settings._decrypt(val))
         return settings

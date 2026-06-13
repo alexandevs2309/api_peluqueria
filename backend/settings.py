@@ -144,6 +144,8 @@ INSTALLED_APPS = [
     'apps.payments_api',
     'apps.notifications_api',
     'apps.support_api',
+    'apps.tutorials_api',
+    'apps.booking_api',
 ]
 
 MIDDLEWARE = [
@@ -176,6 +178,7 @@ if DEBUG:
         'login': '10/min',
         'register': '5/hour',
         'password_reset': '5/hour',
+        'public_booking': '200/hour',
     }
 else:
     # Production: Strict security limits
@@ -185,6 +188,7 @@ else:
         'login': '5/min',
         'register': '1/day',  # 1 registro por IP/día en producción
         'password_reset': '3/hour',
+        'public_booking': '100/hour',
     }
 
 REST_FRAMEWORK = {

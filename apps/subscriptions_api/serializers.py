@@ -75,7 +75,7 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
             'cash_register': 'Caja y ventas en un solo lugar',
             'client_history': 'Historial completo de clientes',
             'inventory': 'Control de inventario en tiempo real',
-                        'multi_location': 'Gestion de multiples sucursales',
+                        'multi_location': 'Sucursales básicas: crea y organiza sucursales, asigna datos compatibles y consulta información consolidada. El aislamiento operativo avanzado por sucursal está en desarrollo.',
             'role_permissions': 'Permisos avanzados para el equipo',
             'api_access': 'Acceso a integraciones por API',
             'custom_branding': 'Logo personalizado para tu negocio',

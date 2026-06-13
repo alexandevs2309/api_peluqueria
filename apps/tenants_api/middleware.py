@@ -111,6 +111,7 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/subscriptions/register/',
             '/api/subscriptions/register-with-plan/',
             '/api/settings/contact/',  # Formulario público
+            '/api/booking/',  # Auto-agendamiento público
         ]
         if settings.DEBUG:
             exempt_paths.extend(['/api/schema/', '/api/docs/'])

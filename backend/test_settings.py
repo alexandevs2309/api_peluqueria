@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     'apps.settings_api',
     'apps.utils',
     'apps.support_api',
+    'apps.tutorials_api',
+    'apps.booking_api',
 ]
 
 MIDDLEWARE = [
@@ -77,6 +79,7 @@ MIGRATION_MODULES = {app: None for app in [
     'payments_api', 'notifications_api', 'audit_api', 'employees_api',
     'clients_api', 'services_api', 'appointments_api', 'pos_api',
     'inventory_api', 'reports_api', 'settings_api', 'support_api',
+    'tutorials_api', 'booking_api',
 ]}
 CELERY_TASK_ALWAYS_EAGER = True
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'

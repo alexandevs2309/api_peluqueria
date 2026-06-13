@@ -39,7 +39,7 @@ def demo_request(request):
         # Enviar email
         try:
             from apps.auth_api.tasks import send_email_async
-            contac_email = getattr(settings, 'CONTACT_EMAIL', None)
+            contac_email = getattr(settings, 'SUPPORT_EMAIL', None) or getattr(settings, 'CONTACT_EMAIL', None)
             if contac_email:
                 send_email_async.delay(
                     subject=subject,

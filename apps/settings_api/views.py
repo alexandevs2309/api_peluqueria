@@ -3,6 +3,7 @@ from django.views.decorators.cache import cache_page
 from rest_framework import generics, permissions, response, status, views
 
 from apps.core.permissions import IsSuperAdmin
+from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 
 from .models import Branch, SystemSettings
@@ -46,6 +47,7 @@ class PublicBrandingSettingsView(views.APIView):
 class BranchViewSet(TenantScopedViewSet):
     queryset = Branch.objects.all()
     pagination_class = None
+    permission_classes = [TenantPermissionByAction]
     permission_map = {
         'list': 'settings_api.view_branch',
         'create': 'settings_api.add_branch',

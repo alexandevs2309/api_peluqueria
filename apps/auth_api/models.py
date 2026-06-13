@@ -154,6 +154,7 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 
 class LoginAudit(models.Model):
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, null=True, blank=True, related_name="login_audits")
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="login_audits")
     ip_address = models.GenericIPAddressField(null=True, blank=True,)
     user_agent = models.CharField(max_length=255, blank=True, null=True)
@@ -165,10 +166,18 @@ class LoginAudit(models.Model):
         indexes = [
             models.Index(fields=['timestamp']),
             models.Index(fields=['successful']),
+            models.Index(fields=['tenant', 'timestamp']),
         ]
 
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.user_id is not None:
+            try:
+                self.tenant = self.user.tenant
+            except (User.DoesNotExist, AttributeError):
+                pass
+        super().save(*args, **kwargs)
+
     def __str__(self):
-        # Evitar resolver FK durante cascadas de borrado (puede lanzar User.DoesNotExist).
         user_label = f"user_id={self.user_id}" if self.user_id else "unknown"
         return f"Login attempt for {user_label} - {'Success' if self.successful else 'Failed'}"
     
@@ -183,6 +192,7 @@ EVENT_CHOICES = [
 ]
 
 class AccessLog(models.Model):
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, null=True, blank=True, related_name="access_logs")
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     event_type = models.CharField(max_length=30, choices=EVENT_CHOICES)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
@@ -193,7 +203,17 @@ class AccessLog(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['timestamp']),
+            models.Index(fields=['tenant', 'timestamp']),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.user_id is not None:
+            try:
+                self.tenant = self.user.tenant
+            except (User.DoesNotExist, AttributeError):
+                pass
+        super().save(*args, **kwargs)
+
     def __str__(self):
         user_label = f"user_id={self.user_id}" if self.user_id else "unknown"
         return f"{user_label} - {self.event_type} at {self.timestamp}"

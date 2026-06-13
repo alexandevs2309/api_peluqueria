@@ -20,10 +20,10 @@ class HasFeaturePermission(BasePermission):
         if request.user.is_superuser:
             return True
             
-        if not request.user.tenant:
+        tenant = getattr(request, 'tenant', None) or request.user.tenant
+        if not tenant:
             return False
             
-        tenant = request.user.tenant
         if not tenant.subscription_plan:
             return False
             
@@ -57,13 +57,13 @@ def requires_feature(feature_name):
             if request.user.is_superuser:
                 return call()
                 
-            if not request.user.tenant:
+            tenant = getattr(request, 'tenant', None) or request.user.tenant
+            if not tenant:
                 return Response(
                     {"error": "No tenant assigned"}, 
                     status=status.HTTP_403_FORBIDDEN
                 )
                 
-            tenant = request.user.tenant
             if not tenant.subscription_plan:
                 return Response(
                     {"error": "No subscription plan"}, 

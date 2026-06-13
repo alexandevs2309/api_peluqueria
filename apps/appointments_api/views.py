@@ -264,10 +264,10 @@ def calendar_events(request):
     if not request.user.is_superuser:
         if not tenant:
             return Response([], status=200)
-        base_filter &= Q(client__tenant=tenant)
+        base_filter &= Q(tenant=tenant)
     else:
         if tenant:
-            base_filter &= Q(client__tenant=tenant)
+            base_filter &= Q(tenant=tenant)
 
     # Filtrar por sucursal si se solicita
     branch_id = request.GET.get('branch_id') or request.GET.get('branch')

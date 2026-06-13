@@ -47,8 +47,17 @@ def _safe_user_agent(request) -> str:
     return (get_user_agent(request) or '')[:255]
 
 
+def _resolve_tenant(request, user=None):
+    tenant = getattr(request, 'tenant', None)
+    if tenant is not None:
+        return tenant
+    if user is not None and user.is_authenticated:
+        return getattr(user, 'tenant', None)
+    return None
+
 def _create_login_audit(user, request, successful: bool, message: str) -> None:
     LoginAudit.objects.create(
+        tenant=_resolve_tenant(request, user),
         user=user,
         ip_address=get_client_ip(request),
         user_agent=_safe_user_agent(request),

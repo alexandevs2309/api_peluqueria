@@ -1,6 +1,8 @@
 import json
 import logging
 
+logger = logging.getLogger(__name__)
+
 from django.db.models.signals import post_save, pre_save
 from django.db.models import Q
 from django.dispatch import receiver
@@ -52,42 +54,79 @@ def appointment_created(sender, instance, created, **kwargs):
             if not phone.startswith('+'):
                 phone = f'+1{phone}' if phone.isdigit() else phone
             from .tasks import send_sms
-            send_sms.delay(
-                phone=phone,
-                message=f"Recordatorio: Tienes una cita en la barbería el {instance.date_time.strftime('%d/%m/%Y')} a las {instance.date_time.strftime('%H:%M')}. Confirma o reagenda."
-            )
+            try:
+                send_sms.delay(
+                    phone=phone,
+                    message=f"Recordatorio: Tienes una cita en la barbería el {instance.date_time.strftime('%d/%m/%Y')} a las {instance.date_time.strftime('%H:%M')}. Confirma o reagenda."
+                )
+            except Exception as e:
+                logger.warning("Failed to send SMS to %s: %s", phone, str(e))
 
         # Notificación por email (si existe template)
         service = NotificationService()
-        try:
-            tenant = getattr(stylist, 'tenant', None) if stylist else None
-            template = NotificationTemplate.objects.get(
-                Q(notification_type='appointment_confirmation'),
-                Q(type='email'),
-                Q(tenant=tenant) | Q(tenant__isnull=True),
-                is_active=True
-            )
-            
-            context = {
+        tenant = getattr(stylist, 'tenant', None) if stylist else None
+        email_context = {
+            'client_name': client_name,
+            'appointment_date': instance.date_time.strftime('%d/%m/%Y'),
+            'appointment_time': instance.date_time.strftime('%H:%M'),
+            'stylist_name': stylist.full_name if stylist else 'Por asignar',
+            'service_name': instance.service.name if instance.service else 'Por definir',
+        }
+
+        recipient_user = client.user if client and hasattr(client, 'user') else None
+        if recipient_user:
+            try:
+                template = NotificationTemplate.objects.get(
+                    Q(notification_type='appointment_confirmation'),
+                    Q(type='email'),
+                    Q(tenant=tenant) | Q(tenant__isnull=True),
+                    is_active=True
+                )
+                service.create_notification(
+                    recipient=recipient_user,
+                    template=template,
+                    context_data=email_context
+                )
+            except NotificationTemplate.DoesNotExist:
+                pass
+        elif client and client.email:
+            from apps.settings_api.integration_service import IntegrationService
+            try:
+                template = NotificationTemplate.objects.get(
+                    Q(notification_type='appointment_confirmation'),
+                    Q(type='email'),
+                    Q(tenant=tenant) | Q(tenant__isnull=True),
+                    is_active=True
+                )
+                message = service._render_template(template.body, email_context)
+                subject = service._render_template(template.subject or 'Confirmación de cita', email_context)
+                try:
+                    IntegrationService.send_email(
+                        to_email=client.email,
+                        subject=subject,
+                        message=message,
+                    )
+                except Exception as e:
+                    logger.warning("Failed to send confirmation email to %s: %s", client.email, str(e))
+            except NotificationTemplate.DoesNotExist:
+                try:
+                    IntegrationService.send_email(
+                        to_email=client.email,
+                        subject="Confirmación de cita",
+                        message=f"Hola {client_name}, tu cita fue agendada para el {email_context['appointment_date']} a las {email_context['appointment_time']} con {email_context['stylist_name']}.",
+                    )
+                except Exception as e:
+                    logger.warning("Failed to send fallback confirmation email to %s: %s", client.email, str(e))
+
+        # WhatsApp al cliente (si existe template y tiene teléfono)
+        if client and client.phone:
+            wa_context = {
                 'client_name': client_name,
                 'appointment_date': instance.date_time.strftime('%d/%m/%Y'),
                 'appointment_time': instance.date_time.strftime('%H:%M'),
                 'stylist_name': stylist.full_name if stylist else 'Por asignar',
                 'service_name': instance.service.name if instance.service else 'Por definir'
             }
-            
-            recipient_user = client.user if client and hasattr(client, 'user') else None
-            if recipient_user:
-                service.create_notification(
-                    recipient=recipient_user,
-                    template=template,
-                    context_data=context
-                )
-        except NotificationTemplate.DoesNotExist:
-            pass
-
-        # WhatsApp al cliente (si existe template y tiene teléfono)
-        if client and client.phone:
             try:
                 wa_template = NotificationTemplate.objects.get(
                     Q(notification_type='appointment_confirmation'),
@@ -95,13 +134,6 @@ def appointment_created(sender, instance, created, **kwargs):
                     Q(tenant=tenant) | Q(tenant__isnull=True),
                     is_active=True
                 )
-                wa_context = {
-                    'client_name': client_name,
-                    'appointment_date': instance.date_time.strftime('%d/%m/%Y'),
-                    'appointment_time': instance.date_time.strftime('%H:%M'),
-                    'stylist_name': stylist.full_name if stylist else 'Por asignar',
-                    'service_name': instance.service.name if instance.service else 'Por definir'
-                }
                 recipient_user = client.user if hasattr(client, 'user') else None
                 if recipient_user:
                     service.create_notification(
@@ -109,6 +141,16 @@ def appointment_created(sender, instance, created, **kwargs):
                         template=wa_template,
                         context_data=wa_context
                     )
+                else:
+                    from apps.settings_api.integration_service import IntegrationService
+                    message = service._render_template(wa_template.body, wa_context)
+                    try:
+                        IntegrationService.send_whatsapp(
+                            phone=client.phone,
+                            message=message,
+                        )
+                    except Exception as e:
+                        logger.warning("Failed to send WhatsApp to %s: %s", client.phone, str(e))
             except NotificationTemplate.DoesNotExist:
                 pass
 

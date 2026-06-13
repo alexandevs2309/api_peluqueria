@@ -75,6 +75,8 @@ urlpatterns = [
         path('audit/', include('apps.audit_api.urls')),
         path('notifications/', include('apps.notifications_api.urls')),
         path('support/', include('apps.support_api.urls')),
+        path('tutorials/', include('apps.tutorials_api.urls')),
+        path('booking/', include('apps.booking_api.urls')),
 
         path("healthz/", health_check, name="health_check"),
         path("sentry-test/", sentry_test, name="sentry_test"),
