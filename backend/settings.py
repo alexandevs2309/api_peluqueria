@@ -173,8 +173,8 @@ MIDDLEWARE = [
 # Rate limiting configuration by environment
 if DEBUG:
     THROTTLE_RATES = {
-        'user': '10000/hour',
-        'anon': '200/hour', 
+        'user': '100000/hour',
+        'anon': '10000/hour', 
         'login': '10/min',
         'register': '5/hour',
         'password_reset': '5/hour',
@@ -298,6 +298,8 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 
 
 # Database — soporta DATABASE_URL (Render) y variables individuales (Docker local)
+# DB_SCHEMA — separar tablas por schema (útil para staging en misma DB)
+_db_schema = env('DB_SCHEMA', default='')
 _pgbouncer_enabled = env.bool('PGBOUNCER_ENABLED', default=False)
 
 # Con PgBouncer en modo transaction: CONN_MAX_AGE=0 para no dejar conexiones abiertas
@@ -311,12 +313,14 @@ if _database_url:
         engine='django_prometheus.db.backends.postgresql',
     )
     _db_config.setdefault('OPTIONS', {})
+    _db_schema_opts = f'-c search_path={_db_schema},public -c statement_timeout=30000' if _db_schema else '-c statement_timeout=30000'
     _db_config['OPTIONS'].update({
         'connect_timeout': 10,
-        'options': '-c statement_timeout=30000',
+        'options': _db_schema_opts,
     })
     DATABASES = {'default': _db_config}
 else:
+    _db_schema_opts = f'-c search_path={_db_schema},public -c statement_timeout=30000' if _db_schema else '-c statement_timeout=30000'
     DATABASES = {
         'default': {
             'ENGINE': 'django_prometheus.db.backends.postgresql',
@@ -328,7 +332,7 @@ else:
             'CONN_MAX_AGE': _conn_max_age,
             'OPTIONS': {
                 'connect_timeout': 10,
-                'options': '-c statement_timeout=30000',
+                'options': _db_schema_opts,
             },
         }
     }

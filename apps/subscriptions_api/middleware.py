@@ -189,9 +189,9 @@ class APIRateLimitMiddleware(MiddlewareMixin):
     
     # Límites por plan (requests por hora)
     RATE_LIMITS = {
-        'basic': {'read': 1200, 'write': 250},
-        'standard': {'read': 5000, 'write': 1000},
-        'premium': {'read': 15000, 'write': 3000},
+        'basic': {'read': 10000, 'write': 500},
+        'standard': {'read': 50000, 'write': 5000},
+        'premium': {'read': 150000, 'write': 30000},
         'enterprise': None,  # Ilimitado
     }
 
@@ -276,6 +276,10 @@ class APIRateLimitMiddleware(MiddlewareMixin):
 
         # Verificar límite
         if current_count >= rate_limit:
+            logger.warning(
+                "RATE_LIMIT_EXCEEDED user=%s path=%s plan=%s scope=%s count=%d limit=%d",
+                request.user.id, request.path, plan_name, scope, current_count, rate_limit,
+            )
             return JsonResponse({
                 'error': 'Rate limit exceeded',
                 'code': 'RATE_LIMIT_EXCEEDED',
