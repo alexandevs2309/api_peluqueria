@@ -17,7 +17,7 @@ def get_report_branch_id(request):
     if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
         from apps.auth_api.role_utils import get_effective_role_api
         user_role = get_effective_role_api(user, tenant=getattr(request, 'tenant', user.tenant))
-        if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+        if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
     return branch_id

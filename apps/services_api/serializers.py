@@ -53,13 +53,22 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Service
-        fields = ['id', 'name', 'description', 'image', 'image_url', 'categories', 'price', 'duration', 'is_active', 'allowed_roles', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description', 'image', 'image_url', 'categories', 'price', 'duration', 'is_active', 'allowed_roles', 'branch', 'created_at', 'updated_at']
         read_only_fields = ['id', 'image_url', 'created_at', 'updated_at']
+
+    def validate_branch(self, value):
+        if value:
+            request = self.context.get('request')
+            tenant = getattr(request, 'tenant', None) if request else None
+            if tenant and value.tenant_id != tenant.id:
+                raise serializers.ValidationError("La sucursal seleccionada no pertenece a tu establecimiento.")
+        return value
 
     def validate_name(self, value):
         request = self.context.get('request')
         if request and hasattr(request, 'tenant') and request.tenant:
-            qs = Service.objects.filter(name__iexact=value, tenant=request.tenant)
+            branch = self.initial_data.get('branch')
+            qs = Service.objects.filter(name__iexact=value, tenant=request.tenant, branch_id=branch)
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():

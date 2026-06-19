@@ -82,7 +82,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
             from apps.auth_api.role_utils import get_effective_role_api
             user_role = get_effective_role_api(user, tenant=tenant)
-            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
                 if user.employee_profile.branch_id:
                     branch = serializer.validated_data.get('branch')
                     if branch and branch.id != user.employee_profile.branch_id:

@@ -31,6 +31,7 @@ class ServiceCategory(models.Model):
 class Service(models.Model):
     name = models.CharField(max_length=100)
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='services')
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_services')
     price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
@@ -54,7 +55,7 @@ class Service(models.Model):
         ]
         verbose_name = 'Servicio'
         verbose_name_plural = 'Servicios'
-        unique_together = ('name', 'tenant')
+        unique_together = ('name', 'tenant', 'branch')
         indexes = [
             models.Index(fields=['name']),
             models.Index(fields=['is_active']),

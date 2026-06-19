@@ -49,7 +49,7 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
                 from apps.auth_api.role_utils import get_effective_role_api
                 user_role = get_effective_role_api(user, tenant=self.request.tenant)
                 setattr(self.request, '_role_cache', user_role)
-            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
                 if user.employee_profile.branch_id:
                     branch_id = user.employee_profile.branch_id
 
@@ -57,7 +57,7 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
             from django.core.exceptions import FieldDoesNotExist
             try:
                 queryset.model._meta.get_field('branch')
-                if queryset.model.__name__ == 'Employee':
+                if queryset.model.__name__ in ('Employee', 'Service'):
                     from django.db.models import Q
                     queryset = queryset.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
                 else:
@@ -90,7 +90,7 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
                 from apps.auth_api.role_utils import get_effective_role_api
                 user_role = get_effective_role_api(user, tenant=self.request.tenant)
                 setattr(self.request, '_role_cache', user_role)
-            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
                 if user.employee_profile.branch_id:
                     if hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
                         from django.core.exceptions import FieldDoesNotExist
@@ -114,7 +114,7 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
             tenant = getattr(self.request, 'tenant', None) or getattr(user, 'tenant', None)
             if tenant:
                 user_role = get_effective_role_api(user, tenant=tenant)
-                if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
                     if user.employee_profile.branch_id:
                         if hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
                             from django.core.exceptions import FieldDoesNotExist
@@ -162,7 +162,7 @@ class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
                 from apps.auth_api.role_utils import get_effective_role_api
                 user_role = get_effective_role_api(user, tenant=self.request.tenant)
                 setattr(self.request, '_role_cache', user_role)
-            if user_role != 'Client-Admin' and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
                 if user.employee_profile.branch_id:
                     branch_id = user.employee_profile.branch_id
 
@@ -170,7 +170,11 @@ class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
             from django.core.exceptions import FieldDoesNotExist
             try:
                 queryset.model._meta.get_field('branch')
-                queryset = queryset.filter(branch_id=branch_id)
+                if queryset.model.__name__ in ('Employee', 'Service'):
+                    from django.db.models import Q
+                    queryset = queryset.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
+                else:
+                    queryset = queryset.filter(branch_id=branch_id)
             except FieldDoesNotExist:
                 pass
 

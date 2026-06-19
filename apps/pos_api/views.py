@@ -105,7 +105,9 @@ class SaleViewSet(TenantScopedViewSet):
             branch_id = self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
 
         user = self.request.user
-        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=getattr(self.request, 'tenant', None))
+        is_admin = user_role in ('CLIENT_ADMIN', 'SUPER_ADMIN') or user.is_superuser
         if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
@@ -623,8 +625,9 @@ class SaleViewSet(TenantScopedViewSet):
         # Si no es superusuario ni staff, solo sus propias ventas
         # (Client-Admin ve todas las ventas del tenant)
         if not user.is_superuser and not user.is_staff:
-            user_role = getattr(user, 'role', '') or ''
-            if user_role not in ('Client-Admin', 'SuperAdmin', 'admin'):
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(user, tenant=getattr(self.request, 'tenant', None))
+            if user_role not in ('CLIENT_ADMIN', 'SUPER_ADMIN'):
                 qs = qs.filter(user=user)
             
         # Filtro por teléfono del cliente (protegido contra SQL injection)
@@ -674,7 +677,9 @@ class SaleViewSet(TenantScopedViewSet):
         
         branch_id = request.data.get('branch_id') or request.data.get('branch') or request.query_params.get('branch_id') or request.query_params.get('branch')
         user = request.user
-        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=tenant)
+        is_admin = user_role in ('CLIENT_ADMIN', 'SUPER_ADMIN') or user.is_superuser
         if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
@@ -733,7 +738,9 @@ class SaleViewSet(TenantScopedViewSet):
         
         branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
         user = request.user
-        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=tenant)
+        is_admin = user_role in ('CLIENT_ADMIN', 'SUPER_ADMIN') or user.is_superuser
         if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
@@ -1143,7 +1150,9 @@ class CashRegisterViewSet(TenantScopedViewSet):
         
         branch_id = self.request.data.get('branch_id') or self.request.data.get('branch') or self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
         user = self.request.user
-        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=tenant)
+        is_admin = user_role in ('CLIENT_ADMIN', 'SUPER_ADMIN') or user.is_superuser
         if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
@@ -1157,7 +1166,9 @@ class CashRegisterViewSet(TenantScopedViewSet):
         
         branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
         user = request.user
-        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(user, tenant=tenant)
+        is_admin = user_role in ('CLIENT_ADMIN', 'SUPER_ADMIN') or user.is_superuser
         if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
@@ -1431,8 +1442,9 @@ def daily_summary(request):
         # Obtener sesión de caja abierta
         open_register = None
         if tenant:
-            user_role = getattr(request.user, 'role', '') or ''
-            if request.user.is_superuser or user_role == 'Client-Admin':
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(request.user, tenant=tenant)
+            if request.user.is_superuser or user_role == 'CLIENT_ADMIN':
                 open_register = CashRegister.objects.filter(
                     tenant=tenant,
                     is_open=True
