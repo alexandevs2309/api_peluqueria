@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.core.exceptions import ValidationError
 from django.utils.timezone import now
 from apps.tenants_api.models import Tenant
-from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, SubscriptionAuditLog
+from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, SubscriptionAuditLog, PromotionalCredit
 from apps.subscriptions_api.plan_consistency import get_feature_value
 
 class SubscriptionPlanSerializer(serializers.ModelSerializer):
@@ -143,3 +143,23 @@ class OnboardingSerializer(serializers.Serializer):
         if not SubscriptionPlan.objects.filter(id=value, is_active=True).exists():
             raise ValidationError("Plan no válido o inactivo.")
         return value
+
+
+class PromotionalCreditSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source='tenant.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.full_name', read_only=True, default=None)
+
+    class Meta:
+        model = PromotionalCredit
+        fields = [
+            'id', 'tenant', 'tenant_name', 'months', 'reason', 'campaign_tag',
+            'created_by', 'created_by_name', 'created_at', 'used_at',
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'used_at']
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        validated_data['created_by'] = request.user
+        credit = super().create(validated_data)
+        credit.apply()
+        return credit

@@ -63,6 +63,20 @@ class Sale(models.Model):
     points_earned = models.PositiveIntegerField(default=0, help_text='Puntos de lealtad ganados en esta venta')
     points_redeemed = models.PositiveIntegerField(default=0, help_text='Puntos de lealtad canjeados en esta venta')
 
+    # Promoción aplicada (FK + snapshot del nombre)
+    promotion = models.ForeignKey('Promotion', null=True, blank=True, on_delete=models.SET_NULL, related_name='sales')
+    promotion_name = models.CharField(max_length=255, blank=True, default='', help_text='Nombre de la promoción al momento de la venta')
+
+    # Cupón aplicado (FK + código)
+    coupon = models.ForeignKey('Coupon', null=True, blank=True, on_delete=models.SET_NULL, related_name='sales')
+    coupon_code = models.CharField(max_length=50, blank=True, default='', help_text='Código del cupón al momento de la venta')
+
+    # Comprobante Fiscal (NCF - República Dominicana)
+    ncf = models.CharField(max_length=11, blank=True, null=True, db_index=True, help_text='Número de Comprobante Fiscal generado')
+    ncf_type = models.CharField(max_length=2, blank=True, null=True, help_text='Tipo de comprobante (B01, B02, etc.)')
+    rnc = models.CharField(max_length=20, blank=True, null=True, help_text='RNC o Cédula del cliente facturado')
+    company_name = models.CharField(max_length=255, blank=True, null=True, help_text='Razón Social del cliente facturado')
+
     # Campos de auditoría
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_created')
     updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='sales_updated')
@@ -78,6 +92,7 @@ class Sale(models.Model):
             models.Index(fields=['date_time', 'user']),
             models.Index(fields=['date_time', 'employee']),
             models.Index(fields=['status']),
+            models.Index(fields=['tenant', '-date_time']),
         ]
         permissions = [
             ('refund_sale', 'Can refund sales'),
@@ -97,6 +112,14 @@ class Sale(models.Model):
             # Nueva venta: establecer status=confirmed por defecto
             if not self.status:
                 self.status = 'confirmed'
+
+            # Auto-poblar promotion_name si se asignó una promoción
+            if self.promotion_id and not self.promotion_name:
+                self.promotion_name = self.promotion.name
+
+            # Auto-poblar coupon_code si se asignó un cupón
+            if self.coupon_id and not self.coupon_code:
+                self.coupon_code = self.coupon.code
             
             # NUEVO: Capturar snapshots de comisión al crear
             if self.employee and self.employee.commission_rate:
@@ -195,6 +218,21 @@ class SaleDetail(models.Model):
         from django.core.exceptions import ValidationError
         if not self.content_type or not self.object_id:
             raise ValidationError('Both content type and object ID are required.')
+        
+        # Validación cross-tenant: el producto/servicio debe pertenecer al tenant de la venta
+        if self.sale and self.sale.tenant_id:
+            model_name = self.content_type.model if self.content_type else None
+            
+            if model_name == 'product':
+                if not Product.objects.filter(id=self.object_id, tenant=self.sale.tenant).exists():
+                    raise ValidationError({
+                        'object_id': 'Product does not belong to the sale\'s tenant'
+                    })
+            elif model_name == 'service' and self.content_type.app_label == 'services_api':
+                if not Service.objects.filter(id=self.object_id, tenant=self.sale.tenant).exists():
+                    raise ValidationError({
+                        'object_id': 'Service does not belong to the sale\'s tenant'
+                    })
     
     # Campos para almacenar datos al momento de la venta
     name = models.CharField(max_length=255)  # Nombre del producto/servicio
@@ -261,6 +299,9 @@ class CashRegister(models.Model):
     @property
     def sales_amount(self):
         """Calcular ventas en efectivo asociadas a esta sesión de caja"""
+        # Usar annotation si está disponible (evita query extra)
+        if hasattr(self, '_sales_amount_annotated'):
+            return float(self._sales_amount_annotated)
         from django.db.models import Sum
         from .models import Payment
         if not self.opened_at:
@@ -268,6 +309,7 @@ class CashRegister(models.Model):
         
         sales_total = Payment.objects.filter(
             sale__cash_register=self,
+            sale__tenant=self.tenant,
             method='cash',
             sale__status='confirmed'
         ).aggregate(total=Sum('amount'))['total'] or 0
@@ -321,6 +363,39 @@ class Promotion(models.Model):
         verbose_name_plural = 'Promotions'
         ordering = ['-created_at']
 
+class Coupon(models.Model):
+    """Sistema de cupones promocionales manuales por código"""
+    COUPON_TYPES = [
+        ('percentage', 'Percentage Discount'),
+        ('fixed', 'Fixed Amount Discount'),
+    ]
+
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='coupons', null=True, blank=True)
+    code = models.CharField(max_length=50, db_index=True)
+    description = models.TextField(blank=True, default='')
+    type = models.CharField(max_length=20, choices=COUPON_TYPES, default='percentage')
+    value = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+    min_purchase_amount = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
+    
+    start_date = models.DateTimeField()
+    end_date = models.DateTimeField()
+    
+    is_active = models.BooleanField(default=True)
+    max_uses = models.PositiveIntegerField(null=True, blank=True, help_text='Límite de usos totales del cupón')
+    current_uses = models.PositiveIntegerField(default=0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Coupon'
+        verbose_name_plural = 'Coupons'
+        unique_together = ['tenant', 'code']
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.code} ({self.type}) - {self.tenant.name if self.tenant else 'Global'}"
+
 class Receipt(models.Model):
     """Recibos generados"""
     sale = models.OneToOneField(Sale, on_delete=models.CASCADE, related_name='receipt')
@@ -358,3 +433,51 @@ class PosConfiguration(models.Model):
     class Meta:
         verbose_name = 'POS Configuration'
         verbose_name_plural = 'POS Configurations'
+
+
+class NCFSequence(models.Model):
+    COMPROBANTE_TYPES = [
+        ('01', 'Crédito Fiscal (B01)'),
+        ('02', 'Consumidor Final (B02)'),
+        ('14', 'Regímenes Especiales (B14)'),
+        ('15', 'Gubernamentales (B15)'),
+    ]
+
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='ncf_sequences')
+    type = models.CharField(max_length=2, choices=COMPROBANTE_TYPES, default='02')
+    prefix = models.CharField(max_length=3, default='B')
+    start_sequence = models.PositiveIntegerField(default=1)
+    end_sequence = models.PositiveIntegerField()
+    current_sequence = models.PositiveIntegerField(default=1)
+    expiration_date = models.DateField()
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Secuencia NCF'
+        verbose_name_plural = 'Secuencias NCF'
+        unique_together = ['tenant', 'type', 'prefix', 'start_sequence']
+        ordering = ['type', '-is_active', '-created_at']
+
+    def __str__(self):
+        return f"{self.prefix}{self.type} ({self.start_sequence} - {self.end_sequence}) - {self.tenant.name if self.tenant else ''}"
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        if self.start_sequence > self.end_sequence:
+            raise ValidationError("La secuencia inicial no puede ser mayor que la secuencia final.")
+        if self.current_sequence < self.start_sequence or self.current_sequence > self.end_sequence + 1:
+            raise ValidationError("La secuencia actual debe estar dentro del rango especificado.")
+
+    def get_next_ncf(self):
+        """Genera el NCF formateado de 11 caracteres (sin avanzar la secuencia)."""
+        if not self.is_active:
+            return None
+        if self.current_sequence > self.end_sequence:
+            return None
+        from django.utils import timezone
+        if self.expiration_date < timezone.localdate():
+            return None
+        
+        return f"{self.prefix}{self.type}{self.current_sequence:08d}"

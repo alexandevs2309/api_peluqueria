@@ -34,7 +34,7 @@ class UserBasicSerializer(serializers.ModelSerializer):
         return ''
 
 class EmployeeSerializer(serializers.ModelSerializer):
-    user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.all(), source='user', write_only=True)
+    user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.none(), source='user', write_only=True)
     user = UserBasicSerializer(read_only=True)
     user_id_read = serializers.IntegerField(source='user.id', read_only=True)
     service_ids = serializers.SerializerMethodField()
@@ -45,6 +45,26 @@ class EmployeeSerializer(serializers.ModelSerializer):
         model = Employee
         fields = ['id', 'branch', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'service_ids', 'services_count', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                self.fields['user_id'].queryset = User.objects.filter(tenant=tenant)
+                self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
+            else:
+                self.fields['user_id'].queryset = User.objects.none()
+                self.fields['branch'].queryset = Branch.objects.none()
+    
+    def validate_user_id(self, value):
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant and value.tenant_id != tenant.id:
+                raise serializers.ValidationError("El usuario seleccionado no pertenece a este negocio")
+        return value
     
     def validate_branch(self, value):
         if value:
@@ -93,11 +113,28 @@ class EmployeeServiceSerializer(serializers.ModelSerializer):
         fields = ['id', 'employee', 'service', 'service_id', 'created_at']
         read_only_fields = ['created_at']
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                self.fields['employee'].queryset = Employee.objects.filter(user__tenant=tenant)
+                self.fields['service_id'].queryset = Service.objects.filter(tenant=tenant)
+
 class WorkScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkSchedule
         fields = ['id', 'employee', 'day_of_week', 'start_time', 'end_time', 'created_at']
         read_only_fields = ['created_at']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                self.fields['employee'].queryset = Employee.objects.filter(user__tenant=tenant)
 
 
 class AttendanceRecordSerializer(serializers.ModelSerializer):
@@ -113,11 +150,24 @@ class AttendanceRecordSerializer(serializers.ModelSerializer):
             'check_in_at',
             'check_out_at',
             'status',
+            'is_justified',
+            'justification_reason',
+            'justified_by',
             'notes',
             'created_at',
             'updated_at',
         ]
-        read_only_fields = ['created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at', 'justified_by']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                self.fields['employee'].queryset = Employee.objects.filter(user__tenant=tenant)
+                if 'justified_by' in self.fields:
+                    self.fields['justified_by'].queryset = User.objects.filter(tenant=tenant)
 
     def get_employee_name(self, obj):
         if obj.employee and obj.employee.user:

@@ -13,13 +13,25 @@ class ClientSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_by', 'created_at', 'updated_at', 'last_visit', 'loyalty_points', 'user', 'tenant']
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and not getattr(request.user, 'is_superuser', False):
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                from django.contrib.auth import get_user_model
+                from apps.settings_api.models import Branch
+                User = get_user_model()
+                self.fields['preferred_stylist'].queryset = User.objects.filter(tenant=tenant)
+                self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
+
     def validate(self, attrs):
         email = attrs.get('email')
         phone = attrs.get('phone')
         if not email and not phone:
             raise serializers.ValidationError("Debe proporcionar al menos un medio de contacto: correo electrónico o teléfono.")
         
-        # Validación cross-tenant para preferred_stylist
+        # Validación cross-tenant para preferred_stylist y branch
         request = self.context.get('request')
         if request and not request.user.is_superuser:
             tenant = getattr(request, 'tenant', None)
@@ -32,6 +44,13 @@ class ClientSerializer(serializers.ModelSerializer):
                 if preferred_stylist.tenant_id != tenant.id:
                     raise serializers.ValidationError({
                         'preferred_stylist': _('Stylist does not belong to your tenant')
+                    })
+            
+            branch = attrs.get('branch')
+            if branch and hasattr(branch, 'tenant_id'):
+                if branch.tenant_id != tenant.id:
+                    raise serializers.ValidationError({
+                        'branch': _('Branch does not belong to your tenant')
                     })
         
         return attrs

@@ -50,6 +50,7 @@ ROLE_PERMISSIONS = {
         ('reports_api', 'view_sales_reports'),
         ('reports_api', 'view_kpi_dashboard'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
         ('support_api', 'view_supportticket'),
         ('support_api', 'add_supportticket'),
@@ -69,6 +70,7 @@ ROLE_PERMISSIONS = {
         ('employees_api', 'add_attendancerecord'),
         ('employees_api', 'change_attendancerecord'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
         ('support_api', 'view_supportticket'),
         ('support_api', 'add_supportticket'),
@@ -94,7 +96,10 @@ ROLE_PERMISSIONS = {
         ('pos_api', 'view_posconfiguration'),
         ('inventory_api', 'view_product'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
     ],
     'Estilista': [
         ('auth_api', 'view_user'),
@@ -114,7 +119,10 @@ ROLE_PERMISSIONS = {
         ('employees_api', 'change_attendancerecord'),
         ('employees_api', 'view_employee_payroll'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
+        ('support_api', 'view_supportticket'),
+        ('support_api', 'add_supportticket'),
     ],
     'Utility': [
         ('employees_api', 'view_employee'),
@@ -123,6 +131,7 @@ ROLE_PERMISSIONS = {
         ('pos_api', 'view_promotion'),
         ('pos_api', 'view_posconfiguration'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
     ],
     # Business roles (nuevo sistema RBAC)
@@ -148,6 +157,7 @@ ROLE_PERMISSIONS = {
         ('pos_api', 'view_posconfiguration'),
         ('inventory_api', 'view_product'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
         ('support_api', 'view_supportticket'),
         ('support_api', 'add_supportticket'),
@@ -170,6 +180,7 @@ ROLE_PERMISSIONS = {
         ('employees_api', 'change_attendancerecord'),
         ('employees_api', 'view_employee_payroll'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
         ('support_api', 'view_supportticket'),
         ('support_api', 'add_supportticket'),
@@ -182,6 +193,7 @@ ROLE_PERMISSIONS = {
         ('pos_api', 'view_promotion'),
         ('pos_api', 'view_posconfiguration'),
         ('settings_api', 'view_barbershopsettings'),
+        ('settings_api', 'view_branch'),
         ('notifications_api', 'view_inappnotification'),
         ('support_api', 'view_supportticket'),
         ('support_api', 'add_supportticket'),
@@ -228,6 +240,15 @@ def sync_all_default_role_permissions():
     from apps.roles_api.models import Role
 
     synced = {}
-    for role in Role.objects.filter(name__in=ROLE_PERMISSIONS.keys()):
-        synced[role.name] = sync_default_role_permissions(role)
+    for role_name in ROLE_PERMISSIONS.keys():
+        scope = 'GLOBAL' if role_name in ['SuperAdmin', 'Super-Admin', 'internal_support'] else 'TENANT'
+        role, created = Role.objects.get_or_create(
+            name=role_name,
+            defaults={
+                'scope': scope,
+                'description': f"Rol {role_name} con permisos por defecto de ROLE_PERMISSIONS."
+            }
+        )
+        synced[role_name] = sync_default_role_permissions(role)
     return synced
+

@@ -71,3 +71,4 @@ class UserRoleSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserRole
         fields = ('id', 'user', 'role', 'tenant', 'assigned_at')
+        read_only_fields = ['tenant', 'assigned_at']

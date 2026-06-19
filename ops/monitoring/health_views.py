@@ -120,6 +120,9 @@ TASKS_REGISTRY = {
     'daily_subscription_check': 'apps.subscriptions_api.tasks.daily_subscription_check',
     'daily_reconciliation': 'apps.billing_api.tasks.daily_financial_reconciliation',
     'check_trial_expirations': 'apps.subscriptions_api.tasks.check_trial_expirations',
+    'auto_process_daily_absences': 'apps.employees_api.tasks.auto_process_daily_absences',
+    'auto_checkout_end_of_day': 'apps.employees_api.tasks.auto_checkout_end_of_day',
+    'send_subscription_expiry_warnings': 'apps.subscriptions_api.tasks.send_subscription_expiry_warnings',
 }
 
 FREQUENT_TASK_KEYS = {
@@ -136,6 +139,9 @@ DAILY_TASK_KEYS = {
     'cleanup_expired_trials',
     'daily_reconciliation',
     'check_trial_expirations',
+    'auto_process_daily_absences',
+    'auto_checkout_end_of_day',
+    'send_subscription_expiry_warnings',
 }
 
 HOURLY_TASK_KEYS = {

@@ -61,19 +61,36 @@ async def notification_sse(request):
     from django.contrib.auth import get_user_model
 
     User = get_user_model()
-
     user = None
+
+    # 1. Obtener usuario de la sesión activa (cookies HTTPOnly) si existe
+    session_user = request.user if hasattr(request, "user") and request.user.is_authenticated else None
 
     token_param = request.GET.get("token")
     if token_param:
         try:
             access = AccessToken(token_param)
-            user = await User.objects.aget(id=access["user_id"])
+            token_user_id = access["user_id"]
+            
+            # Si hay una sesión activa, verificar coincidencia estricta de identidad para prevenir secuestros de canal
+            if session_user and session_user.id != token_user_id:
+                logger.warning(
+                    "SSE security mismatch: Token user ID %s does not match session user ID %s",
+                    token_user_id,
+                    session_user.id,
+                )
+                return HttpResponse("Forbidden: Identity mismatch", status=403)
+                
+            user = await User.objects.aget(id=token_user_id)
         except Exception as exc:
             logger.warning("SSE token auth failed: %s", exc)
+            # Si el token es inválido y no hay sesión de cookie, denegar
+            if not session_user:
+                return HttpResponse("Unauthorized: Invalid token", status=401)
 
-    if not user and hasattr(request, "user") and request.user.is_authenticated:
-        user = request.user
+    # 2. Si no se especificó o validó vía token pero hay sesión activa, usar la sesión
+    if not user and session_user:
+        user = session_user
 
     if not user or not user.is_authenticated:
         return HttpResponse(status=401)

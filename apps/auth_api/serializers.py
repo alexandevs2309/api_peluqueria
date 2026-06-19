@@ -110,7 +110,7 @@ class LoginSerializer(serializers.Serializer):
         # Login sin tenant — inferir si hay un solo usuario
         if not tenant_input:
             superadmin = User.objects.filter(
-                email=email, is_superuser=True, tenant__isnull=True
+                email__iexact=email, is_superuser=True, tenant__isnull=True
             ).first()
             if superadmin:
                 if not superadmin.check_password(password):
@@ -124,7 +124,7 @@ class LoginSerializer(serializers.Serializer):
                 return data
 
             candidates = list(
-                User.objects.filter(email=email).select_related('tenant')
+                User.objects.filter(email__iexact=email).select_related('tenant')
             )
             if len(candidates) > 1:
                 raise serializers.ValidationError({
@@ -159,7 +159,7 @@ class LoginSerializer(serializers.Serializer):
 
         # ✅ BUSCAR USUARIO SOLO EN ESE TENANT
         try:
-            user = User.objects.get(email=email, tenant=tenant)
+            user = User.objects.get(email__iexact=email, tenant=tenant)
         except User.DoesNotExist:
             raise serializers.ValidationError("Credenciales inválidas.")
 
@@ -234,7 +234,7 @@ class MFAVerifySerializer(serializers.Serializer):
 
 class EmployeeUserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
-    tenant = serializers.PrimaryKeyRelatedField(queryset=Tenant.objects.all(), required=False, allow_null=True, default=None)
+    tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     business_role = serializers.ChoiceField(
         choices=User.BUSINESS_ROLE_CHOICES,
         required=False,
@@ -270,16 +270,14 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
             validated_data['is_superuser'] = True
             validated_data['is_staff'] = True
         
-        # Asignar tenant automáticamente si no se especifica
+        # Asignar tenant desde el request (siempre, campo read_only)
         request = self.context.get('request')
         logger.debug('EmployeeUserSerializer.create request_user_id=%s', getattr(getattr(request, 'user', None), 'id', None))
         
-        if 'tenant' not in validated_data or validated_data['tenant'] is None:
-            if request and hasattr(request, 'user') and request.user.tenant:
-                validated_data['tenant'] = request.user.tenant
-                logger.debug('Tenant auto-assigned tenant_id=%s', request.user.tenant.id)
-
-        tenant = validated_data.get('tenant')
+        tenant = getattr(request, 'tenant', None) or (request.user.tenant if hasattr(request, 'user') and request.user.tenant else None)
+        if request and tenant:
+            validated_data['tenant'] = tenant
+            logger.debug('Tenant assigned from request tenant_id=%s', tenant.id)
         requested_role = validated_data.get('role')
         employee_roles = {'Cajera', 'Estilista', 'Manager', 'Client-Staff', 'Utility'}
 

@@ -96,7 +96,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         if subscription.user != self.request.user:
             if not (hasattr(self.request.user, 'tenant') and 
                     hasattr(subscription.user, 'tenant') and 
-                    self.request.user.tenant == subscription.user.tenant):
+                    getattr(self.request, 'tenant', self.request.user.tenant) == subscription.user.tenant):
                 raise ValidationError("No tiene permiso para crear facturas para esta suscripción.")
         
         plan = subscription.plan

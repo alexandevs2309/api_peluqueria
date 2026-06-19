@@ -223,9 +223,26 @@ services:
     networks:
       - backend
 
+  evolution:
+    image: evoapicloud/evolution-api:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - AUTHENTICATION_TYPE=apikey
+      - AUTHENTICATION_API_KEY=${EVOLUTION_API_TOKEN:-dev_evolution_token_secret}
+      - DATABASE_ENABLED=true
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=${EVOLUTION_DB_URI:-postgresql://postgres:dev_password@db:5432/barbershop_db?schema=evolution_api}
+      - CACHE_REDIS_ENABLED=false
+    volumes:
+      - evolution_instances:/evolution/instances
+    networks:
+      - backend
+
 volumes:
   postgres_data:
   redis_data:
+  evolution_instances:
   static_volume:
   media_volume:
   prometheus_data:

@@ -95,7 +95,7 @@ services:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthz/"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthz/public/"]
       interval: 30s
       timeout: 10s
       retries: 3

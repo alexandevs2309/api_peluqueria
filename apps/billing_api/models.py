@@ -27,12 +27,20 @@ class Invoice(models.Model):
         null=True,  # ✅ Permitir NULL para facturas manuales
         unique=True,  # ✅ Prevenir duplicados
         db_index=True
-    )  # Para reconciliación
+    )  # Para reconciliación (Stripe payment_intent o PayPal capture_id)
+    paypal_order_id = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="PayPal order ID para idempotencia a nivel DB"
+    )
     status = models.CharField(max_length=50, choices=[
         ("pending", "Pending"),
         ("paid", "Paid"),
         ("failed", "Failed"),
-        ("canceled", "Canceled")
+        ("canceled", "Canceled"),
+        ("refunded", "Refunded"),
     ], default="pending")
 
     class Meta:
@@ -43,6 +51,7 @@ class Invoice(models.Model):
             models.Index(fields=['is_paid']),
             models.Index(fields=['issued_at']),
             models.Index(fields=['stripe_payment_intent_id']),
+            models.Index(fields=['paypal_order_id']),
         ]
 
     def __str__(self):

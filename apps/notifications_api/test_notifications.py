@@ -309,3 +309,49 @@ class TestNotificationService:
         results = service.send_bulk_notifications(notifications)
         assert len(results) == 5
         assert all(results)
+
+    def test_generate_ics_content(self):
+        from apps.appointments_api.models import Appointment
+        from apps.services_api.models import Service
+        from apps.auth_api.factories import UserFactory
+        from apps.clients_api.models import Client
+        
+        service = NotificationService()
+        user = UserFactory()
+        stylist = UserFactory()
+        client_user = UserFactory()
+        
+        client = Client.objects.create(
+            full_name="Pedro Gomez",
+            email=client_user.email,
+            tenant=user.tenant
+        )
+        
+        apt_service = Service.objects.create(
+            name="Corte Premium",
+            price=500.0,
+            duration=45,
+            tenant=user.tenant
+        )
+        
+        appointment = Appointment.objects.create(
+            client=client,
+            stylist=stylist,
+            service=apt_service,
+            date_time=timezone.now() + timedelta(days=1),
+            tenant=user.tenant
+        )
+        
+        ics_content = service.generate_ics_content(
+            appointment,
+            stylist_name="Juan Perez",
+            service_name="Corte Premium",
+            client_name="Pedro Gomez"
+        )
+        
+        assert "BEGIN:VCALENDAR" in ics_content
+        assert "BEGIN:VEVENT" in ics_content
+        assert "SUMMARY:Cita: Corte Premium con Juan Perez" in ics_content
+        assert "STATUS:CONFIRMED" in ics_content
+        assert "END:VEVENT" in ics_content
+

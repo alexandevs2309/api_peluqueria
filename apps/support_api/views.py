@@ -7,7 +7,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
-from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.core.tenant_permissions import TenantPermissionByAction, resolve_request_tenant, _check_permission_in_db
 from apps.auth_api.tasks import send_email_async
 
 from .models import SupportTicket
@@ -16,10 +16,51 @@ from .serializers import SupportTicketSerializer
 logger = logging.getLogger(__name__)
 
 
+class SupportTicketPermission(TenantPermissionByAction):
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        tenant = resolve_request_tenant(request)
+        if not tenant:
+            return False
+
+        action = self._resolve_action(request, view)
+        if not action:
+            return False
+
+        if action == 'close':
+            return (
+                _check_permission_in_db(request.user, tenant, 'support_api', 'change_supportticket') or
+                _check_permission_in_db(request.user, tenant, 'support_api', 'view_supportticket')
+            )
+
+        return super().has_permission(request, view)
+
+    def has_object_permission(self, request, view, obj):
+        if not super().has_object_permission(request, view, obj):
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        action = self._resolve_action(request, view)
+        if action == 'close':
+            tenant = resolve_request_tenant(request)
+            if _check_permission_in_db(request.user, tenant, 'support_api', 'change_supportticket'):
+                return True
+            return obj.created_by == request.user
+
+        return True
+
+
 class SupportTicketViewSet(TenantScopedViewSet):
     queryset = SupportTicket.objects.all()
     serializer_class = SupportTicketSerializer
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [SupportTicketPermission]
     pagination_class = None
     permission_map = {
         'list': 'support_api.view_supportticket',

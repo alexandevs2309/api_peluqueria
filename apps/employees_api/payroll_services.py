@@ -1,5 +1,8 @@
+import logging
 from decimal import Decimal
 from django.db.models import Sum
+
+logger = logging.getLogger(__name__)
 
 
 class PayrollCalculationService:
@@ -26,9 +29,7 @@ class PayrollCalculationService:
         
         start_dt = make_aware(datetime.datetime.combine(period.period_start, datetime.time.min))
         end_dt = make_aware(datetime.datetime.combine(period.period_end, datetime.time.max))
-        print(f"\nDEBUG: start_dt={start_dt}, end_dt={end_dt}")
-        for s in Sale.objects.all():
-            print(f"DEBUG SALE: id={s.id}, employee_id={s.employee_id}, date={s.date_time}, status={s.status}, snapshot={s.commission_amount_snapshot}, user_tenant={s.user.tenant_id if s.user else None}, tenant_id={s.tenant_id}")
+        logger.debug("start_dt=%s, end_dt=%s", start_dt, end_dt)
         
         sales_commission = Sale.objects.filter(
             employee=period.employee,

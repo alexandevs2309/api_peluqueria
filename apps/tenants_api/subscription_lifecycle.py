@@ -298,10 +298,29 @@ def sync_subscription_state(tenant, now=None, *, save: bool = True) -> Subscript
                     tenant.is_active = True
                     changed_fields.append("is_active")
                     reasons.append("cancelled_but_still_paid -> activated")
-            elif tenant.is_active:
-                tenant.is_active = False
-                changed_fields.append("is_active")
-                reasons.append("legacy_cancelled_but_active -> deactivated")
+            else:
+                if tenant.is_active:
+                    tenant.is_active = False
+                    changed_fields.append("is_active")
+                    reasons.append("legacy_cancelled_but_active -> deactivated")
+                # Archivar automáticamente después de 90 días en estado cancelled
+                billing_info = dict(getattr(tenant, "billing_info", None) or {})
+                cancelled_at = (
+                    timezone.datetime.fromisoformat(billing_info["cancelled_at"])
+                    if billing_info.get("cancelled_at") else None
+                )
+                if cancelled_at is None:
+                    # Usar updated_at como fallback para tenants cancelados antes del fix
+                    cancelled_at = getattr(tenant, "updated_at", None)
+                if cancelled_at and (now - cancelled_at) >= timedelta(days=SUSPENDED_ARCHIVE_DAYS):
+                    archive_fields = archive_tenant(tenant, now=now)
+                    changed_fields.extend(archive_fields)
+                    reasons.append("cancelled_too_long -> archived")
+                elif cancelled_at is None and hasattr(tenant, "updated_at"):
+                    billing_info["cancelled_at"] = (getattr(tenant, "updated_at", now) or now).isoformat()
+                    tenant.billing_info = billing_info
+                    changed_fields.append("billing_info")
+                    reasons.append("cancelled_assign_marker")
 
         if tenant.subscription_status in ACTIVE_STATUSES.union(LIMITED_STATUSES) and not tenant.is_active:
             tenant.is_active = True

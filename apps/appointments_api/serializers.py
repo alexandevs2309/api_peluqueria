@@ -42,6 +42,18 @@ class AppointmentSerializer(serializers.ModelSerializer):
         allow_null=True,
         required=False
     )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request and not getattr(request.user, 'is_superuser', False):
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                from apps.settings_api.models import Branch
+                self.fields['client'].queryset = Client.objects.filter(tenant=tenant)
+                self.fields['stylist'].queryset = User.objects.filter(tenant=tenant)
+                self.fields['service'].queryset = Service.objects.filter(tenant=tenant)
+                self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
     sale = serializers.PrimaryKeyRelatedField(read_only=True)
     client_name = serializers.SerializerMethodField(read_only=True)
     stylist_name = serializers.SerializerMethodField(read_only=True)
@@ -103,6 +115,22 @@ class AppointmentSerializer(serializers.ModelSerializer):
                     'branch': _('Branch does not belong to your tenant')
                 })
         
+        # Validar sucursal del estilista (cross-branch validation)
+        stylist = attrs.get('stylist')
+        if self.instance:
+            if stylist is None:
+                stylist = self.instance.stylist
+            if branch is None:
+                branch = self.instance.branch
+        
+        if stylist and branch:
+            if hasattr(stylist, 'employee_profile') and stylist.employee_profile:
+                stylist_branch_id = stylist.employee_profile.branch_id
+                if stylist_branch_id and stylist_branch_id != branch.id:
+                    raise serializers.ValidationError({
+                        'stylist': _('The selected stylist does not belong to the branch of the appointment')
+                    })
+
         return attrs
 
     def validate_date_time(self, value):

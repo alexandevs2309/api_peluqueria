@@ -97,10 +97,28 @@ class NotificationService:
                 logger.warning("Cannot send email notification: recipient has no email")
                 return False
 
+            attachments = []
+            if notification.template.notification_type == 'appointment_confirmation':
+                from apps.appointments_api.models import Appointment
+                try:
+                    appointment_id = notification.metadata.get('appointment_id')
+                    if appointment_id:
+                        appointment = Appointment.objects.get(id=int(appointment_id))
+                        ics_content = self.generate_ics_content(
+                            appointment,
+                            stylist_name=notification.metadata.get('stylist_name', 'Por asignar'),
+                            service_name=notification.metadata.get('service_name', 'Por definir'),
+                            client_name=notification.metadata.get('client_name', 'Cliente')
+                        )
+                        attachments.append(('invitacion.ics', ics_content, 'text/calendar'))
+                except Exception as e:
+                    logger.warning("Failed to generate ICS attachment: %s", str(e))
+
             IntegrationService.send_email(
                 to_email=recipient,
                 subject=notification.subject,
                 message=notification.message,
+                attachments=attachments,
             )
 
             NotificationLog.objects.create(
@@ -156,17 +174,22 @@ class NotificationService:
 
     def _send_whatsapp(self, notification):
         """
-        Enviar notificación por WhatsApp via Twilio
+        Enviar notificación por WhatsApp via Twilio o QR del tenant
         """
         try:
             from apps.settings_api.integration_service import IntegrationService
+            from django.conf import settings as django_settings
             phone = getattr(notification.recipient, 'phone', None)
+            override = getattr(django_settings, 'DEV_WHATSAPP_OVERRIDE', '')
+            if override:
+                phone = override
+                logger.info("DEV_WHATSAPP_OVERRIDE activo: forzando teléfono a %s", phone)
             if not phone or not str(phone).strip():
                 logger.warning("Cannot send WhatsApp notification: recipient has no phone")
                 NotificationLog.objects.create(
                     notification=notification,
                     channel='whatsapp',
-                    provider='twilio',
+                    provider='system',
                     status='failed',
                     error_message='Recipient has no phone number'
                 )
@@ -175,14 +198,20 @@ class NotificationService:
             if not str(phone).startswith('+'):
                 phone = f'+1{phone}' if str(phone).isdigit() else phone
 
-            IntegrationService.send_whatsapp(phone=phone, message=notification.message)
+            # Obtener el tenant del recipiente o del template
+            tenant = getattr(notification.recipient, 'tenant', None)
+            if not tenant and notification.template and notification.template.tenant:
+                tenant = notification.template.tenant
+
+            result = IntegrationService.send_whatsapp(phone=phone, message=notification.message, tenant=tenant)
+            provider_name = 'evolution_api' if result == 'success_qr' else 'twilio'
 
             NotificationLog.objects.create(
                 notification=notification,
                 channel='whatsapp',
-                provider='twilio',
+                provider=provider_name,
                 status='sent',
-                response_data={'phone': phone}
+                response_data={'phone': phone, 'method': result}
             )
 
             return True
@@ -192,7 +221,7 @@ class NotificationService:
             NotificationLog.objects.create(
                 notification=notification,
                 channel='whatsapp',
-                provider='twilio',
+                provider='unknown',
                 status='failed',
                 error_message=str(e)
             )
@@ -288,3 +317,42 @@ class NotificationService:
             failed=Count('id', filter=Q(status='failed')),
             pending=Count('id', filter=Q(status='pending')),
         )
+
+    def generate_ics_content(self, appointment, stylist_name, service_name, client_name):
+        from datetime import timedelta, timezone as dt_timezone
+        # Formatear fechas en formato iCalendar: YYYYMMDDTHHMMSSZ
+        utc_dt = appointment.date_time.astimezone(dt_timezone.utc)
+        dtstart = utc_dt.strftime('%Y%m%dT%H%M%SZ')
+        
+        # Calcular fin de la cita (duración)
+        duration = appointment.service.duration if appointment.service else 30
+        dtend = (utc_dt + timedelta(minutes=duration)).strftime('%Y%m%dT%H%M%SZ')
+        dtstamp = timezone.now().astimezone(dt_timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+        
+        # Generar un UID único
+        uid = f"appointment-{appointment.id}@{appointment.tenant_id or 'auronsuite'}.com"
+        
+        summary = f"Cita: {service_name} con {stylist_name}"
+        description = f"Hola {client_name},\\n\\nTu cita para {service_name} con {stylist_name} ha sido confirmada.\\nFecha: {appointment.date_time.strftime('%d/%m/%Y a las %H:%M')}.\\n\\n¡Te esperamos!"
+        
+        # Construir el cuerpo del archivo ICS
+        ics = [
+            "BEGIN:VCALENDAR",
+            "VERSION:2.0",
+            "PRODID:-//AuronSuite//NONSGML Calendar//ES",
+            "CALSCALE:GREGORIAN",
+            "METHOD:PUBLISH",
+            "BEGIN:VEVENT",
+            f"UID:{uid}",
+            f"DTSTAMP:{dtstamp}",
+            f"DTSTART:{dtstart}",
+            f"DTEND:{dtend}",
+            f"SUMMARY:{summary}",
+            f"DESCRIPTION:{description}",
+            "STATUS:CONFIRMED",
+            "SEQUENCE:0",
+            "TRANSP:OPAQUE",
+            "END:VEVENT",
+            "END:VCALENDAR"
+        ]
+        return "\r\n".join(ics)

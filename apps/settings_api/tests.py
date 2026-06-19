@@ -168,8 +168,81 @@ class TestSettingsAPI:
         assert log.old_value == "COP"
         assert log.new_value == "USD"
 
+    def test_whatsapp_status(self, api_client_admin, tenant):
+        url = reverse("barbershop-settings-whatsapp-status")
+        response = api_client_admin.get(url)
+        assert response.status_code == 200
+        assert "whatsapp_enabled" in response.data
+        assert "whatsapp_status" in response.data
+
+    def test_whatsapp_connect_forbidden_if_no_feature(self, api_client_admin, tenant):
+        url = reverse("barbershop-settings-whatsapp-connect")
+        response = api_client_admin.post(url, {})
+        assert response.status_code == 403
+
+    def test_whatsapp_connect_success(self, api_client_admin, tenant, monkeypatch):
+        # Activar feature flag
+        tenant.subscription_plan.features["whatsapp_notifications"] = True
+        tenant.subscription_plan.save()
+
+        from unittest.mock import MagicMock
+        mock_provider = MagicMock()
+        mock_provider.create_instance.return_value = {
+            "success": True,
+            "token": "test-token",
+            "qrcode_base64": "dummy-base64",
+            "qrcode_code": "dummy-code"
+        }
+        
+        import apps.settings_api.whatsapp_provider as provider_module
+        monkeypatch.setattr(provider_module, "get_whatsapp_provider", lambda: mock_provider)
+
+        url = reverse("barbershop-settings-whatsapp-connect")
+        response = api_client_admin.post(url, {})
+        assert response.status_code == 200
+        assert response.data["success"] is True
+        assert response.data["qrcode_base64"] == "dummy-base64"
+
+    def test_whatsapp_disconnect(self, api_client_admin, tenant, monkeypatch):
+        from unittest.mock import MagicMock
+        mock_provider = MagicMock()
+        mock_provider.delete_instance.return_value = True
+        
+        import apps.settings_api.whatsapp_provider as provider_module
+        monkeypatch.setattr(provider_module, "get_whatsapp_provider", lambda: mock_provider)
+
+        url = reverse("barbershop-settings-whatsapp-disconnect")
+        response = api_client_admin.post(url, {})
+        assert response.status_code == 200
+        assert response.data["success"] is True
+
+
+    def test_whatsapp_webhook_public(self, client, tenant):
+        from apps.settings_api.barbershop_models import BarbershopSettings
+        settings, _ = BarbershopSettings.objects.get_or_create(
+            tenant=tenant, 
+            whatsapp_instance_name="tenant_test"
+        )
+        
+        url = reverse("barbershop-settings-whatsapp-webhook")
+        payload = {
+            "event": "connection.update",
+            "instance": "tenant_test",
+            "data": {
+                "state": "open",
+                "phone": "123456789"
+            }
+        }
+        response = client.post(url, payload, content_type="application/json")
+        assert response.status_code == 200
+        settings.refresh_from_db()
+        assert settings.whatsapp_status == "connected"
+        assert settings.whatsapp_enabled is True
+        assert settings.whatsapp_phone == "123456789"
+
 
 @pytest.mark.django_db
+
 def test_no_duplicate_settings_per_branch():
     tenant = Tenant.objects.create(name="Tenant Branch Test", subdomain="tenant-branch-test")
     branch = Branch.objects.create(name="Sucursal 1", tenant=tenant)

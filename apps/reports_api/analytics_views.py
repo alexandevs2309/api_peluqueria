@@ -33,7 +33,7 @@ class AdvancedAnalyticsView(APIView):
     }
 
     def get(self, request):
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         branch_id = get_report_branch_id(request)
         period = request.GET.get('period', '30')  # dias
         days = int(period)
@@ -62,7 +62,7 @@ class BusinessIntelligenceView(APIView):
     }
 
     def get(self, request):
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         branch_id = get_report_branch_id(request)
         
         business_kpis = {
@@ -93,7 +93,7 @@ class PredictiveAnalyticsView(APIView):
     }
 
     def get(self, request):
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         branch_id = get_report_branch_id(request)
 
         return Response({
@@ -152,14 +152,14 @@ def calculate_employee_performance(tenant, days, branch_id=None):
     
     for emp in employees:
         # Ventas del empleado
-        sales_filter = {'employee': emp, 'date_time__gte': start_date}
+        sales_filter = {'employee': emp, 'date_time__gte': start_date, 'tenant': tenant}
         if branch_id:
             sales_filter['branch_id'] = branch_id
             
         sales = Sale.objects.filter(**sales_filter)
         
         # Citas del empleado
-        appointments_filter = {'stylist': emp.user, 'date_time__gte': start_date}
+        appointments_filter = {'stylist': emp.user, 'date_time__gte': start_date, 'client__tenant': tenant}
         if branch_id:
             appointments_filter['branch_id'] = branch_id
             
@@ -219,7 +219,7 @@ def calculate_service_trends(tenant, days, branch_id=None):
 def calculate_predictions(tenant, days, branch_id=None):
     """Predicciones básicas basadas en tendencias"""
     sales_filter = {
-        'user__tenant': tenant,
+        'tenant': tenant,
         'date_time__gte': timezone.now() - timedelta(days=days*2)
     }
     if branch_id:
@@ -278,7 +278,9 @@ def calculate_clv(tenant, branch_id=None):
 
 def calculate_arpu(tenant, branch_id=None):
     """Average Revenue Per User"""
-    sales_filter = {'user__tenant': tenant}
+    sales_filter = {
+        'tenant': tenant,
+    }
     clients_filter = {'tenant': tenant, 'is_active': True}
     
     if branch_id:
@@ -315,8 +317,8 @@ def calculate_growth_rate(tenant, branch_id=None):
     current_month = timezone.now().replace(day=1)
     last_month = (current_month - timedelta(days=1)).replace(day=1)
     
-    current_filter = {'user__tenant': tenant, 'date_time__gte': current_month}
-    last_filter = {'user__tenant': tenant, 'date_time__gte': last_month, 'date_time__lt': current_month}
+    current_filter = {'tenant': tenant, 'date_time__gte': current_month}
+    last_filter = {'tenant': tenant, 'date_time__gte': last_month, 'date_time__lt': current_month}
     
     if branch_id:
         current_filter['branch_id'] = branch_id
@@ -357,7 +359,7 @@ def calculate_capacity_utilization(tenant, branch_id=None):
 
 def calculate_seasonal_patterns(tenant, branch_id=None):
     """Análisis de patrones estacionales"""
-    sales_filter = {'user__tenant': tenant}
+    sales_filter = {'tenant': tenant}
     if branch_id:
         sales_filter['branch_id'] = branch_id
         
@@ -384,7 +386,7 @@ def calculate_seasonal_patterns(tenant, branch_id=None):
 
 def calculate_internal_benchmarks(tenant, branch_id=None):
     """Benchmarks internos"""
-    sales_filter = {'user__tenant': tenant}
+    sales_filter = {'tenant': tenant}
     employee_filter = {'tenant': tenant, 'sales__isnull': False}
     
     if branch_id:
@@ -468,7 +470,7 @@ def predict_demand(tenant, branch_id=None):
 def predict_revenue(tenant, branch_id=None):
     """Predicción de ingresos"""
     sales_filter = {
-        'user__tenant': tenant,
+        'tenant': tenant,
         'date_time__gte': timezone.now() - timedelta(days=30)
     }
     if branch_id:

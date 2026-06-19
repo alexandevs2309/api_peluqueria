@@ -113,6 +113,15 @@ class AttendanceRecord(models.Model):
     check_in_at = models.DateTimeField(null=True, blank=True)
     check_out_at = models.DateTimeField(null=True, blank=True)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='present')
+    is_justified = models.BooleanField(default=False)
+    justification_reason = models.TextField(blank=True, null=True)
+    justified_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='justified_attendances'
+    )
     notes = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

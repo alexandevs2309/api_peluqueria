@@ -3,7 +3,7 @@ from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 
 from apps.appointments_api.models import Appointment
-from .models import Sale, SaleDetail, Payment, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
+from .models import Sale, SaleDetail, Payment, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon
 from apps.inventory_api.models import Product, StockMovement
 
 
@@ -28,15 +28,62 @@ class PaymentSerializer(serializers.ModelSerializer):
 class SaleSerializer(serializers.ModelSerializer):
     details = SaleDetailSerializer(many=True)
     payments = PaymentSerializer(many=True)
-    appointment = serializers.PrimaryKeyRelatedField(queryset=Appointment.objects.all(), required=False)
+    appointment = serializers.PrimaryKeyRelatedField(queryset=Appointment.objects.none(), required=False)
     client_name = serializers.CharField(source='client.full_name', read_only=True)
     employee_name = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
+    coupon = serializers.PrimaryKeyRelatedField(queryset=Coupon.objects.none(), required=False, allow_null=True)
 
     class Meta:
         model = Sale
-        fields = ['id', 'branch', 'client', 'client_name', 'employee_name', 'user', 'user_name', 'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 'payments', 'appointment', 'points_earned', 'points_redeemed']
-        read_only_fields = ['user', 'user_name', 'date_time', 'closed', 'client_name', 'employee_name', 'points_earned', 'points_redeemed']
+        fields = [
+            'id', 'branch', 'client', 'client_name', 'employee_name', 'user', 'user_name', 
+            'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 
+            'payments', 'appointment', 'points_earned', 'points_redeemed',
+            'ncf', 'ncf_type', 'rnc', 'company_name',
+            'promotion', 'promotion_name',
+            'coupon', 'coupon_code',
+        ]
+        read_only_fields = [
+            'user', 'user_name', 'date_time', 'closed', 'client_name', 'employee_name', 
+            'points_earned', 'points_redeemed', 'ncf', 'promotion_name', 'coupon_code',
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                # Scoped: only appointments belonging to this tenant
+                from django.db.models import Q
+                self.fields['appointment'].queryset = Appointment.objects.filter(
+                    Q(client__tenant=tenant) | Q(stylist__tenant=tenant)
+                )
+                from apps.clients_api.models import Client
+                from apps.settings_api.models import Branch
+                self.fields['client'].queryset = Client.objects.filter(tenant=tenant)
+                self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
+                self.fields['promotion'].queryset = Promotion.objects.filter(tenant=tenant)
+                self.fields['coupon'].queryset = Coupon.objects.filter(tenant=tenant)
+            elif request.user.is_superuser:
+                # Superuser without tenant scope sees all (admin/global context)
+                self.fields['appointment'].queryset = Appointment.objects.all()
+                from apps.clients_api.models import Client
+                from apps.settings_api.models import Branch
+                self.fields['client'].queryset = Client.objects.all()
+                self.fields['branch'].queryset = Branch.objects.all()
+                self.fields['promotion'].queryset = Promotion.objects.all()
+                self.fields['coupon'].queryset = Coupon.objects.all()
+            else:
+                # No tenant - no access
+                self.fields['appointment'].queryset = Appointment.objects.none()
+                from apps.clients_api.models import Client
+                from apps.settings_api.models import Branch
+                self.fields['client'].queryset = Client.objects.none()
+                self.fields['branch'].queryset = Branch.objects.none()
+                self.fields['promotion'].queryset = Promotion.objects.none()
+                self.fields['coupon'].queryset = Coupon.objects.none()
 
     def get_employee_name(self, obj):
         employee_user = getattr(getattr(obj, 'employee', None), 'user', None)
@@ -55,6 +102,34 @@ class SaleSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Se requiere al menos un detalle de venta")
         if not data.get('payments'):
             raise serializers.ValidationError("Se requiere al menos un método de pago")
+        
+        # Validaciones específicas de NCF para República Dominicana
+        ncf_type = data.get('ncf_type')
+        if ncf_type:
+            # Validar que sea un tipo válido
+            valid_types = [t[0] for t in NCFSequence.COMPROBANTE_TYPES]
+            if ncf_type not in valid_types:
+                raise serializers.ValidationError({
+                    'ncf_type': _('Invalid NCF type.')
+                })
+            
+            if ncf_type == '01':
+                rnc = (data.get('rnc') or '').strip()
+                company_name = (data.get('company_name') or '').strip()
+                if not rnc:
+                    raise serializers.ValidationError({
+                        'rnc': _('RNC is required for Fiscal Credit (B01) invoices.')
+                    })
+                if not company_name:
+                    raise serializers.ValidationError({
+                        'company_name': _('Company name is required for Fiscal Credit (B01) invoices.')
+                    })
+                # Validar RNC en RD: 9 o 11 dígitos numéricos
+                import re
+                if not re.match(r'^\d{9}$|^\d{11}$', rnc):
+                    raise serializers.ValidationError({
+                        'rnc': _('Invalid RNC. Must be exactly 9 or 11 digits.')
+                    })
         
         # Validación cross-tenant
         request = self.context.get('request')
@@ -92,6 +167,14 @@ class SaleSerializer(serializers.ModelSerializer):
             if client.tenant_id != tenant.id:
                 raise serializers.ValidationError({
                     'client': _('Client does not belong to your tenant')
+                })
+
+        # Validar coupon pertenece al tenant
+        coupon = data.get('coupon')
+        if coupon and hasattr(coupon, 'tenant_id'):
+            if coupon.tenant_id != tenant.id:
+                raise serializers.ValidationError({
+                    'coupon': _('Coupon does not belong to your tenant')
                 })
             
         return data
@@ -141,6 +224,18 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         model = CashRegister
         fields = ['id', 'user', 'user_name', 'branch', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
         read_only_fields = ['user', 'user_name', 'opened_at', 'closed_at', 'sales_amount']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                from apps.settings_api.models import Branch
+                from django.contrib.auth import get_user_model
+                User = get_user_model()
+                self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
+                self.fields['user'].queryset = User.objects.filter(tenant=tenant)
     
     def get_sales_amount(self, obj):
         """Calcular ventas en efectivo asociadas a esta sesión de caja"""
@@ -208,3 +303,40 @@ class PosConfigurationSerializer(serializers.ModelSerializer):
                  'receipt_template', 'receipt_footer', 'auto_print_receipt', 'require_customer',
                  'allow_negative_stock']
         read_only_fields = ['tenant', 'user']
+
+
+class NCFSequenceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = NCFSequence
+        fields = [
+            'id', 'tenant', 'type', 'prefix', 'start_sequence', 
+            'end_sequence', 'current_sequence', 'expiration_date', 'is_active',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['tenant', 'created_at', 'updated_at']
+
+class CouponSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Coupon
+        fields = [
+            'id', 'code', 'description', 'type', 'value', 'min_purchase_amount',
+            'start_date', 'end_date', 'is_active', 'max_uses', 'current_uses'
+        ]
+        read_only_fields = ['current_uses']
+
+    def validate_code(self, value):
+        return value.strip().upper()
+
+    def validate(self, data):
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        if start_date and end_date and start_date >= end_date:
+            raise serializers.ValidationError("La fecha de inicio debe ser anterior a la de finalización.")
+        return data
+
+class CouponValidationSerializer(serializers.Serializer):
+    code = serializers.CharField(max_length=50)
+    cart_total = serializers.DecimalField(max_digits=14, decimal_places=2, min_value=0.00)
+
+    def validate_code(self, value):
+        return value.strip().upper()

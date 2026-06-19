@@ -7,9 +7,9 @@ from rest_framework.response import Response
 from django.utils import timezone
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
-from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration
-from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer
-from django.db.models import Sum, Q
+from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon
+from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer, NCFSequenceSerializer, CouponSerializer, CouponValidationSerializer
+from django.db.models import Sum, Q, F
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from apps.core.permissions import IsSuperAdmin
 from apps.settings_api.barbershop_models import BarbershopSettings
@@ -99,18 +99,37 @@ class SaleViewSet(TenantScopedViewSet):
             logger.error(f"Error creating sale: {str(e)}")
             raise
 
+    def _get_request_branch(self):
+        branch_id = self.request.data.get('branch_id') or self.request.data.get('branch')
+        if not branch_id:
+            branch_id = self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
+
+        user = self.request.user
+        is_admin = user.role == 'Client-Admin' or user.is_superuser
+        if not is_admin and hasattr(user, 'employee_profile') and user.employee_profile:
+            if user.employee_profile.branch_id:
+                branch_id = user.employee_profile.branch_id
+
+        return branch_id
+
     def _validate_cash_register(self):
         tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        branch_id = self._get_request_branch()
+
         open_register = CashRegister.objects.filter(
             user=self.request.user,
             tenant=tenant,
             is_open=True
-        ).first()
+        )
+        if branch_id:
+            open_register = open_register.filter(branch_id=branch_id)
+
+        open_register = open_register.first()
         
-        logger.debug(f"Open register check: {open_register is not None}")
+        logger.debug(f"Open register check: {open_register is not None} branch_id={branch_id}")
         
         if not open_register:
-            logger.warning(f"No open register found for user {self.request.user}")
+            logger.warning(f"No open register found for user {self.request.user} branch_id={branch_id}")
             raise serializers.ValidationError("Debe abrir una caja antes de realizar ventas")
         return open_register
 
@@ -338,6 +357,60 @@ class SaleViewSet(TenantScopedViewSet):
                             f"Descuentos mayores a {discount_threshold_percent}% requieren motivo (mínimo 10 caracteres)"
                         )
             
+            # Validar promoción si se especificó promotion_id
+            promotion_obj = None
+            promotion_id = self.request.data.get('promotion_id')
+            if promotion_id:
+                try:
+                    tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+                    promotion_obj = Promotion.objects.get(id=promotion_id, tenant=tenant)
+                    if not promotion_obj.is_active:
+                        raise serializers.ValidationError("La promoción no está activa")
+                    if promotion_obj.max_uses and promotion_obj.current_uses >= promotion_obj.max_uses:
+                        raise serializers.ValidationError("La promoción ha alcanzado su límite de usos")
+                    if total < promotion_obj.min_amount:
+                        raise serializers.ValidationError(
+                            f"Monto mínimo requerido para la promoción: ${promotion_obj.min_amount}"
+                        )
+                    # Incrementar contador de usos de la promoción
+                    promotion_obj.current_uses += 1
+                    promotion_obj.save(update_fields=['current_uses'])
+                except Promotion.DoesNotExist:
+                    raise serializers.ValidationError("Promoción no encontrada")
+
+            # Validar cupón si se especificó coupon_id
+            coupon_obj = None
+            coupon_id = self.request.data.get('coupon_id')
+            if coupon_id:
+                try:
+                    tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+                    coupon_obj = Coupon.objects.select_for_update().get(id=coupon_id, tenant=tenant)
+                    if not coupon_obj.is_active:
+                        raise serializers.ValidationError("El cupón no está activo")
+                    
+                    # Validar vigencia de fechas
+                    now = timezone.now()
+                    if now < coupon_obj.start_date:
+                        raise serializers.ValidationError("El cupón aún no está vigente")
+                    if now > coupon_obj.end_date:
+                        raise serializers.ValidationError("El cupón ha expirado")
+
+                    # Validar usos
+                    if coupon_obj.max_uses is not None and coupon_obj.current_uses >= coupon_obj.max_uses:
+                        raise serializers.ValidationError("El cupón ha alcanzado su límite de usos")
+                    
+                    # Validar monto mínimo
+                    if total < coupon_obj.min_purchase_amount:
+                        raise serializers.ValidationError(
+                            f"Monto mínimo de compra requerido para el cupón: ${coupon_obj.min_purchase_amount}"
+                        )
+                    
+                    # Incrementar usos del cupón
+                    coupon_obj.current_uses += 1
+                    coupon_obj.save(update_fields=['current_uses'])
+                except Coupon.DoesNotExist:
+                    raise serializers.ValidationError("Cupón no encontrado")
+
             total_with_discount = total - discount
             
             # Determinar el empleado para la venta
@@ -370,8 +443,49 @@ class SaleViewSet(TenantScopedViewSet):
                 cash_register=open_register,
                 tenant=tenant_to_assign,
                 branch=branch_to_assign,
-                total=total_with_discount
+                total=total_with_discount,
+                promotion=promotion_obj if promotion_id else None,
+                coupon=coupon_obj if coupon_id else None
             )
+
+            # --- Generación de NCF (Comprobante Fiscal RD) ---
+            ncf_type = self.request.data.get('ncf_type')
+            if ncf_type:
+                tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+                if tenant:
+                    from django.db import transaction
+                    # Bloqueo de concurrencia para evitar NCF duplicados
+                    with transaction.atomic():
+                        sequence = NCFSequence.objects.select_for_update().filter(
+                            tenant=tenant,
+                            type=ncf_type,
+                            is_active=True,
+                            current_sequence__lte=F('end_sequence'),
+                            expiration_date__gte=timezone.now().date()
+                        ).order_by('created_at').first()
+                        
+                        if not sequence:
+                            raise serializers.ValidationError(
+                                f"No hay secuencia NCF activa para el tipo {ncf_type}. "
+                                "Verifique configuración, rango y fecha de expiración."
+                            )
+                        
+                        ncf = sequence.get_next_ncf()
+                        if not ncf:
+                            raise serializers.ValidationError(
+                                f"Secuencia NCF agotada o vencida para tipo {ncf_type}."
+                            )
+                        
+                        # Asignar NCF y datos fiscales a la venta
+                        sale.ncf = ncf
+                        sale.ncf_type = ncf_type
+                        sale.rnc = self.request.data.get('rnc', '')
+                        sale.company_name = self.request.data.get('company_name', '')
+                        sale.save(update_fields=['ncf', 'ncf_type', 'rnc', 'company_name'])
+                        
+                        # Incrementar secuencia
+                        sequence.current_sequence += 1
+                        sequence.save(update_fields=['current_sequence'])
 
             # Loyalty: Redimir puntos (descuento por canje)
             from apps.clients_api.models import LoyaltyTransaction
@@ -507,8 +621,11 @@ class SaleViewSet(TenantScopedViewSet):
         ).prefetch_related('details', 'details__content_type')
         
         # Si no es superusuario ni staff, solo sus propias ventas
+        # (Client-Admin ve todas las ventas del tenant)
         if not user.is_superuser and not user.is_staff:
-            qs = qs.filter(user=user)
+            user_role = getattr(user, 'role', '') or ''
+            if user_role not in ('Client-Admin', 'SuperAdmin', 'admin'):
+                qs = qs.filter(user=user)
             
         # Filtro por teléfono del cliente (protegido contra SQL injection)
         client_phone = self.request.query_params.get('client_phone')
@@ -896,6 +1013,10 @@ class SaleViewSet(TenantScopedViewSet):
             queryset = queryset.filter(payment_method=payment_method)
         
         from apps.utils.response_formatter import StandardResponse
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = self.get_serializer(queryset, many=True)
         return Response(StandardResponse.list_response(
             results=serializer.data,
@@ -952,6 +1073,19 @@ class SaleViewSet(TenantScopedViewSet):
 
    
 
+class NCFSequenceViewSet(TenantScopedViewSet):
+    queryset = NCFSequence.objects.all()
+    serializer_class = NCFSequenceSerializer
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'list': 'pos_api.view_ncfsequence',
+        'retrieve': 'pos_api.view_ncfsequence',
+        'create': 'pos_api.add_ncfsequence',
+        'update': 'pos_api.change_ncfsequence',
+        'partial_update': 'pos_api.change_ncfsequence',
+        'destroy': 'pos_api.delete_ncfsequence',
+    }
+
 class CashRegisterViewSet(TenantScopedViewSet):
     queryset = CashRegister.objects.all()
     serializer_class = CashRegisterSerializer
@@ -971,6 +1105,38 @@ class CashRegisterViewSet(TenantScopedViewSet):
 
     def _get_request_tenant(self):
         return getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        is_open = self.request.query_params.get('is_open')
+        if is_open is not None:
+            is_open_bool = is_open.lower() in ['true', '1', 'yes']
+            queryset = queryset.filter(is_open=is_open_bool)
+            
+        user_id = self.request.query_params.get('user') or self.request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+        
+        # Anotar sales_amount para evitar N+1 en serialización
+        from django.db.models import Sum, OuterRef, Subquery
+        from django.db.models.functions import Coalesce
+        from decimal import Decimal
+        from .models import Payment
+        payment_subquery = Payment.objects.filter(
+            sale__cash_register=OuterRef('pk'),
+            sale__tenant=OuterRef('tenant'),
+            method='cash',
+            sale__status='confirmed'
+        ).values('sale__cash_register').annotate(
+            total=Sum('amount')
+        ).values('total')
+        queryset = queryset.annotate(
+            _sales_amount_annotated=Coalesce(Subquery(payment_subquery), Decimal('0.00'))
+        )
+        
+        return queryset
+            
+        return queryset
     
     def perform_create(self, serializer):
         tenant = self._get_request_tenant()
@@ -1104,20 +1270,102 @@ class PromotionViewSet(TenantScopedViewSet):
         if cart_total < promotion.min_amount:
             return Response({'error': f'Monto mínimo requerido: ${promotion.min_amount}'}, status=status.HTTP_400_BAD_REQUEST)
         
+        # Validar tipo de promoción soportado
+        if promotion.type not in ('percentage', 'fixed'):
+            return Response({
+                'error': f'Tipo de promoción "{promotion.get_type_display()}" no implementado'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         # Calcular descuento
         discount = Decimal('0')
         if promotion.type == 'percentage':
             discount = cart_total * (promotion.discount_value / 100)
         elif promotion.type == 'fixed':
             discount = promotion.discount_value
-        
+
+        # NOTA: current_uses se incrementa en perform_create de SaleViewSet,
+        # no aquí, para evitar conteo doble o incremento en previews sin venta real.
+
         return Response({
             'discount': discount,
             'promotion_name': promotion.name,
             'promotion_id': promotion.id
         })
 
-class PosConfigurationViewSet(viewsets.ModelViewSet):
+class CouponViewSet(TenantScopedViewSet):
+    queryset = Coupon.objects.all()
+    serializer_class = CouponSerializer
+    permission_classes = [TenantPermissionByAction, HasFeaturePermission]
+    required_feature = 'cash_register'
+    permission_map = {
+        'list': 'pos_api.view_coupon',
+        'retrieve': 'pos_api.view_coupon',
+        'create': 'pos_api.add_coupon',
+        'update': 'pos_api.change_coupon',
+        'partial_update': 'pos_api.change_coupon',
+        'destroy': 'pos_api.delete_coupon',
+        'validate': 'pos_api.view_coupon',
+    }
+
+    @action(detail=False, methods=['post'])
+    def validate(self, request):
+        """Valida un código de cupón para el carrito actual"""
+        serializer = CouponValidationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        code = serializer.validated_data['code']
+        cart_total = serializer.validated_data['cart_total']
+        
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'No tenant context found'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Buscar cupón por código y tenant
+        try:
+            coupon = Coupon.objects.get(code=code, tenant=tenant)
+        except Coupon.DoesNotExist:
+            return Response({'error': 'El cupón ingresado no existe.'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Validar si está activo
+        if not coupon.is_active:
+            return Response({'error': 'El cupón no está activo.'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Validar vigencia de fechas
+        now = timezone.now()
+        if now < coupon.start_date:
+            return Response({'error': 'El cupón aún no ha comenzado su periodo de vigencia.'}, status=status.HTTP_400_BAD_REQUEST)
+        if now > coupon.end_date:
+            return Response({'error': 'El cupón ha expirado.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Validar límites de usos
+        if coupon.max_uses is not None and coupon.current_uses >= coupon.max_uses:
+            return Response({'error': 'El cupón ha superado el límite máximo de usos permitidos.'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Validar monto mínimo de compra
+        if cart_total < coupon.min_purchase_amount:
+            return Response({'error': f'Compra mínima requerida para este cupón: ${coupon.min_purchase_amount:.2f}'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        # Calcular el descuento aplicable
+        discount = Decimal('0.00')
+        if coupon.type == 'percentage':
+            discount = cart_total * (coupon.value / Decimal('100.00'))
+        elif coupon.type == 'fixed':
+            discount = coupon.value
+            
+        # Asegurarse de que el descuento no supere el total del carrito
+        if discount > cart_total:
+            discount = cart_total
+            
+        return Response({
+            'coupon_id': coupon.id,
+            'code': coupon.code,
+            'type': coupon.type,
+            'value': coupon.value,
+            'discount': discount
+        })
+
+class PosConfigurationViewSet(TenantScopedViewSet):
     queryset = PosConfiguration.objects.all()
     serializer_class = PosConfigurationSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
@@ -1183,7 +1431,8 @@ def daily_summary(request):
         # Obtener sesión de caja abierta
         open_register = None
         if tenant:
-            if request.user.is_superuser:
+            user_role = getattr(request.user, 'role', '') or ''
+            if request.user.is_superuser or user_role == 'Client-Admin':
                 open_register = CashRegister.objects.filter(
                     tenant=tenant,
                     is_open=True
@@ -1324,6 +1573,10 @@ def dashboard_stats(request):
         sold=Sum('quantity'), revenue=Sum('price')
     ).order_by('-revenue')[:5]
 
+    user_sales_today = Sale.objects.filter(today_filter & Q(user=request.user))
+    user_sales_count = user_sales_today.count()
+    user_sales_revenue = user_sales_today.aggregate(total=Sum('total'))['total'] or 0
+
     # Ingresos diarios en el rango
     daily_revenue = all_in_range.extra(
         select={'day': "CAST(date_time AS DATE)"}
@@ -1366,6 +1619,8 @@ def dashboard_stats(request):
         'transactions_range': transactions_range,
         'average_ticket': float(avg_ticket),
         'sales_today_count': sales_today.count(),
+        'user_sales_today_count': user_sales_count,
+        'user_sales_today_revenue': float(user_sales_revenue),
         'payment_breakdown': list(payment_breakdown),
         'top_products': list(top_products),
         'top_services': list(top_services),
@@ -1448,20 +1703,6 @@ def pos_categories(request):
             results=categories,
             count=len(categories)
         ))
-
-@api_view(['GET', 'POST'])
-@permission_classes([permissions.IsAdminUser])
-def debug_sale_data(request):
-    """Endpoint temporal para debug de datos de venta — solo admin, solo DEBUG"""
-    if not settings.DEBUG:
-        return Response({"error": "Not available"}, status=status.HTTP_404_NOT_FOUND)
-    logger.info("debug_sale_data called by user_id=%s", request.user.id if request.user.is_authenticated else None)
-    
-    return Response({
-        'received_data': request.data if request.method == 'POST' else None,
-        'user': str(request.user),
-        'authenticated': request.user.is_authenticated
-    })
 
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])

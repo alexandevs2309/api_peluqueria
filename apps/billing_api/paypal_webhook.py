@@ -13,7 +13,7 @@ from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.conf import settings
-from django.db import transaction
+from django.db import models, transaction
 
 from apps.auth_api.models import User
 from apps.tenants_api.utils import get_active_tenant
@@ -121,6 +121,25 @@ def _resolve_capture_details(resource):
     }
 
 
+def _resolve_paypal_order_id(resource):
+    """Extraer el PayPal order ID del resource del evento de captura."""
+    # El resource de PAYMENT.CAPTURE.COMPLETED tiene supplementary_data.related_ids.order_id
+    supplementary = resource.get('supplementary_data', {})
+    related_ids = supplementary.get('related_ids', {})
+    order_id = related_ids.get('order_id', '')
+    if order_id:
+        return order_id
+    # Fallback: extraer del link con rel 'up' o 'order'
+    links = resource.get('links', [])
+    for link in links:
+        if link.get('rel') in ('up', 'order') and link.get('href'):
+            # Extraer el order ID de la URL /v2/checkout/orders/{order_id}
+            href = link['href']
+            if '/orders/' in href:
+                return href.rsplit('/', 1)[-1]
+    return ''
+
+
 def handle_capture_completed(resource):
     """Manejar PAYMENT.CAPTURE.COMPLETED — crear factura y activar tenant."""
     user_id = _resolve_user_from_paypal_resource(resource)
@@ -142,13 +161,16 @@ def handle_capture_completed(resource):
             return
 
     capture = _resolve_capture_details(resource)
+    paypal_order_id = _resolve_paypal_order_id(resource)
     custom_id = (resource.get('purchase_units') or [{}])[0].get('custom_id', '')
     description = f"PayPal capture {capture['capture_id']}"
 
     with transaction.atomic():
-        existing = Invoice.objects.filter(
-            stripe_payment_intent_id=capture['capture_id'],
-        ).select_for_update().first()
+        # DB-level idempotency: buscar por capture_id (stripe_payment_intent_id) o por paypal_order_id
+        id_filter = models.Q(stripe_payment_intent_id=capture['capture_id'])
+        if paypal_order_id:
+            id_filter = id_filter | models.Q(paypal_order_id=paypal_order_id)
+        existing = Invoice.objects.filter(id_filter).select_for_update().first()
 
         if existing:
             if existing.is_paid:
@@ -158,10 +180,13 @@ def handle_capture_completed(resource):
             existing.paid_at = datetime.now(tz=dt_timezone.utc)
             existing.payment_method = 'paypal'
             existing.status = 'paid'
+            existing.stripe_payment_intent_id = existing.stripe_payment_intent_id or capture['capture_id']
+            existing.paypal_order_id = existing.paypal_order_id or paypal_order_id or None
             existing.save()
         else:
             Invoice.objects.create(
                 user=user,
+                tenant=getattr(user, 'tenant', None),
                 amount=capture['amount'],
                 due_date=datetime.now(tz=dt_timezone.utc),
                 is_paid=True,
@@ -169,6 +194,7 @@ def handle_capture_completed(resource):
                 payment_method='paypal',
                 status='paid',
                 stripe_payment_intent_id=capture['capture_id'],
+                paypal_order_id=paypal_order_id or None,
                 description=description,
             )
 
@@ -222,6 +248,17 @@ def handle_capture_denied(resource):
 
     failure_reason = resource.get('failure_reason', 'Unknown')
     invoice = Invoice.objects.filter(user=user, is_paid=False).order_by('-id').first()
+    if not invoice:
+        invoice = Invoice.objects.create(
+            user=user,
+            tenant=getattr(user, 'tenant', None),
+            amount=0,
+            due_date=datetime.now(tz=dt_timezone.utc),
+            is_paid=False,
+            payment_method='paypal',
+            status='failed',
+            description=f"PayPal capture denied: {failure_reason}",
+        )
     PaymentAttempt.objects.create(
         invoice=invoice,
         success=False,
@@ -240,17 +277,90 @@ def handle_capture_denied(resource):
 
 
 def handle_capture_refunded(resource):
-    """Manejar PAYMENT.CAPTURE.REFUNDED."""
+    """Manejar PAYMENT.CAPTURE.REFUNDED — marcar factura, suspender tenant y notificar."""
+    from apps.auth_api.tasks import send_email_async
+
     user_id = _resolve_user_from_paypal_resource(resource)
     if not user_id:
         return
 
     capture_id = resource.get('id', '')
-    Invoice.objects.filter(stripe_payment_intent_id=capture_id).update(
-        status='refunded',
-        is_paid=False,
-    )
-    logger.info("Invoice for capture %s marked as refunded", capture_id)
+    amount = resource.get('amount', {}).get('value', '0')
+    currency = resource.get('amount', {}).get('currency_code', 'USD')
+
+    # Buscar la factura por capture_id o paypal_order_id
+    invoice = Invoice.objects.filter(
+        models.Q(stripe_payment_intent_id=capture_id) |
+        models.Q(paypal_order_id=capture_id)
+    ).first()
+
+    if invoice:
+        invoice.status = 'refunded'
+        invoice.is_paid = False
+        invoice.save(update_fields=['status', 'is_paid'])
+        logger.info("Invoice %s for capture %s marked as refunded", invoice.id, capture_id)
+
+        # Suspender el tenant asociado
+        tenant = invoice.tenant
+        if tenant and hasattr(tenant, 'suspend_subscription'):
+            try:
+                tenant.suspend_subscription(save=True)
+                logger.warning(
+                    "Tenant %s suspended due to PayPal refund/chargeback on invoice %s",
+                    tenant.id, invoice.id
+                )
+            except Exception as exc:
+                logger.exception(
+                    "Failed to suspend tenant %s after refund: %s", tenant.id, exc
+                )
+        elif not tenant:
+            # Fallback: resolver tenant desde el usuario de la factura
+            user = invoice.user
+            if user and hasattr(user, 'tenant') and user.tenant:
+                try:
+                    user.tenant.suspend_subscription(save=True)
+                    logger.warning(
+                        "Tenant %s suspended (via user fallback) due to PayPal refund on invoice %s",
+                        user.tenant.id, invoice.id
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Failed to suspend tenant %s after refund (fallback): %s",
+                        user.tenant.id, exc
+                    )
+
+        # Enviar notificación de chargeback/refund
+        try:
+            user = invoice.user
+            subject = f"Reembolso/Chargeback recibido - {amount} {currency}"
+            text_body = (
+                f"Hola {user.full_name or user.email},\n\n"
+                f"Se ha procesado un reembolso o chargeback en tu cuenta de PayPal "
+                f"por {amount} {currency} (Factura #{invoice.id}).\n\n"
+                f"Como resultado, tu suscripción ha sido suspendida.\n"
+                f"Por favor, contacta a soporte para regularizar tu situación.\n\n"
+                f"El equipo de AuronSuite"
+            )
+            html_body = (
+                f"<h2>Reembolso/Chargeback recibido</h2>"
+                f"<p>Hola {user.full_name or user.email},</p>"
+                f"<p>Se ha procesado un reembolso o chargeback en tu cuenta de PayPal "
+                f"por <strong>{amount} {currency}</strong> (Factura #{invoice.id}).</p>"
+                f"<p>Como resultado, tu suscripción ha sido <strong>suspendida</strong>.</p>"
+                f"<p>Por favor, contacta a <a href='mailto:soporte@auronsuite.com'>soporte@auronsuite.com</a> "
+                f"para regularizar tu situación.</p>"
+                f"<p>El equipo de AuronSuite</p>"
+            )
+            send_email_async.delay(
+                subject, text_body, '',
+                [user.email],
+                html_message=html_body,
+            )
+            logger.info("Refund notification email sent to %s for invoice %s", user.email, invoice.id)
+        except Exception as exc:
+            logger.exception("Failed to send refund notification email: %s", exc)
+    else:
+        logger.warning("No invoice found for capture %s — cannot suspend tenant", capture_id)
 
 
 EVENT_HANDLERS = {

@@ -135,3 +135,11 @@ class StockMovementSerializer(serializers.ModelSerializer):
         model = StockMovement
         fields = ['id', 'product', 'quantity', 'reason', 'created_at']
         read_only_fields = ['created_at']
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                self.fields['product'].queryset = Product.objects.filter(tenant=tenant)

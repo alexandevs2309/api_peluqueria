@@ -86,10 +86,10 @@ class CookieLoginView(APIView):
             if tenant_subdomain:
                 tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
                 if tenant_for_lockout:
-                    user_for_lockout = User.objects.filter(email=email, tenant=tenant_for_lockout).first()
+                    user_for_lockout = User.objects.filter(email__iexact=email, tenant=tenant_for_lockout).first()
             else:
                 user_for_lockout = User.objects.filter(
-                    email=email,
+                    email__iexact=email,
                     is_superuser=True,
                     tenant__isnull=True
                 ).first()
@@ -114,10 +114,10 @@ class CookieLoginView(APIView):
                     if tenant_subdomain:
                         tenant = Tenant.objects.filter(subdomain=tenant_subdomain).first()
                         if tenant:
-                            user = User.objects.filter(email=email, tenant=tenant).first()
+                            user = User.objects.filter(email__iexact=email, tenant=tenant).first()
                     else:
                         user = User.objects.filter(
-                            email=email,
+                            email__iexact=email,
                             is_superuser=True,
                             tenant__isnull=True
                         ).first()

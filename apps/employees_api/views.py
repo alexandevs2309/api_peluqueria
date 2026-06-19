@@ -318,13 +318,16 @@ class EmployeeViewSet(TenantScopedViewSet):
         
         # Estadísticas del último mes
         last_month = timezone.now() - timedelta(days=30)
+        tenant = getattr(self.request, 'tenant', self.request.user.tenant)
         
         appointments_count = Appointment.objects.filter(
+            tenant=tenant,
             stylist=employee.user,
             date_time__gte=last_month
         ).count()
         
         sales_count = Sale.objects.filter(
+            tenant=tenant,
             user=employee.user,
             date_time__gte=last_month
         ).count()
@@ -789,6 +792,7 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
         'destroy': 'employees_api.delete_employee',
         'check_in': 'employees_api.change_employee',
         'check_out': 'employees_api.change_employee',
+        'justify_attendance': 'employees_api.change_employee',
     }
 
     def get_queryset(self):
@@ -862,10 +866,55 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
         today = timezone.localdate()
         now = timezone.now()
 
+        days_mapping = {
+            0: 'monday',
+            1: 'tuesday',
+            2: 'wednesday',
+            3: 'thursday',
+            4: 'friday',
+            5: 'saturday',
+            6: 'sunday'
+        }
+        day_name = days_mapping[today.weekday()]
+        
+        status_value = 'present'
+        notes_value = ''
+        
+        # Buscar horario de hoy
+        schedule = WorkSchedule.objects.filter(employee=employee, day_of_week=day_name).first()
+        if schedule:
+            grace_minutes = 15
+            if employee.branch_id:
+                from apps.settings_api.models import Setting
+                tenant = getattr(request, 'tenant', request.user.tenant)
+                setting = Setting.objects.filter(branch_id=employee.branch_id, branch__tenant=tenant).first()
+                if setting and isinstance(setting.preferences, dict):
+                    grace_minutes = setting.preferences.get('attendance_grace_period_minutes', 15)
+            
+            local_now = timezone.localtime(now)
+            current_time = local_now.time()
+            
+            current_minutes = current_time.hour * 60 + current_time.minute
+            start_minutes = schedule.start_time.hour * 60 + schedule.start_time.minute
+            
+            if current_minutes > (start_minutes + grace_minutes):
+                status_value = 'late'
+                minutes_late = current_minutes - start_minutes
+                notes_value = f"Retraso de {minutes_late} minutos"
+            else:
+                status_value = 'present'
+        else:
+            notes_value = "Check-in fuera de horario laboral"
+
         record, created = AttendanceRecord.objects.get_or_create(
             employee=employee,
             work_date=today,
-            defaults={'check_in_at': now, 'status': 'present'}
+            defaults={
+                'check_in_at': now,
+                'status': status_value,
+                'is_justified': False,
+                'notes': notes_value
+            }
         )
 
         if not created and record.check_in_at:
@@ -880,8 +929,10 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
 
         if not record.check_in_at:
             record.check_in_at = now
-            record.status = 'present'
-            record.save(update_fields=['check_in_at', 'status', 'updated_at'])
+            record.status = status_value
+            if notes_value:
+                record.notes = notes_value
+            record.save(update_fields=['check_in_at', 'status', 'notes', 'updated_at'])
 
         serializer = self.get_serializer(record)
         return Response(serializer.data, status=status.HTTP_200_OK if not created else status.HTTP_201_CREATED)
@@ -911,7 +962,46 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
             )
 
         record.check_out_at = now
-        record.save(update_fields=['check_out_at', 'updated_at'])
+        
+        # Calcular duración del turno
+        delta = record.check_out_at - record.check_in_at
+        total_seconds = int(delta.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        
+        duration_str = f"Trabajado: {hours}h {minutes}m"
+        if record.notes:
+            record.notes = f"{record.notes} | {duration_str}"
+        else:
+            record.notes = duration_str
+
+        record.save(update_fields=['check_out_at', 'notes', 'updated_at'])
+        serializer = self.get_serializer(record)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], url_path='justify')
+    def justify_attendance(self, request, pk=None):
+        record = self.get_object()
+        user = request.user
+        
+        if not user.is_superuser:
+            is_admin_or_manager = UserRole.objects.filter(
+                user=user,
+                tenant=getattr(request, 'tenant', user.tenant if hasattr(user, 'tenant') else None),
+                role__name__in=['Admin', 'Client-Admin', 'Manager']
+            ).exists()
+            if not is_admin_or_manager:
+                return Response({'detail': 'No tiene permisos para justificar asistencias'}, status=status.HTTP_403_FORBIDDEN)
+
+        reason = request.data.get('reason', '')
+        if not reason:
+            return Response({'error': 'Debe proporcionar un motivo de justificación'}, status=status.HTTP_400_BAD_REQUEST)
+
+        record.is_justified = True
+        record.justification_reason = reason
+        record.justified_by = user
+        record.save(update_fields=['is_justified', 'justification_reason', 'justified_by', 'updated_at'])
+
         serializer = self.get_serializer(record)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -922,11 +1012,25 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
 
         if employee_id:
             try:
-                employee = Employee.objects.get(pk=employee_id)
+                if user.is_superuser:
+                    employee = Employee.objects.get(pk=employee_id)
+                else:
+                    employee = Employee.objects.get(pk=employee_id, tenant=tenant)
             except Employee.DoesNotExist:
                 raise ValidationError("Empleado no encontrado")
             if not user.is_superuser and employee.tenant_id != getattr(tenant, 'id', None):
                 raise ValidationError("No puede registrar asistencia para otro tenant")
+            
+            # Validación de seguridad: si no es su propio empleado, debe ser admin/manager
+            if employee.user_id != user.id and not user.is_superuser:
+                from rest_framework.exceptions import PermissionDenied
+                is_admin_or_manager = UserRole.objects.filter(
+                    user=user,
+                    tenant=tenant,
+                    role__name__in=['Admin', 'Client-Admin', 'Manager']
+                ).exists()
+                if not is_admin_or_manager:
+                    raise PermissionDenied("No tienes permisos para registrar asistencia de otros colaboradores")
             return employee
 
         try:

@@ -5,8 +5,8 @@ from rest_framework import viewsets
 import logging
 from rest_framework.response import Response
 from rest_framework import status
-from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan, Subscription
-from .serializers import  SubscriptionAuditLogSerializer, SubscriptionPlanSerializer , UserSubscriptionSerializer, OnboardingSerializer, PublicSubscriptionPlanSerializer
+from .models import SubscriptionAuditLog, UserSubscription, SubscriptionPlan, Subscription, PromotionalCredit
+from .serializers import (SubscriptionAuditLogSerializer, SubscriptionPlanSerializer, UserSubscriptionSerializer, OnboardingSerializer, PublicSubscriptionPlanSerializer, PromotionalCreditSerializer)
 from .permissions import IsSuperuserOrReadOnly
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.decorators import action
@@ -230,8 +230,9 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
                 return queryset.filter(user__tenant_id=tenant_id)
             return queryset
 
-        return queryset.filter(user=self.request.user)
-    
+        tenant = getattr(self.request, 'tenant', self.request.user.tenant)
+        return queryset.filter(user__tenant=tenant)
+
     def perform_create(self, serializer):
         user = self.request.user
         active_sub = UserSubscription.objects.filter(user=user, is_active=True).exists()
@@ -998,6 +999,8 @@ class RenewSubscriptionView(APIView):
                 paid_at=timezone.now(),
                 payment_method='paypal',
                 status='paid',
+                stripe_payment_intent_id=capture_entry.get('id'),
+                paypal_order_id=order_id,
                 description=f"Subscription renewal - {plan.get_name_display()} ({'Anual' if cached_order.get('billing_interval') == 'year' else 'Mensual'}) x{cached_order['months']}m (PayPal {order_id})"
             )
 
@@ -1528,3 +1531,13 @@ class RenewSubscriptionView(APIView):
                 'error': 'Internal error',
                 'message': str(e)
             }, status=500)
+
+
+class PromotionalCreditViewSet(viewsets.ModelViewSet):
+    queryset = PromotionalCredit.objects.all()
+    serializer_class = PromotionalCreditSerializer
+    permission_classes = [IsSuperAdmin]
+    filterset_fields = ['campaign_tag', 'tenant']
+    search_fields = ['campaign_tag', 'reason', 'tenant__name']
+    ordering_fields = ['created_at', 'months', 'tenant__name']
+    ordering = ['-created_at']

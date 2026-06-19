@@ -32,14 +32,14 @@ class RealtimeMetricsView(APIView):
     }
 
     def get(self, request):
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         branch_id = get_report_branch_id(request)
         now = timezone.now()
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
 
-        sale_filter = {'user__tenant': tenant, 'date_time__gte': today_start}
+        sale_filter = {'tenant': tenant, 'date_time__gte': today_start}
         appointment_filter = {'client__tenant': tenant, 'date_time__date': now.date()}
-        yesterday_filter = {'user__tenant': tenant, 'date_time__gte': today_start - timedelta(days=1), 'date_time__lt': today_start}
+        yesterday_filter = {'tenant': tenant, 'date_time__gte': today_start - timedelta(days=1), 'date_time__lt': today_start}
         upcoming_filter = {
             'client__tenant': tenant,
             'date_time__gte': now,
@@ -106,7 +106,7 @@ class LiveDashboardView(APIView):
     }
 
     def get(self, request):
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         branch_id = get_report_branch_id(request)
         hourly_data = []
         now = timezone.now()
@@ -116,7 +116,7 @@ class LiveDashboardView(APIView):
             hour_end = hour_start + timedelta(hours=1)
 
             sale_filter = {
-                'user__tenant': tenant,
+                'tenant': tenant,
                 'date_time__gte': hour_start,
                 'date_time__lt': hour_end
             }
@@ -140,6 +140,7 @@ class LiveDashboardView(APIView):
         employees = Employee.objects.filter(**emp_filter)
         for emp in employees:
             apt_filter = {
+                'client__tenant': tenant,
                 'stylist': emp.user,
                 'date_time__gte': now - timedelta(minutes=30),
                 'date_time__lte': now + timedelta(hours=2),
@@ -183,15 +184,15 @@ class PerformanceAlertsView(APIView):
     }
 
     def get(self, request):
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         branch_id = get_report_branch_id(request)
         alerts = []
 
         today_start = timezone.now().replace(hour=0, minute=0, second=0, microsecond=0)
         
-        sale_today_filter = {'user__tenant': tenant, 'date_time__gte': today_start}
+        sale_today_filter = {'tenant': tenant, 'date_time__gte': today_start}
         last_month = today_start - timedelta(days=30)
-        sale_avg_filter = {'user__tenant': tenant, 'date_time__gte': last_month, 'date_time__lt': today_start}
+        sale_avg_filter = {'tenant': tenant, 'date_time__gte': last_month, 'date_time__lt': today_start}
         appointment_cancelled_filter = {'client__tenant': tenant, 'date_time__date': timezone.now().date(), 'status': 'cancelled'}
         
         if branch_id:

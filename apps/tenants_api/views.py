@@ -126,9 +126,7 @@ class TenantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        tenant.subscription_status = "suspended"
-        tenant.is_active = False
-        tenant.save(update_fields=["subscription_status", "is_active", "updated_at"])
+        tenant.suspend_subscription(save=True)
 
         self._create_audit_log(
             request.user,
@@ -177,8 +175,9 @@ class TenantViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=["get"])
     def current(self, request):
         """Get current user's tenant"""
-        if request.user.tenant:
-            serializer = self.get_serializer(request.user.tenant)
+        tenant = getattr(request, 'tenant', request.user.tenant)
+        if tenant:
+            serializer = self.get_serializer(tenant)
             return response.Response(serializer.data)
         return response.Response({"error": "No tenant assigned"}, status=404)
     
@@ -199,8 +198,8 @@ class TenantViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=["get"], url_path="subscription-status")
     def subscription_status(self, request):
         """Check subscription status - will trigger middleware validation"""
-        if request.user.tenant:
-            tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
+        if tenant:
             access_level = tenant.get_access_level()
             payload = {
                 "status": tenant.subscription_status,

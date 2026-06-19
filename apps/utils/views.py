@@ -2,8 +2,10 @@
 
 Endpoints:
 - /metrics-dashboard/: Métricas en tiempo real (DB, financiero, Celery)
-- /health-check/: Health check completo del sistema
+- /health-check/: Health check completo del sistema (solo admins)
+- /healthz/public/: Health check público para Docker healthchecks y monitoreo
 """
+import os
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAdminUser
 from rest_framework.response import Response
@@ -119,3 +121,41 @@ def health_check(request):
     
     status_code = 200 if health['status'] == 'healthy' else 503
     return Response(health, status=status_code)
+
+
+@api_view(['GET'])
+def public_health_check(request):
+    """Health check público — sin autenticación.
+    
+    Diseñado para Docker healthchecks y monitoreo externo.
+    - Siempre retorna 200 si la BD responde (incluso sin token).
+    - Verifica BD con SELECT 1.
+    - Si CRON_API_KEY está configurada y se provee ?token=..., valida el token.
+    - NO verifica cache ni Celery (evita falsos negativos en healthchecks Docker).
+    """
+    # Validación opcional de token
+    cron_api_key = os.environ.get('CRON_API_KEY', '')
+    token = request.query_params.get('token', '')
+    if cron_api_key and token and token != cron_api_key:
+        return Response(
+            {'status': 'error', 'message': 'Invalid token'},
+            status=403,
+        )
+
+    result = {
+        'status': 'ok',
+        'timestamp': timezone.now().isoformat(),
+        'checks': {},
+    }
+
+    # Check database
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        result['checks']['database'] = 'ok'
+    except Exception as e:
+        result['checks']['database'] = f'error: {str(e)}'
+        result['status'] = 'error'
+
+    status_code = 200 if result['status'] == 'ok' else 503
+    return Response(result, status=status_code)

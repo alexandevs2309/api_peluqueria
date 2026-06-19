@@ -12,6 +12,21 @@ class BarbershopSettings(models.Model):
     business_hours = models.JSONField(default=dict, blank=True)
     contact = models.JSONField(default=dict, blank=True)
     
+    # WhatsApp QR Settings
+    whatsapp_enabled = models.BooleanField(default=False)
+    whatsapp_instance_name = models.CharField(max_length=100, blank=True)
+    whatsapp_token = models.CharField(max_length=255, blank=True)
+    whatsapp_status = models.CharField(
+        max_length=50,
+        choices=[
+            ('disconnected', 'Desconectado'),
+            ('connecting', 'Conectando'),
+            ('connected', 'Conectado')
+        ],
+        default='disconnected'
+    )
+    whatsapp_phone = models.CharField(max_length=32, blank=True)
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

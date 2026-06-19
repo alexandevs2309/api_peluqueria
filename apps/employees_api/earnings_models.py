@@ -234,6 +234,63 @@ class PayrollPeriod(models.Model):
         # FIX 3: Bloquear recalcular si está finalizado
         if self.status in ['approved', 'paid']:
             return
+
+        # 1. Eliminar deducciones automáticas de asistencia anteriores para este periodo
+        # para que al recalcular no se dupliquen
+        self.deductions.filter(is_automatic=True, description__startswith="[Asistencia]").delete()
+        
+        # 2. Calcular deducciones automáticas por asistencia tardía / inasistencia
+        employee = self.employee
+        if employee.payment_type in ['fixed', 'mixed']:
+            from .models import AttendanceRecord
+            attendances = AttendanceRecord.objects.filter(
+                employee=employee,
+                work_date__gte=self.period_start,
+                work_date__lte=self.period_end,
+                is_justified=False
+            )
+            
+            minutes_late = 0
+            days_absent = 0
+            for att in attendances:
+                if att.status == 'late':
+                    if att.notes and "Retraso de" in att.notes:
+                        try:
+                            # Parsear "Retraso de X minutos"
+                            minutes_late += int(att.notes.split("Retraso de ")[1].split(" minutos")[0])
+                        except Exception:
+                            minutes_late += 30
+                    else:
+                        minutes_late += 30
+                elif att.status == 'absent':
+                    days_absent += 1
+            
+            fixed_salary = employee.fixed_salary
+            if fixed_salary > 0:
+                salary_daily = Decimal(str(fixed_salary)) / Decimal('23.83')
+                value_minute = salary_daily / Decimal('480.0') # 8h * 60m
+                
+                if minutes_late > 0:
+                    amount_late = (Decimal(minutes_late) * value_minute).quantize(Decimal('0.01'))
+                    if amount_late > 0:
+                        PayrollDeduction.objects.create(
+                            period=self,
+                            deduction_type='other',
+                            amount=amount_late,
+                            description=f"[Asistencia] Deducción por tardanza acumulada ({minutes_late} minutos)",
+                            is_automatic=True
+                        )
+                
+                if days_absent > 0:
+                    amount_absent = (Decimal(days_absent) * salary_daily).quantize(Decimal('0.01'))
+                    if amount_absent > 0:
+                        PayrollDeduction.objects.create(
+                            period=self,
+                            deduction_type='other',
+                            amount=amount_absent,
+                            description=f"[Asistencia] Deducción por inasistencia ({days_absent} días)",
+                            is_automatic=True
+                        )
         
         # NUEVO: Usar servicio de cálculo desde snapshots
         try:
@@ -270,6 +327,7 @@ class PayrollPeriod(models.Model):
             if employee.payment_type in ['commission', 'mixed']:
                 from apps.pos_api.models import Sale
                 sales = Sale.objects.filter(
+                    tenant=employee.tenant,
                     employee=employee,
                     date_time__date__gte=self.period_start,
                     date_time__date__lte=self.period_end
@@ -306,6 +364,7 @@ class PayrollPeriod(models.Model):
         
         # Obtener ventas del período
         sales = Sale.objects.filter(
+            tenant=self.employee.tenant,
             employee=self.employee,
             date_time__date__gte=self.period_start,
             date_time__date__lte=self.period_end

@@ -241,6 +241,20 @@ class TenantMiddleware(MiddlewareMixin):
             )
             
             if not is_subscription_exempt:
+                # 🔴 GRACE PERIOD: evaluar ANTES de sync_subscription_state
+                # para que los 3 días de gracia del trial sean reales
+                now = timezone.now()
+                tenant = request.tenant
+                if (tenant.subscription_status == 'trial'
+                        and tenant.trial_end_date
+                        and tenant.trial_end_date < now.date()):
+                    days_expired = (now.date() - tenant.trial_end_date).days
+                    if days_expired <= 3:
+                        request.grace_period = True
+                        request.subscription_limited = True
+                        self.check_trial_notifications(tenant)
+                        return None
+
                 sync_subscription_state(request.tenant, save=True)
                 access_level = request.tenant.get_access_level()
                 

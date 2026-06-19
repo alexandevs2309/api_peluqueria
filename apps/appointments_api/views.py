@@ -89,39 +89,59 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                         raise serializers.ValidationError("No tienes permiso para programar citas en otra sucursal")
                     save_kwargs['branch_id'] = user.employee_profile.branch_id
         
-        # Validar que no hay conflictos de horario
+        # Convertir a hora local para validaciones de zona horaria
+        local_datetime = timezone.localtime(appointment_datetime)
+        weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_of_week = weekdays[local_datetime.weekday()]
+
+        # Validar que no hay conflictos de horario (solapamientos considerando duración)
+        day_start = local_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+
         conflicting_appointments = Appointment.objects.filter(
             tenant=tenant,
             stylist=stylist,
-            date_time=appointment_datetime,
+            date_time__gte=day_start,
+            date_time__lt=day_end,
             status__in=['scheduled', 'completed']
-        ).exclude(pk=getattr(serializer.instance, 'pk', None))
-        
-        if conflicting_appointments.exists():
-            raise serializers.ValidationError(
-                "El estilista ya tiene una cita programada en ese horario"
-            )
-        
+        ).exclude(pk=getattr(serializer.instance, 'pk', None)).select_related('service')
+
+        new_duration = service.duration if service else 30
+        new_start = appointment_datetime
+        new_end = new_start + timedelta(minutes=new_duration)
+
+        for exist in conflicting_appointments:
+            exist_duration = exist.service.duration if exist.service else 30
+            exist_start = exist.date_time
+            exist_end = exist_start + timedelta(minutes=exist_duration)
+
+            # Verificar solapamiento de intervalos
+            if new_start < exist_end and exist_start < new_end:
+                raise serializers.ValidationError(
+                    f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
+                )
+
         # Validar horario de trabajo
-        day_of_week = appointment_datetime.strftime('%A').lower()
         work_schedule = WorkSchedule.objects.filter(
             employee__user=stylist,
+            employee__tenant=tenant,
             day_of_week=day_of_week
         ).first()
-        
+
         if work_schedule:
-            appointment_time = appointment_datetime.time()
+            appointment_time = local_datetime.time()
             if not (work_schedule.start_time <= appointment_time <= work_schedule.end_time):
                 raise serializers.ValidationError(
                     f"El estilista no trabaja en ese horario el {day_of_week}"
                 )
-        
+
         serializer.save(**save_kwargs)
 
     @action(detail=False, methods=['get'])
     def availability(self, request):
         stylist_id = request.query_params.get('stylist_id')
         date = request.query_params.get('date')
+        exclude_id = request.query_params.get('exclude_id') or request.query_params.get('exclude_appointment_id')
         
         if not stylist_id or not date:
             return Response(
@@ -139,9 +159,11 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             )
         
         # Obtener horario de trabajo
-        day_of_week = target_date.strftime('%A').lower()
+        weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        day_of_week = weekdays[target_date.weekday()]
         work_schedule = WorkSchedule.objects.filter(
             employee__user=stylist,
+            employee__tenant=self.request.tenant,
             day_of_week=day_of_week
         ).first()
         
@@ -152,27 +174,49 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             start_time_t = work_schedule.start_time
             end_time_t = work_schedule.end_time
 
+        # Obtener citas del estilista en el día y calcular rangos ocupados
+        day_appointments = Appointment.objects.filter(
+            tenant=self.request.tenant,
+            stylist=stylist,
+            date_time__date=target_date,
+            status__in=['scheduled', 'completed']
+        )
+        if exclude_id:
+            try:
+                day_appointments = day_appointments.exclude(id=int(exclude_id))
+            except ValueError:
+                pass
+        day_appointments = day_appointments.select_related('service')
+
+        occupied_ranges = []
+        for apt in day_appointments:
+            apt_duration = apt.service.duration if apt.service else 30
+            occupied_ranges.append((apt.date_time, apt.date_time + timedelta(minutes=apt_duration)))
+
         # Generar slots de 30 minutos
         slots = []
         current_time = datetime.combine(target_date, start_time_t)
         end_time = datetime.combine(target_date, end_time_t)
         
-        now_naive = timezone.make_naive(timezone.now())
-        is_today = target_date == now_naive.date()
+        local_now = timezone.localtime(timezone.now())
+        is_today = target_date == local_now.date()
         while current_time < end_time:
             # Saltar slots que ya pasaron (solo para hoy)
-            if is_today and current_time.time() <= now_naive.time():
+            if is_today and current_time.time() <= local_now.time():
                 current_time += timedelta(minutes=30)
                 continue
 
-            # Verificar si hay cita en este horario
-            existing_appointment = Appointment.objects.filter(
-                stylist=stylist,
-                date_time=current_time,
-                status__in=['scheduled', 'completed']
-            ).exists()
+            slot_start = timezone.make_aware(current_time, timezone.get_current_timezone())
+            slot_end = slot_start + timedelta(minutes=30)
+
+            # Verificar si se solapa con algún rango ocupado
+            is_overlap = False
+            for start, end in occupied_ranges:
+                if slot_start < end and start < slot_end:
+                    is_overlap = True
+                    break
             
-            if not existing_appointment:
+            if not is_overlap:
                 slots.append({
                     'datetime': current_time.isoformat(),
                     'time': current_time.strftime('%H:%M'),
@@ -224,11 +268,13 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
     @action(detail=False, methods=['get'])
     def today(self, request):
-        today = timezone.now().date()
-        tomorrow = today + timedelta(days=1)
+        today_local = timezone.localtime(timezone.now()).date()
+        today_start = timezone.make_aware(datetime.combine(today_local, time.min), timezone.get_current_timezone())
+        tomorrow_start = today_start + timedelta(days=1)
+        
         appointments = self.get_queryset().filter(
-            date_time__gte=today,
-            date_time__lt=tomorrow
+            date_time__gte=today_start,
+            date_time__lt=tomorrow_start
         ).order_by('date_time')
         
         serializer = AppointmentSerializer(appointments, many=True)
@@ -318,7 +364,7 @@ def reschedule_appointment(request, pk):
             
             appointment = Appointment.objects.get(
                 id=pk,
-                client__tenant=request.tenant
+                tenant=request.tenant
             )
         else:
             appointment = Appointment.objects.get(id=pk)
@@ -332,18 +378,31 @@ def reschedule_appointment(request, pk):
         except ValueError:
             return Response({'error': 'Formato de fecha inválido'}, status=400)
         
-        # Validar disponibilidad
-        conflicting = Appointment.objects.filter(
+        # Validar disponibilidad (solapamientos considerando duración)
+        day_start = new_dt.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        
+        conflicting_appointments = Appointment.objects.filter(
             tenant=appointment.tenant,
             stylist=appointment.stylist,
-            date_time=new_dt,
+            date_time__gte=day_start,
+            date_time__lt=day_end,
             status__in=['scheduled', 'completed']
-        ).exclude(id=appointment.id)
+        ).exclude(id=appointment.id).select_related('service')
         
-        if conflicting.exists():
-            return Response({
-                'error': 'El estilista ya tiene una cita en ese horario'
-            }, status=400)
+        new_duration = appointment.service.duration if appointment.service else 30
+        new_start = new_dt
+        new_end = new_start + timedelta(minutes=new_duration)
+        
+        for exist in conflicting_appointments:
+            exist_duration = exist.service.duration if exist.service else 30
+            exist_start = exist.date_time
+            exist_end = exist_start + timedelta(minutes=exist_duration)
+            
+            if new_start < exist_end and exist_start < new_end:
+                return Response({
+                    'error': f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
+                }, status=400)
         
         old_datetime = appointment.date_time
         appointment.date_time = new_dt
@@ -381,17 +440,18 @@ def stylist_schedule(request, stylist_id):
         # Obtener horarios de trabajo
         from apps.employees_api.models import WorkSchedule
         schedules = WorkSchedule.objects.filter(
-            employee__user=stylist
+            employee__user=stylist,
+            employee__tenant=request.tenant
         ).values('day_of_week', 'start_time', 'end_time')
         
         # Obtener citas de la semana
-        today = timezone.now().date()
+        today = timezone.localtime(timezone.now()).date()
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
         
         tenant_filter = {}
         if not user.is_superuser and hasattr(request, 'tenant') and request.tenant:
-            tenant_filter['client__tenant'] = request.tenant
+            tenant_filter['tenant'] = request.tenant
         appointments = Appointment.objects.filter(
             stylist=stylist,
             date_time__date__gte=week_start,

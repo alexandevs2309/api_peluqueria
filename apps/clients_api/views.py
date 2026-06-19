@@ -49,7 +49,6 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
         instance = serializer.save(
             tenant=tenant,
-            user=self.request.user,
             created_by=self.request.user
         )
         self.log_action('create', instance, self.request.user, self.request)
@@ -149,6 +148,10 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
             is_active=True
         ).order_by('birthday__day')
         
+        page = self.paginate_queryset(clients)
+        if page is not None:
+            serializer = ClientSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = ClientSerializer(clients, many=True)
         return Response(serializer.data)
     
@@ -163,6 +166,10 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
             is_active=True
         )
         
+        page = self.paginate_queryset(clients)
+        if page is not None:
+            serializer = ClientSerializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
         serializer = ClientSerializer(clients, many=True)
         return Response(serializer.data)
     

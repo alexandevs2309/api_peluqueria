@@ -31,4 +31,4 @@ check:
 	docker compose -f docker-compose.prod.yml exec web python manage.py check --deploy
 
 backup:
-	docker exec -t api_peluqueria-master-db-1 pg_dump -U $$DB_USER $$DB_NAME > backup.sql
+	docker compose -f docker-compose.prod.yml exec -T db pg_dump -U $$DB_USER $$DB_NAME > backup.sql

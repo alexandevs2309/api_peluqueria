@@ -20,7 +20,8 @@ class PaymentAttemptSerializer(serializers.ModelSerializer):
         invoice = data.get('invoice')
         if invoice:
             if invoice.user != request.user:
-                if not (hasattr(request.user, 'tenant') and invoice.user and invoice.user.tenant_id == request.user.tenant_id):
+                tenant_id = getattr(getattr(request, 'tenant', None), 'id', None) or getattr(request.user, 'tenant_id', None)
+                if not (tenant_id and invoice.user and invoice.user.tenant_id == tenant_id):
                     raise serializers.ValidationError("No tiene permiso para registrar intentos en esta factura.")
 
         return data

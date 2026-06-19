@@ -31,6 +31,15 @@ class PayrollPeriodSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['base_salary', 'commission_earnings', 'gross_amount', 'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason']
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        if request:
+            tenant = getattr(request, 'tenant', None)
+            if tenant:
+                from .models import Employee
+                self.fields['employee'].queryset = Employee.objects.filter(user__tenant=tenant)
+
 
 class PayrollConfigurationSerializer(serializers.ModelSerializer):
     class Meta:

@@ -103,14 +103,8 @@ def availability(request, subdomain):
         is_active=True,
     )
 
-    day_name = target_date.strftime('%A').lower()
-    day_map = {
-        'monday': 'monday', 'tuesday': 'tuesday', 'wednesday': 'wednesday',
-        'thursday': 'thursday', 'friday': 'friday', 'saturday': 'saturday', 'sunday': 'sunday',
-    }
-    day_key = day_map.get(day_name)
-    if not day_key:
-        return Response({'slots': []})
+    weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    day_key = weekdays[target_date.weekday()]
 
     schedules = WorkSchedule.objects.filter(
         employee=employee,
@@ -237,6 +231,7 @@ def book_appointment(request, subdomain):
     from apps.appointments_api.models import Appointment
     appointment = Appointment.objects.create(
         tenant=tenant,
+        branch=employee.branch,
         client=client,
         stylist=employee.user,
         service=service,

@@ -84,7 +84,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'action_required': 'contact_admin'
             }, status=403)
             
-        tenant = request.user.tenant
+        tenant = getattr(request, 'tenant', request.user.tenant)
         sync_subscription_state(tenant, save=True)
         
         if tenant.subscription_status in {'archived', 'cancelled'}:

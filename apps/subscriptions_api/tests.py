@@ -894,3 +894,92 @@ def test_register_with_plan_annual_billing(monkeypatch):
     assert invoice is not None
     assert invoice.amount == 100.00
     assert "Primer año" in invoice.description
+
+
+@pytest.mark.django_db
+def test_promotional_credit_apply_extends_trial():
+    """PromotionalCredit.apply() debe extender trial_end_date y marcar used_at"""
+    from apps.subscriptions_api.models import PromotionalCredit
+
+    user = User.objects.create_superuser(
+        email="promo_admin@test.com", password="pass", full_name="Promo Admin"
+    )
+    tenant = _make_tenant("promo-test", owner=user)
+    tenant.subscription_status = "trial"
+    tenant.trial_end_date = timezone.now().date() + timedelta(days=7)
+    tenant.save(update_fields=["subscription_status", "trial_end_date"])
+
+    credit = PromotionalCredit.objects.create(
+        tenant=tenant,
+        months=3,
+        reason="Campaña Instagram",
+        campaign_tag="INSTAGRAM2026",
+        created_by=user,
+    )
+    assert credit.used_at is None
+
+    original_trial_end = tenant.trial_end_date
+    credit.apply()
+    credit.refresh_from_db()
+    tenant.refresh_from_db()
+
+    assert credit.used_at is not None
+    # El crédito extiende desde trial_end_date existente (3 meses adicionales)
+    from dateutil.relativedelta import relativedelta
+    expected = original_trial_end + relativedelta(months=3)
+    assert abs((tenant.trial_end_date - expected).days) <= 1, (
+        f"trial_end_date {tenant.trial_end_date} != expected {expected}"
+    )
+
+
+@pytest.mark.django_db
+def test_promotional_credit_cannot_apply_twice():
+    """Aplicar un crédito dos veces debe lanzar ValidationError"""
+    from apps.subscriptions_api.models import PromotionalCredit
+    from django.core.exceptions import ValidationError
+
+    user = User.objects.create_superuser(
+        email="promo_admin2@test.com", password="pass", full_name="Promo Admin2"
+    )
+    tenant = _make_tenant("promo-double", owner=user)
+    tenant.subscription_status = "trial"
+    tenant.trial_end_date = timezone.now().date() + timedelta(days=7)
+    tenant.save(update_fields=["subscription_status", "trial_end_date"])
+
+    credit = PromotionalCredit.objects.create(
+        tenant=tenant, months=2, reason="Test doble apply", created_by=user,
+    )
+    credit.apply()
+
+    with pytest.raises(ValidationError, match="ya fue aplicado"):
+        credit.apply()
+
+
+@pytest.mark.django_db
+def test_promotional_credit_extends_active_subscription():
+    """Si el tenant no está en trial (subscription_status = active), debe extender access_until"""
+    from apps.subscriptions_api.models import PromotionalCredit
+
+    user = User.objects.create_superuser(
+        email="promo_admin3@test.com", password="pass", full_name="Promo Admin3"
+    )
+    tenant = _make_tenant("promo-active", owner=user)
+    tenant.subscription_status = "active"
+    tenant.access_until = timezone.now() - timedelta(days=1)
+    tenant.save(update_fields=["subscription_status", "access_until"])
+
+    before = timezone.now()
+
+    credit = PromotionalCredit.objects.create(
+        tenant=tenant, months=1, reason="Test active extend", created_by=user,
+    )
+    credit.apply()
+    tenant.refresh_from_db()
+
+    after = timezone.now()
+    min_expected = before + timedelta(days=29)
+    max_expected = after + timedelta(days=31)
+    assert min_expected <= tenant.access_until <= max_expected, (
+        f"access_until {tenant.access_until} fuera del rango "
+        f"[{min_expected}, {max_expected}]"
+    )

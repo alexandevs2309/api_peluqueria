@@ -18,6 +18,8 @@ from apps.employees_api.earnings_models import PayrollPeriod
 from apps.subscriptions_api.access_control import has_feature
 from apps.subscriptions_api.permissions import requires_feature
 import logging
+import json
+from django.conf import settings as django_settings
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,17 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         'create': 'settings_api.change_barbershopsettings',
         'admin_settings': 'settings_api.change_barbershopsettings',
         'upload_logo': 'settings_api.change_barbershopsettings',
+        'whatsapp_status': 'settings_api.view_barbershopsettings',
+        'whatsapp_connect': 'settings_api.change_barbershopsettings',
+        'whatsapp_disconnect': 'settings_api.change_barbershopsettings',
     }
+
+
+    def get_permissions(self):
+        if self.action == 'whatsapp_webhook':
+            from rest_framework.permissions import AllowAny
+            return [AllowAny()]
+        return super().get_permissions()
     
     # Campos críticos que requieren confirmación
     CRITICAL_FIELDS = ['currency']
@@ -377,3 +389,152 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             'logo_url': settings.logo.url,
             'message': 'Logo uploaded successfully'
         })
+
+    @action(detail=False, methods=['get'])
+    def whatsapp_status(self, request):
+        """
+        GET /api/settings/barbershop/whatsapp_status/
+        Devuelve el estado de conexión de WhatsApp para el tenant actual
+        """
+        tenant = getattr(request, 'tenant', request.user.tenant)
+        settings, _ = BarbershopSettings.objects.get_or_create(tenant=tenant)
+        
+        from .whatsapp_provider import get_whatsapp_provider
+        provider = get_whatsapp_provider()
+        
+        if settings.whatsapp_instance_name:
+            current_status = provider.get_status(settings.whatsapp_instance_name)
+            should_save = False
+            if current_status != settings.whatsapp_status:
+                settings.whatsapp_status = current_status
+                should_save = True
+            
+            if current_status == "connected" and not settings.whatsapp_enabled:
+                settings.whatsapp_enabled = True
+                should_save = True
+            elif current_status == "disconnected" and settings.whatsapp_enabled:
+                settings.whatsapp_enabled = False
+                should_save = True
+                
+            if should_save:
+                settings.save(update_fields=['whatsapp_status', 'whatsapp_enabled'])
+        
+        return Response({
+            'whatsapp_enabled': settings.whatsapp_enabled,
+            'whatsapp_status': settings.whatsapp_status,
+            'whatsapp_phone': settings.whatsapp_phone,
+            'whatsapp_instance_name': settings.whatsapp_instance_name
+        })
+
+    @action(detail=False, methods=['post'])
+    def whatsapp_connect(self, request):
+        """
+        POST /api/settings/barbershop/whatsapp_connect/
+        Crea/recupera instancia de WhatsApp y devuelve el código QR
+        """
+        tenant = getattr(request, 'tenant', request.user.tenant)
+        
+        from apps.subscriptions_api.access_control import tenant_has_feature
+        if not tenant_has_feature(tenant, 'whatsapp_notifications'):
+            return Response({
+                'error': 'Tu plan no incluye notificaciones por WhatsApp. Actualiza tu plan.'
+            }, status=status.HTTP_403_FORBIDDEN)
+            
+        settings, _ = BarbershopSettings.objects.get_or_create(tenant=tenant)
+        
+        instance_name = f"tenant_{tenant.subdomain or tenant.id}"
+        
+        import secrets
+        token = settings.whatsapp_token or secrets.token_hex(16)
+        
+        from .whatsapp_provider import get_whatsapp_provider
+        provider = get_whatsapp_provider()
+        
+        result = provider.create_instance(instance_name, token)
+        
+        if result.get('success'):
+            settings.whatsapp_instance_name = instance_name
+            settings.whatsapp_token = result.get('token')
+            settings.whatsapp_status = 'connecting'
+            settings.save(update_fields=['whatsapp_instance_name', 'whatsapp_token', 'whatsapp_status'])
+            
+            # Configurar webhook
+            platform_domain = getattr(django_settings, 'PLATFORM_DOMAIN', None)
+            if not platform_domain:
+                import os
+                # Si estamos en la red interna de Docker, la pasarela 'evolution' necesita apuntar al host 'web'
+                evolution_url = os.getenv("EVOLUTION_API_URL", "")
+                if "evolution" in evolution_url:
+                    platform_domain = "http://web:8000"
+                else:
+                    platform_domain = "http://localhost:8000"
+            
+            webhook_url = f"{platform_domain}/api/settings/barbershop/whatsapp_webhook/"
+            provider.set_webhook(instance_name, webhook_url)
+
+            
+            return Response({
+                'success': True,
+                'qrcode_base64': result.get('qrcode_base64'),
+                'qrcode_code': result.get('qrcode_code'),
+                'status': 'connecting'
+            })
+            
+        return Response({
+            'success': False,
+            'error': result.get('error', 'No se pudo conectar a la pasarela de WhatsApp')
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['post'])
+    def whatsapp_disconnect(self, request):
+        """
+        POST /api/settings/barbershop/whatsapp_disconnect/
+        Desconecta e inhabilita WhatsApp para el tenant actual
+        """
+        tenant = getattr(request, 'tenant', request.user.tenant)
+        settings, _ = BarbershopSettings.objects.get_or_create(tenant=tenant)
+        
+        if settings.whatsapp_instance_name:
+            from .whatsapp_provider import get_whatsapp_provider
+            provider = get_whatsapp_provider()
+            provider.delete_instance(settings.whatsapp_instance_name)
+            
+        settings.whatsapp_enabled = False
+        settings.whatsapp_instance_name = ''
+        settings.whatsapp_token = ''
+        settings.whatsapp_status = 'disconnected'
+        settings.whatsapp_phone = ''
+        settings.save()
+        
+        return Response({'success': True, 'message': 'WhatsApp desconectado correctamente'})
+
+    @action(detail=False, methods=['post'])
+    def whatsapp_webhook(self, request):
+        """
+        POST /api/settings/barbershop/whatsapp_webhook/
+        Webhook público llamado por la pasarela para notificar cambios de conexión
+        """
+        data = request.data
+        logger.info("WhatsApp Webhook received: %s", json.dumps(data)[:300])
+        
+        event_type = (data.get("event") or "").lower()
+        instance_name = data.get("instance")
+        
+        if event_type in ("connection.update", "connection_update") and instance_name:
+            status_data = data.get("data", {})
+            status_state = status_data.get("state")
+            
+            settings = BarbershopSettings.objects.filter(whatsapp_instance_name=instance_name).first()
+            if settings:
+                if status_state == "open":
+                    settings.whatsapp_status = "connected"
+                    settings.whatsapp_enabled = True
+                    settings.whatsapp_phone = status_data.get("phone") or status_data.get("number") or settings.whatsapp_phone
+                elif status_state == "close":
+                    settings.whatsapp_status = "disconnected"
+                    settings.whatsapp_enabled = False
+                elif status_state == "connecting":
+                    settings.whatsapp_status = "connecting"
+                settings.save(update_fields=['whatsapp_status', 'whatsapp_enabled', 'whatsapp_phone'])
+                
+        return Response({'success': True})

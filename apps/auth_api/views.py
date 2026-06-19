@@ -62,7 +62,7 @@ from .authentication import DualJWTAuthentication
 
 
 from apps.roles_api.role_hierarchy import validate_role_assignment, get_allowed_roles, can_modify_user
-from apps.core.tenant_permissions import TenantPermissionByAction
+from apps.core.tenant_permissions import TenantPermissionByAction, resolve_request_tenant, _check_permission_in_db
 
 
 User = get_user_model()
@@ -272,10 +272,10 @@ class LoginView(generics.GenericAPIView):
             if tenant_subdomain:
                 tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
                 if tenant_for_lockout:
-                    user_for_lockout = User.objects.filter(email=email, tenant=tenant_for_lockout).first()
+                    user_for_lockout = User.objects.filter(email__iexact=email, tenant=tenant_for_lockout).first()
             else:
                 user_for_lockout = User.objects.filter(
-                    email=email,
+                    email__iexact=email,
                     is_superuser=True,
                     tenant__isnull=True
                 ).first()
@@ -294,12 +294,12 @@ class LoginView(generics.GenericAPIView):
             if tenant_subdomain:
                 try:
                     tenant = Tenant.objects.get(subdomain=tenant_subdomain)
-                    user = User.objects.filter(email=email, tenant=tenant).first()
+                    user = User.objects.filter(email__iexact=email, tenant=tenant).first()
                 except (Tenant.DoesNotExist, User.DoesNotExist):
                     user = None
             else:
                 user = User.objects.filter(
-                    email=email,
+                    email__iexact=email,
                     is_superuser=True,
                     tenant__isnull=True
                 ).first()
@@ -898,9 +898,53 @@ class MFALoginVerifyView(APIView):
 
 
 
+class UserPermission(TenantPermissionByAction):
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        tenant = resolve_request_tenant(request)
+        if not tenant:
+            return False
+
+        action = self._resolve_action(request, view)
+        if not action:
+            return False
+
+        if action in ['update', 'partial_update']:
+            return True
+
+        return super().has_permission(request, view)
+
+    def has_object_permission(self, request, view, obj):
+        if not request.user or not request.user.is_authenticated:
+            return False
+
+        if request.user.is_superuser:
+            return True
+
+        tenant = resolve_request_tenant(request)
+        if not tenant:
+            return False
+
+        if obj.tenant != tenant:
+            return False
+
+        action = self._resolve_action(request, view)
+        if action in ['update', 'partial_update']:
+            if obj.id == request.user.id:
+                return True
+            return _check_permission_in_db(request.user, tenant, 'auth_api', 'change_user')
+
+        return super().has_object_permission(request, view, obj)
+
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.none()  # Seguro por defecto
-    permission_classes = [TenantPermissionByAction]
+    permission_classes = [UserPermission]
     permission_map = {
         'list': 'auth_api.view_user',
         'retrieve': 'auth_api.view_user',
@@ -1013,8 +1057,8 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         # Check user limits for non-superadmin
-        if not request.user.is_superuser and request.user.tenant:
-            tenant = request.user.tenant
+        if not request.user.is_superuser and getattr(request, 'tenant', request.user.tenant):
+            tenant = getattr(request, 'tenant', request.user.tenant)
             if not tenant.can_add_user():
                 upgrade_result = maybe_auto_upgrade_user_limit(tenant, changed_by=request.user)
                 tenant.refresh_from_db(fields=['plan_type', 'subscription_plan', 'max_employees', 'max_users', 'settings', 'updated_at'])
@@ -1086,15 +1130,15 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
     
     def update(self, request, *args, **kwargs):
-        if not self._is_tenant_admin_or_superuser(request):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        is_self_update = instance.id == request.user.id
+
+        if not is_self_update and not self._is_tenant_admin_or_superuser(request):
             return Response(
                 {'error': 'Solo Client-Admin puede modificar usuarios'},
                 status=status.HTTP_403_FORBIDDEN
             )
-
-        partial = kwargs.pop('partial', False)
-        instance = self.get_object()
-        is_self_update = instance.id == request.user.id
 
         # Permitir auto-edición básica del propio perfil sin validación jerárquica de roles.
         if is_self_update:

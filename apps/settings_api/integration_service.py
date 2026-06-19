@@ -150,10 +150,53 @@ class IntegrationService:
             raise Exception(f"Error enviando SMS: {str(e)}")
 
     @staticmethod
-    def send_whatsapp(phone, message):
-        """Enviar WhatsApp si Twilio esta habilitado"""
+    def send_whatsapp(phone, message, tenant=None):
+        """Enviar WhatsApp si está habilitado (por QR o por Twilio fallback)"""
+        override = getattr(django_settings, 'DEV_WHATSAPP_OVERRIDE', '')
+        original = phone
+        if override:
+            phone = override
+            logger.info("DEV_WHATSAPP_OVERRIDE activo: redirigiendo de %s a %s", original, phone)
+            # Si hay override, intentar usar cualquier tenant con WhatsApp conectado
+            if not tenant:
+                from apps.settings_api.models import BarbershopSettings
+                try:
+                    qr_settings = BarbershopSettings.objects.filter(
+                        whatsapp_enabled=True,
+                        whatsapp_status='connected'
+                    ).select_related('tenant').first()
+                    if qr_settings:
+                        tenant = qr_settings.tenant
+                        logger.info("DEV_WHATSAPP_OVERRIDE: usando tenant %s para envío QR", tenant.subdomain)
+                except Exception:
+                    pass
+        # 1. Comprobar si el tenant tiene configurada su pasarela QR
+        if tenant:
+            from apps.settings_api.models import BarbershopSettings
+            try:
+                settings = tenant.barbershop_settings
+                if settings.whatsapp_enabled and settings.whatsapp_status == 'connected' and settings.whatsapp_instance_name:
+                    from apps.settings_api.whatsapp_provider import get_whatsapp_provider
+                    provider = get_whatsapp_provider()
+                    # Enviar vía QR
+                    try:
+                        provider.send_message(
+                            instance_name=settings.whatsapp_instance_name,
+                            token=settings.whatsapp_token,
+                            to_phone=phone,
+                            message=message
+                        )
+                        logger.info("WhatsApp QR sent to %s for tenant %s", phone, tenant.subdomain)
+                        return "success_qr"
+                    except Exception as e:
+                        logger.error("Error sending WhatsApp QR to %s for tenant %s: %s", phone, tenant.subdomain, str(e))
+                        raise e
+            except BarbershopSettings.DoesNotExist:
+                pass
+
+        # 2. Fallback a Twilio global si Twilio está habilitado
         if not IntegrationService.is_twilio_enabled():
-            raise Exception("Twilio no esta habilitado")
+            raise Exception("WhatsApp no está habilitado (ni por QR de cliente ni por pasarela global)")
 
         system_settings = IntegrationService.get_system_settings()
         account_sid = system_settings.twilio_account_sid or os.getenv('TWILIO_ACCOUNT_SID')
@@ -180,13 +223,13 @@ class IntegrationService:
             raise Exception(f"Error enviando WhatsApp: {str(e)}")
 
     @staticmethod
-    def send_email(to_email, subject, message):
+    def send_email(to_email, subject, message, attachments=None):
         """Enviar email si email/SMTP esta habilitado"""
         if not IntegrationService.is_sendgrid_enabled():
             raise Exception("Email no configurado")
 
         try:
-            from django.core.mail import send_mail, get_connection
+            from django.core.mail import EmailMessage, get_connection
             system_settings = IntegrationService.get_system_settings()
 
             smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
@@ -218,15 +261,20 @@ class IntegrationService:
                     timeout=10,
                 )
 
-            send_mail(
+            email = EmailMessage(
                 subject=subject,
-                message=message,
+                body=message,
                 from_email=from_header,
-                recipient_list=[to_email],
-                html_message=message,
-                fail_silently=False,
+                to=[to_email],
                 connection=connection,
             )
+            email.content_subtype = "html"
+
+            if attachments:
+                for filename, content, mimetype in attachments:
+                    email.attach(filename, content, mimetype)
+
+            email.send(fail_silently=False)
             return True
 
         except Exception as e:

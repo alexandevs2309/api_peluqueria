@@ -374,6 +374,12 @@ CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'America/Santo_Domingo'
+
+# Tolerancia a fallos de workers
+CELERY_TASK_ACKS_LATE = env.bool('CELERY_TASK_ACKS_LATE', default=True)
+CELERY_TASK_REJECT_ON_WORKER_LOST = env.bool('CELERY_TASK_REJECT_ON_WORKER_LOST', default=True)
+CELERY_WORKER_PREFETCH_MULTIPLIER = env.int('CELERY_WORKER_PREFETCH_MULTIPLIER', default=4)
+
 APPOINTMENT_NO_SHOW_GRACE_MINUTES = env.int('APPOINTMENT_NO_SHOW_GRACE_MINUTES', default=15)
 
 # Celery Beat Schedule
@@ -534,6 +540,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # En desarrollo, redirige todos los emails a esta dirección (limitación de Resend en modo test)
 DEV_EMAIL_OVERRIDE = env('DEV_EMAIL_OVERRIDE', default='') if DEBUG else ''
+# En desarrollo, redirige todos los WhatsApp a este número
+DEV_WHATSAPP_OVERRIDE = env('DEV_WHATSAPP_OVERRIDE', default='') if DEBUG else ''
 
 if "pytest" in sys.modules:
     CELERY_TASK_ALWAYS_EAGER = True

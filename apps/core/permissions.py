@@ -52,7 +52,8 @@ class IsTenantMember(BasePermission):
         if request.user.is_superuser:
             return True
 
-        return hasattr(request.user, 'tenant') and request.user.tenant is not None
+        tenant = getattr(request, 'tenant', request.user.tenant if hasattr(request.user, 'tenant') else None)
+        return tenant is not None
 
 
 class RolePermission(BasePermission):

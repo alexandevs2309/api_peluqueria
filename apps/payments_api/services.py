@@ -4,6 +4,7 @@ except ImportError:
     stripe = None
 
 from django.conf import settings
+from django.db.models import Q
 import logging
 from .models import Payment, PaymentProvider
 from apps.subscriptions_api.models import UserSubscription, SubscriptionPlan
@@ -139,7 +140,10 @@ class NotificationService:
         """Enviar email de bienvenida"""
         from apps.notifications_api.models import NotificationTemplate, Notification
         template = NotificationTemplate.objects.filter(
-            notification_type='welcome', type='email', is_active=True
+            Q(notification_type='welcome'),
+            Q(type='email'),
+            Q(tenant=tenant) | Q(tenant__isnull=True),
+            is_active=True
         ).first()
         if template:
             notification = Notification.objects.create(
@@ -159,7 +163,10 @@ class NotificationService:
         """Enviar confirmación de pago"""
         from apps.notifications_api.models import NotificationTemplate, Notification
         template = NotificationTemplate.objects.filter(
-            notification_type='payment_received', type='email', is_active=True
+            Q(notification_type='payment_received'),
+            Q(type='email'),
+            Q(tenant=user.tenant) | Q(tenant__isnull=True),
+            is_active=True
         ).first()
         if template:
             notification = Notification.objects.create(
@@ -183,7 +190,10 @@ class NotificationService:
         """Enviar advertencia de expiración"""
         from apps.notifications_api.models import NotificationTemplate, Notification
         template = NotificationTemplate.objects.filter(
-            notification_type='subscription_expiring', type='email', is_active=True
+            Q(notification_type='subscription_expiring'),
+            Q(type='email'),
+            Q(tenant=user.tenant) | Q(tenant__isnull=True),
+            is_active=True
         ).first()
         if template:
             notification = Notification.objects.create(

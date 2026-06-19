@@ -92,8 +92,8 @@ def sales_report(request):
     tenant = getattr(request, 'tenant', request.user.tenant)
     branch_id = get_report_branch_id(request)
     
-    sale_filter = {'user__tenant': tenant}
-    detail_filter = {'sale__user__tenant': tenant, 'content_type__model': 'service'}
+    sale_filter = {'tenant': tenant}
+    detail_filter = {'sale__tenant': tenant, 'content_type__model': 'service'}
     if branch_id:
         sale_filter['branch_id'] = branch_id
         detail_filter['sale__branch_id'] = branch_id
@@ -112,22 +112,25 @@ def sales_report(request):
         date_time__gte=month_start
     ).aggregate(total=Sum('total'))['total'] or 0
     
-    # Ventas por día (últimos 7 días)
+    # Ventas por día (últimos 7 días) — 1 query con TruncDate vs 7 queries individuales
+    from django.db.models.functions import TruncDate
+    week_ago = (now - timedelta(days=7)).replace(hour=0, minute=0, second=0, microsecond=0)
+    daily_qs = Sale.objects.filter(
+        **sale_filter,
+        date_time__gte=week_ago
+    ).annotate(
+        day=TruncDate('date_time')
+    ).values('day').annotate(
+        total=Sum('total')
+    ).order_by('day')
+    
+    daily_map = {d['day']: float(d['total']) for d in daily_qs}
     sales_by_day = []
-    for i in range(7):
-        day = now - timedelta(days=i)
-        day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
-        
-        day_sales = Sale.objects.filter(
-            **sale_filter,
-            date_time__gte=day_start,
-            date_time__lt=day_end
-        ).aggregate(total=Sum('total'))['total'] or 0
-        
-        sales_by_day.insert(0, {
+    for i in range(6, -1, -1):
+        day = (now - timedelta(days=i)).date()
+        sales_by_day.append({
             'date': day.strftime('%Y-%m-%d'),
-            'sales': float(day_sales)
+            'sales': daily_map.get(day, 0)
         })
     
     # Servicios más vendidos REALES
@@ -170,7 +173,7 @@ def dashboard_stats(request):
     
     employee_filter = {'tenant': tenant, 'is_active': True}
     appointment_filter = {'client__tenant': tenant, 'date_time__gte': month_start}
-    sale_filter = {'user__tenant': tenant, 'date_time__gte': month_start}
+    sale_filter = {'tenant': tenant, 'date_time__gte': month_start}
     
     if branch_id:
         employee_filter['branch_id'] = branch_id
@@ -244,7 +247,7 @@ def reports_by_type(request):
             month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
             
             filters = {
-                'user__tenant': tenant,
+                'tenant': tenant,
                 'date_time__gte': month_start,
                 'date_time__lte': month_end
             }
@@ -370,18 +373,18 @@ class AdminReportsView(views.APIView):
                 issued_at__lte=end_date,
                 is_paid=True
             ).values(
-                'user__tenant__name',
-                'user__tenant__subscription_plan__name'
+                'tenant__name',
+                'tenant__subscription_plan__name'
             ).annotate(
                 total_revenue=Sum('amount')
             ).order_by('-total_revenue')[:5]
             
             top_tenants = [{
-                'tenant_name': item['user__tenant__name'],
+                'tenant_name': item['tenant__name'],
                 'revenue': float(item['total_revenue']),
                 'commission_amount': float(calculate_platform_commission(item['total_revenue'])),
                 'net_revenue': float(calculate_platform_net_revenue(item['total_revenue'])),
-                'plan': item['user__tenant__subscription_plan__name'] or 'FREE'
+                'plan': item['tenant__subscription_plan__name'] or 'FREE'
             } for item in top_tenants_data]
             
             return Response({
@@ -497,10 +500,10 @@ def kpi_dashboard(request):
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
     
-    sale_monthly_filter = {'user__tenant': tenant, 'date_time__date__gte': month_start}
+    sale_monthly_filter = {'tenant': tenant, 'date_time__date__gte': month_start}
     appointment_monthly_filter = {'client__tenant': tenant, 'date_time__date__gte': month_start}
     
-    sale_weekly_filter = {'user__tenant': tenant, 'date_time__date__gte': week_start}
+    sale_weekly_filter = {'tenant': tenant, 'date_time__date__gte': week_start}
     appointment_weekly_filter = {'client__tenant': tenant, 'date_time__date__gte': week_start}
     
     employee_filter = {'tenant': tenant, 'is_active': True}
@@ -563,7 +566,7 @@ def services_performance(request):
     start_date = timezone.now() - timedelta(days=days)
     
     filters = {
-        'sale__user__tenant': tenant,
+        'sale__tenant': tenant,
         'sale__date_time__gte': start_date,
         'content_type__model': 'service'
     }
@@ -676,7 +679,7 @@ def export_report(request):
         headers = ['ID', 'Fecha', 'Cliente', 'Empleado', 'Total', 'Método de pago', 'Estado', 'Sucursal']
         style_header(ws, headers)
 
-        base_filter = {'user__tenant': tenant}
+        base_filter = {'tenant': tenant}
         base_filter.update(filters)
         sales = Sale.objects.filter(**base_filter).select_related(
             'client', 'employee__user', 'branch'
@@ -768,7 +771,7 @@ def export_report(request):
         style_header(ws, headers)
 
         detail_filters = {
-            'sale__user__tenant': tenant,
+            'sale__tenant': tenant,
             'content_type__model': 'service'
         }
         if branch_id:
@@ -792,7 +795,7 @@ def export_report(request):
         style_header(ws, headers)
 
         detail_filters = {
-            'sale__user__tenant': tenant,
+            'sale__tenant': tenant,
             'content_type__model': 'product'
         }
         if branch_id:
@@ -809,6 +812,39 @@ def export_report(request):
             ws.cell(row=row_idx, column=3, value=float(prod['total_revenue'])).border = thin_border
         ws.column_dimensions['A'].width = 30
         ws.column_dimensions['C'].width = 18
+
+    elif report_type == 'cash_registers':
+        from apps.pos_api.models import CashRegister
+        headers = ['ID', 'Apertura', 'Cierre', 'Usuario', 'Monto Inicial', 'Ventas Efectivo', 'Monto Esperado', 'Monto Declarado', 'Diferencia', 'Estado', 'Sucursal']
+        style_header(ws, headers)
+
+        base_filter = {'tenant': tenant}
+        base_filter.update(filters)
+        registers = CashRegister.objects.filter(**base_filter).select_related(
+            'user', 'branch'
+        ).order_by('-opened_at')[:5000]
+
+        for row_idx, reg in enumerate(registers, 2):
+            sales_amount = float(reg.sales_amount)
+            initial_cash = float(reg.initial_cash)
+            final_cash = float(reg.final_cash)
+            expected = initial_cash + sales_amount
+            difference = final_cash - expected if not reg.is_open else 0.0
+
+            ws.cell(row=row_idx, column=1, value=reg.id).border = thin_border
+            ws.cell(row=row_idx, column=2, value=reg.opened_at.strftime('%Y-%m-%d %H:%M') if reg.opened_at else '').border = thin_border
+            ws.cell(row=row_idx, column=3, value=reg.closed_at.strftime('%Y-%m-%d %H:%M') if reg.closed_at else '—').border = thin_border
+            ws.cell(row=row_idx, column=4, value=getattr(reg.user, 'full_name', getattr(reg.user, 'email', '—'))).border = thin_border
+            ws.cell(row=row_idx, column=5, value=initial_cash).border = thin_border
+            ws.cell(row=row_idx, column=6, value=sales_amount).border = thin_border
+            ws.cell(row=row_idx, column=7, value=final_cash if not reg.is_open else 0.0).border = thin_border
+            ws.cell(row=row_idx, column=8, value=difference if not reg.is_open else 0.0).border = thin_border
+            ws.cell(row=row_idx, column=9, value='Abierta' if reg.is_open else 'Cerrada').border = thin_border
+            ws.cell(row=row_idx, column=10, value=reg.branch.name if reg.branch else '—').border = thin_border
+        
+        ws.column_dimensions['B'].width = 18
+        ws.column_dimensions['C'].width = 18
+        ws.column_dimensions['D'].width = 25
 
     else:
         return Response({'error': f'Tipo de reporte inválido: {report_type}'}, status=400)

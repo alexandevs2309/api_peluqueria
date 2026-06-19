@@ -6,6 +6,7 @@ from .views import (
     SubscriptionPlanViewSet,
     UserSubscriptionViewSet,
     SubscriptionAuditLogViewSet,
+    PromotionalCreditViewSet,
     OnboardingView,
     RenewSubscriptionView,
 )
@@ -15,6 +16,7 @@ router = DefaultRouter()
 router.register(r'plans', SubscriptionPlanViewSet, basename='subscription-plan')
 router.register(r'user-subscriptions', UserSubscriptionViewSet, basename='user-subscription')
 router.register(r'audit-logs', SubscriptionAuditLogViewSet, basename='subscription-audit-log')
+router.register(r'promotional-credits', PromotionalCreditViewSet, basename='promotional-credit')
 
 urlpatterns = [
     path("", include(router.urls)),

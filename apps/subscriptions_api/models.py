@@ -7,6 +7,61 @@ from dateutil.relativedelta import relativedelta
 from django.core.exceptions import ValidationError
 
 
+class PromotionalCredit(models.Model):
+    tenant = models.ForeignKey(
+        'tenants_api.Tenant', on_delete=models.CASCADE,
+        related_name='promotional_credits'
+    )
+    months = models.PositiveIntegerField(help_text="Número de meses gratis otorgados")
+    reason = models.TextField(blank=True, help_text="Motivo del crédito (ej. campaña Instagram, referido, etc.)")
+    campaign_tag = models.CharField(
+        max_length=50, blank=True, null=True,
+        help_text="Tag opcional para agrupar por campaña (ej. INSTAGRAM2026, TIKTOK10)"
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, related_name='created_promotional_credits'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_at = models.DateTimeField(null=True, blank=True, help_text="Cuándo se aplicó el crédito")
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Crédito Promocional'
+        verbose_name_plural = 'Créditos Promocionales'
+
+    def apply(self):
+        """Aplica el crédito: extiende suscripción y marca como usado."""
+        if self.used_at:
+            raise ValidationError("Este crédito ya fue aplicado.")
+        months = max(self.months, 1)
+        tenant = self.tenant
+        if tenant.subscription_status == "trial":
+            if tenant.is_trial_expired():
+                tenant.trial_end_date = timezone.now().date() + relativedelta(months=months)
+            else:
+                base = max(tenant.trial_end_date, timezone.now().date())
+                tenant.trial_end_date = base + relativedelta(months=months)
+            tenant.save(update_fields=['trial_end_date', 'updated_at'])
+        elif tenant.subscription_status == "active":
+            if tenant.is_paid_access_expired() or not tenant.access_until:
+                tenant.access_until = timezone.now() + relativedelta(months=months)
+            else:
+                base = max(tenant.access_until, timezone.now())
+                tenant.access_until = base + relativedelta(months=months)
+            tenant.save(update_fields=['access_until', 'updated_at'])
+        else:
+            tenant.subscription_status = 'active'
+            tenant.access_until = timezone.now() + relativedelta(months=months)
+            tenant.save(update_fields=['subscription_status', 'access_until', 'updated_at'])
+        self.used_at = timezone.now()
+        self.save(update_fields=['used_at'])
+
+    def __str__(self):
+        status = "usado" if self.used_at else "pendiente"
+        return f"{self.tenant.name} — {self.months} meses ({status})"
+
+
 class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [

@@ -50,6 +50,7 @@ class BranchViewSet(TenantScopedViewSet):
     permission_classes = [TenantPermissionByAction]
     permission_map = {
         'list': 'settings_api.view_branch',
+        'retrieve': 'settings_api.view_branch',
         'create': 'settings_api.add_branch',
         'update': 'settings_api.change_branch',
         'partial_update': 'settings_api.change_branch',

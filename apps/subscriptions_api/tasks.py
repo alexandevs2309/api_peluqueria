@@ -178,6 +178,135 @@ def send_trial_expiration_warnings(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+def send_subscription_expiry_warnings(self):
+    """
+    Task diaria para enviar avisos de expiración de suscripciones pagadas.
+    Envía correos a 7, 3 y 1 día antes de que expire el acceso pago.
+    """
+    try:
+        today = timezone.now().date()
+        warned_count = 0
+
+        # Tenants con suscripción activa y fecha de expiración definida
+        tenants = Tenant.objects.filter(
+            subscription_status='active',
+            access_until__isnull=False,
+            is_active=True,
+            deleted_at__isnull=True,
+        ).select_related('owner', 'subscription_plan')
+
+        for tenant in tenants:
+            access_date = tenant.access_until.date()
+            days_remaining = (access_date - today).days
+
+            # Solo procesar hitos: 7, 3, 1 día(s)
+            if days_remaining not in (7, 3, 1):
+                continue
+
+            notification_key = f'expiry_warning_{days_remaining}d'
+
+            # Verificar si ya se envió este aviso
+            billing_info = dict(getattr(tenant, 'billing_info', None) or {})
+            warnings_sent = billing_info.get('subscription_warnings_sent') or {}
+
+            if warnings_sent.get(notification_key):
+                logger.info(
+                    "send_subscription_expiry_warnings: already sent tenant=%s key=%s",
+                    tenant.subdomain,
+                    notification_key,
+                )
+                continue
+
+            # Enviar email
+            _send_subscription_expiry_email(tenant, days_remaining)
+
+            # Marcar como enviado
+            warnings_sent[notification_key] = True
+            billing_info['subscription_warnings_sent'] = warnings_sent
+            tenant.billing_info = billing_info
+            tenant.save(update_fields=['billing_info'])
+
+            warned_count += 1
+            logger.info(
+                "Sent subscription expiry warning to %s (%d days remaining)",
+                tenant.subdomain,
+                days_remaining,
+            )
+
+        logger.info("send_subscription_expiry_warnings: sent %s warnings", warned_count)
+        return f"Sent {warned_count} subscription expiry warnings"
+    except Exception as e:
+        logger.error("Error sending subscription expiry warnings: %s", str(e))
+        raise self.retry(exc=e)
+
+
+def _send_subscription_expiry_email(tenant, days_remaining):
+    """Enviar email de aviso de expiración de suscripción paga."""
+    from apps.auth_api.tasks import send_email_async
+
+    owner = tenant.owner
+    recipient = getattr(owner, 'email', None) or getattr(tenant, 'contact_email', None)
+    if not recipient:
+        logger.warning(
+            "_send_subscription_expiry_email: tenant %s has no recipient email",
+            tenant.id,
+        )
+        return
+
+    plan_name = tenant.subscription_plan.name if tenant.subscription_plan else 'Plan'
+    expiry_date = tenant.access_until.strftime('%d/%m/%Y')
+
+    if days_remaining == 1:
+        subject = f"Tu suscripción expira mañana - {tenant.name}"
+        days_text = "mañana"
+    else:
+        subject = f"Tu suscripción expira en {days_remaining} días - {tenant.name}"
+        days_text = f"{days_remaining} días"
+
+    message = f"""
+    Hola {owner.full_name or owner.email},
+
+    Tu suscripción del plan {plan_name} para {tenant.name} expira en {days_text}.
+
+    Fecha de expiración: {expiry_date}
+
+    Para renovar tu suscripción y seguir usando Auron Suite sin interrupción:
+    1. Inicia sesión en tu cuenta
+    2. Ve a Configuración > Suscripción o haz clic en el enlace de abajo
+    3. Renueva tu plan
+
+    Enlace directo: https://auronsuite.com/client/payment
+
+    ¡No pierdas el acceso a tus datos y sigue disfrutando de Auron Suite!
+
+    El equipo de Auron Suite
+    """
+
+    try:
+        html_message = _build_html_email(tenant, subject, [
+            f"Hola {owner.full_name or owner.email},",
+            f"Tu suscripción del plan {plan_name} para {tenant.name} expira en {days_text}.",
+            f"Fecha de expiración: {expiry_date}",
+            "Para renovar, inicia sesión y ve a Configuración > Suscripción.",
+            '<a href="https://auronsuite.com/client/payment" style="display:inline-block;padding:12px 24px;background-color:#3B82F6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Renovar Suscripción</a>',
+            "No pierdas el acceso a tus datos.",
+        ])
+        send_email_async.delay(
+            subject=subject,
+            message=message,
+            from_email='',
+            recipient_list=[recipient],
+            html_message=html_message,
+        )
+    except Exception as e:
+        logger.error(
+            "Error sending subscription expiry email to %s: %s",
+            recipient,
+            str(e),
+        )
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def check_expired_subscriptions(self):
     """Verificar y desactivar suscripciones expiradas"""
     try:
