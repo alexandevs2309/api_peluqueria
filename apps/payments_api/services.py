@@ -3,16 +3,288 @@ try:
 except ImportError:
     stripe = None
 
+import os
+import json
+from decimal import Decimal
+from datetime import datetime, timezone as dt_timezone
+import requests
 from django.conf import settings
 from django.db.models import Q
+from django.core.cache import cache
 import logging
 from .models import Payment, PaymentProvider
 from apps.subscriptions_api.models import UserSubscription, SubscriptionPlan
 from apps.tenants_api.models import Tenant
 from django.contrib.auth import get_user_model
+from apps.settings_api.integration_service import IntegrationService
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
+
+
+class PayPalService:
+    """Servicio unificado para operaciones con PayPal (REST API v2)."""
+
+    def __init__(self):
+        self._load_config()
+
+    def _load_config(self):
+        system_settings = IntegrationService.get_system_settings()
+        self.client_id = (
+            system_settings.paypal_client_id
+            or os.getenv('PAYPAL_CLIENT_ID')
+            or getattr(settings, 'PAYPAL_CLIENT_ID', '')
+        )
+        self.client_secret = (
+            system_settings.paypal_client_secret
+            or os.getenv('PAYPAL_SECRET')
+            or getattr(settings, 'PAYPAL_SECRET', '')
+        )
+        self.sandbox = getattr(system_settings, 'paypal_sandbox', True)
+        self.base_url = 'https://api.sandbox.paypal.com' if self.sandbox else 'https://api.paypal.com'
+        self.webhook_id = getattr(settings, 'PAYPAL_WEBHOOK_ID', '')
+
+    @property
+    def is_configured(self):
+        return bool(self.client_id and self.client_secret)
+
+    def get_access_token(self):
+        """Obtener token OAuth2 de PayPal."""
+        if not self.is_configured:
+            return None, {
+                'error': 'PayPal no configurado',
+                'message': 'Configura PAYPAL_CLIENT_ID y PAYPAL_SECRET antes de cobrar con PayPal.',
+            }
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v1/oauth2/token",
+                headers={'Accept': 'application/json', 'Accept-Language': 'en_US'},
+                data='grant_type=client_credentials',
+                auth=(self.client_id, self.client_secret),
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal auth request failed')
+            return None, {'error': 'PayPal unavailable', 'message': str(exc)}
+
+        if resp.status_code != 200:
+            logger.warning('PayPal auth failed status=%s', resp.status_code)
+            return None, {
+                'error': 'PayPal authentication failed',
+                'message': f'PayPal respondió con estado {resp.status_code}.',
+            }
+
+        token = resp.json().get('access_token')
+        if not token:
+            return None, {
+                'error': 'PayPal authentication failed',
+                'message': 'PayPal no devolvió access_token.',
+            }
+        return token, None
+
+    def create_order(self, user, tenant, plan, months, billing_interval='month', auto_renew=False):
+        """Crear orden PayPal y devolver {order_id, approve_url}."""
+        token, err = self.get_access_token()
+        if err:
+            return None, err
+
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+        if billing_interval == 'year' and not price_per_cycle:
+            price_per_cycle = plan.price * 12 * Decimal('0.8')
+
+        if billing_interval == 'year':
+            total_amount_val = price_per_cycle * months / 12
+        else:
+            total_amount_val = price_per_cycle * months
+
+        total_amount = f"{total_amount_val:.2f}"
+        payload = {
+            'intent': 'CAPTURE',
+            'purchase_units': [{
+                'reference_id': f"tenant-{tenant.id}",
+                'description': f"Suscripción {plan.get_name_display()} x{months}m",
+                'custom_id': f"user:{user.id}|tenant:{tenant.id}|plan:{plan.id}|months:{months}",
+                'amount': {'currency_code': 'USD', 'value': total_amount},
+            }],
+            'application_context': {
+                'brand_name': 'Auron Suite',
+                'landing_page': 'LOGIN',
+                'user_action': 'PAY_NOW',
+                'return_url': f"{frontend_url}/client/checkout?paypal=success",
+                'cancel_url': f"{frontend_url}/client/checkout?paypal=cancelled",
+            },
+        }
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v2/checkout/orders",
+                headers={
+                    'Authorization': f"Bearer {token}",
+                    'Content-Type': 'application/json',
+                },
+                json=payload,
+                timeout=25,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal order creation failed')
+            return None, {'error': 'PayPal unavailable', 'message': str(exc)}
+
+        if resp.status_code not in {200, 201}:
+            logger.warning('PayPal order creation failed status=%s', resp.status_code)
+            return None, {'error': 'No se pudo crear la orden PayPal', 'message': resp.text}
+
+        order_data = resp.json()
+        order_id = order_data.get('id')
+        approve_url = next(
+            (link.get('href') for link in order_data.get('links', []) if link.get('rel') == 'approve'),
+            None,
+        )
+        if not order_id or not approve_url:
+            return None, {'error': 'Respuesta inválida de PayPal', 'message': 'No se recibió id de orden o enlace de aprobación.'}
+
+        return {
+            'order_id': order_id,
+            'approve_url': approve_url,
+            'sandbox': self.sandbox,
+            'amount': total_amount,
+        }, None
+
+    def capture_order(self, order_id):
+        """Capturar orden PayPal. Retorna dict con capture_id, status, amount."""
+        token, err = self.get_access_token()
+        if err:
+            return None, err
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v2/checkout/orders/{order_id}/capture",
+                headers={
+                    'Authorization': f"Bearer {token}",
+                    'Content-Type': 'application/json',
+                },
+                timeout=25,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal capture failed order_id=%s', order_id)
+            return None, {'error': 'PayPal unavailable', 'message': str(exc)}
+
+        if resp.status_code not in {200, 201}:
+            logger.warning('PayPal capture failed status=%s', resp.status_code)
+            return None, {
+                'error': 'No se pudo capturar la orden PayPal',
+                'message': resp.text,
+            }
+
+        capture_data = resp.json()
+        capture_status = capture_data.get('status')
+        purchase_units = capture_data.get('purchase_units') or []
+        capture_entry = (((purchase_units[0] if purchase_units else {}).get('payments') or {}).get('captures') or [None])[0]
+
+        if capture_status != 'COMPLETED' or not capture_entry or capture_entry.get('status') != 'COMPLETED':
+            return None, {
+                'error': 'PayPal capture incomplete',
+                'message': f'Estado actual: {capture_status or "unknown"}',
+            }
+
+        return {
+            'capture_id': capture_entry.get('id'),
+            'status': 'COMPLETED',
+            'amount': float(capture_entry.get('amount', {}).get('value', 0)),
+            'currency': capture_entry.get('amount', {}).get('currency_code', 'USD'),
+            'raw': capture_data,
+        }, None
+
+    def verify_webhook(self, request_body, headers_dict):
+        """Verificar firma de webhook PayPal vía API."""
+        webhook_id = self.webhook_id
+        if not webhook_id:
+            logger.error("PAYPAL_WEBHOOK_ID not configured")
+            return False
+
+        auth_algo = headers_dict.get('HTTP_PAYPAL_AUTH_ALGO', '')
+        cert_url = headers_dict.get('HTTP_PAYPAL_CERT_URL', '')
+        transmission_id = headers_dict.get('HTTP_PAYPAL_TRANSMISSION_ID', '')
+        transmission_sig = headers_dict.get('HTTP_PAYPAL_TRANSMISSION_SIG', '')
+        transmission_time = headers_dict.get('HTTP_PAYPAL_TRANSMISSION_TIME', '')
+
+        if not all([auth_algo, cert_url, transmission_id, transmission_sig, transmission_time]):
+            logger.warning("PayPal webhook missing required headers")
+            return False
+
+        try:
+            auth_resp = requests.post(
+                f"{self.base_url}/v1/oauth2/token",
+                headers={'Accept': 'application/json'},
+                data='grant_type=client_credentials',
+                auth=(self.client_id, self.client_secret),
+                timeout=15,
+            )
+            if auth_resp.status_code != 200:
+                return False
+            token = auth_resp.json().get('access_token')
+
+            verify_payload = {
+                'auth_algo': auth_algo,
+                'cert_url': cert_url,
+                'transmission_id': transmission_id,
+                'transmission_sig': transmission_sig,
+                'transmission_time': transmission_time,
+                'webhook_id': webhook_id,
+                'webhook_event': json.loads(request_body) if isinstance(request_body, (bytes, str)) else request_body,
+            }
+            verify_resp = requests.post(
+                f"{self.base_url}/v1/notifications/verify-webhook-signature",
+                headers={
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json',
+                },
+                json=verify_payload,
+                timeout=15,
+            )
+            if verify_resp.status_code != 200:
+                return False
+            return verify_resp.json().get('verification_status') == 'SUCCESS'
+        except requests.RequestException:
+            logger.exception("PayPal webhook verification request failed")
+            return False
+
+    @staticmethod
+    def order_cache_key(order_id):
+        return f'paypal:subscription:order:{order_id}'
+
+    @staticmethod
+    def capture_cache_key(order_id):
+        return f'paypal:subscription:capture:{order_id}'
+
+    @staticmethod
+    def create_payment_record(user, tenant, amount, capture_id, order_id, plan=None, months=1):
+        """Crear registro unificado Payment en payments_api."""
+        provider = PaymentProvider.objects.filter(name='paypal').first()
+        if not provider:
+            logger.warning("PayPal PaymentProvider not found — skipping Payment record")
+            return None
+        payment = Payment.objects.create(
+            user=user,
+            tenant=tenant,
+            provider=provider,
+            amount=amount,
+            currency='USD',
+            status='completed',
+            provider_payment_id=capture_id or '',
+            metadata={
+                'paypal_order_id': order_id or '',
+                'plan_id': str(plan.id) if plan else '',
+                'months': months,
+                'source': 'paypal_capture',
+            },
+        )
+        logger.info(
+            "Payment record created id=%s user=%s amount=%s",
+            payment.id, user.id, amount,
+        )
+        return payment
+
 
 class StripeService:
     def __init__(self):

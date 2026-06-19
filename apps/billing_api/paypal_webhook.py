@@ -141,7 +141,9 @@ def _resolve_paypal_order_id(resource):
 
 
 def handle_capture_completed(resource):
-    """Manejar PAYMENT.CAPTURE.COMPLETED — crear factura y activar tenant."""
+    """Manejar PAYMENT.CAPTURE.COMPLETED — crear factura, Payment y activar tenant."""
+    from apps.payments_api.services import PayPalService
+
     user_id = _resolve_user_from_paypal_resource(resource)
     if not user_id:
         logger.warning("Capture completed: missing user_id")
@@ -162,11 +164,10 @@ def handle_capture_completed(resource):
 
     capture = _resolve_capture_details(resource)
     paypal_order_id = _resolve_paypal_order_id(resource)
-    custom_id = (resource.get('purchase_units') or [{}])[0].get('custom_id', '')
     description = f"PayPal capture {capture['capture_id']}"
+    custom_id = (resource.get('purchase_units') or [{}])[0].get('custom_id', '')
 
     with transaction.atomic():
-        # DB-level idempotency: buscar por capture_id (stripe_payment_intent_id) o por paypal_order_id
         id_filter = models.Q(stripe_payment_intent_id=capture['capture_id'])
         if paypal_order_id:
             id_filter = id_filter | models.Q(paypal_order_id=paypal_order_id)
@@ -184,6 +185,13 @@ def handle_capture_completed(resource):
             existing.paypal_order_id = existing.paypal_order_id or paypal_order_id or None
             existing.save()
         else:
+            payment = PayPalService.create_payment_record(
+                user=user,
+                tenant=getattr(user, 'tenant', None),
+                amount=capture['amount'],
+                capture_id=capture['capture_id'],
+                order_id=paypal_order_id,
+            )
             Invoice.objects.create(
                 user=user,
                 tenant=getattr(user, 'tenant', None),
@@ -195,6 +203,7 @@ def handle_capture_completed(resource):
                 status='paid',
                 stripe_payment_intent_id=capture['capture_id'],
                 paypal_order_id=paypal_order_id or None,
+                payment=payment,
                 description=description,
             )
 
@@ -211,11 +220,9 @@ def handle_capture_completed(resource):
                 update_fields.append('updated_at')
                 tenant.save(update_fields=update_fields)
 
-        # Enviar confirmación de pago
         try:
             from apps.subscriptions_api.views import send_purchase_confirmation
             from apps.subscriptions_api.models import SubscriptionPlan
-            custom_id = (resource.get('purchase_units') or [{}])[0].get('custom_id', '')
             plan_id = None
             months = 1
             for part in custom_id.split('|'):
@@ -236,7 +243,7 @@ def handle_capture_completed(resource):
 
 
 def handle_capture_denied(resource):
-    """Manejar PAYMENT.CAPTURE.DENIED."""
+    """Manejar PAYMENT.CAPTURE.DENIED — con idempotencia."""
     user_id = _resolve_user_from_paypal_resource(resource)
     if not user_id:
         return
@@ -247,6 +254,8 @@ def handle_capture_denied(resource):
         return
 
     failure_reason = resource.get('failure_reason', 'Unknown')
+    capture_id = resource.get('id', '')
+
     invoice = Invoice.objects.filter(user=user, is_paid=False).order_by('-id').first()
     if not invoice:
         invoice = Invoice.objects.create(
@@ -259,11 +268,23 @@ def handle_capture_denied(resource):
             status='failed',
             description=f"PayPal capture denied: {failure_reason}",
         )
+
+    # Idempotencia: evitar duplicados si PayPal retransmite el mismo denied
+    # con distinto event_id (get_or_create imposible sin unique en PaymentAttempt).
+    if capture_id and PaymentAttempt.objects.filter(
+        invoice=invoice, message__contains=capture_id
+    ).exists():
+        logger.info(
+            "Denied capture %s already processed for invoice %s — skipping",
+            capture_id, invoice.id
+        )
+        return
+
     PaymentAttempt.objects.create(
         invoice=invoice,
         success=False,
         status='failed',
-        message=f"PayPal capture denied: {failure_reason}",
+        message=f"PayPal capture denied: {failure_reason} (capture: {capture_id})",
     )
 
     if hasattr(user, 'tenant') and user.tenant:
@@ -298,6 +319,13 @@ def handle_capture_refunded(resource):
         invoice.status = 'refunded'
         invoice.is_paid = False
         invoice.save(update_fields=['status', 'is_paid'])
+        # Sincronizar Payment unificado
+        if invoice.payment_id:
+            try:
+                from apps.payments_api.models import Payment
+                Payment.objects.filter(id=invoice.payment_id).update(status='refunded')
+            except Exception:
+                logger.exception("Failed to update Payment status for invoice %s", invoice.id)
         logger.info("Invoice %s for capture %s marked as refunded", invoice.id, capture_id)
 
         # Suspender el tenant asociado

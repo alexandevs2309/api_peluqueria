@@ -32,8 +32,15 @@ class Invoice(models.Model):
         max_length=255,
         null=True,
         blank=True,
-        db_index=True,
+        unique=True,
         help_text="PayPal order ID para idempotencia a nivel DB"
+    )
+    payment = models.ForeignKey(
+        'payments_api.Payment',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Referencia al registro unificado de pago en payments_api"
     )
     status = models.CharField(max_length=50, choices=[
         ("pending", "Pending"),
@@ -51,7 +58,6 @@ class Invoice(models.Model):
             models.Index(fields=['is_paid']),
             models.Index(fields=['issued_at']),
             models.Index(fields=['stripe_payment_intent_id']),
-            models.Index(fields=['paypal_order_id']),
         ]
 
     def __str__(self):

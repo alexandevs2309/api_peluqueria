@@ -29,16 +29,28 @@ class BranchWriteSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         request = self.context.get("request")
-        if request and attrs.get("is_main"):
+        if request:
             tenant = getattr(request, "tenant", None) or getattr(request.user, "tenant", None)
             if tenant:
-                existing_main = Branch.objects.filter(tenant=tenant, is_main=True)
-                if self.instance:
-                    existing_main = existing_main.exclude(pk=self.instance.pk)
-                if existing_main.exists():
-                    raise serializers.ValidationError(
-                        {"is_main": "Ya existe una sucursal principal"}
-                    )
+                # Restricción si es una sucursal nueva (no modificación)
+                if not self.instance:
+                    plan = tenant.subscription_plan
+                    if plan and not plan.allows_multiple_branches:
+                        active_branches = Branch.objects.filter(tenant=tenant, is_active=True).count()
+                        if active_branches >= 1:
+                            raise serializers.ValidationError(
+                                "Tu plan actual no permite crear múltiples sucursales. "
+                                "Por favor, mejora tu plan a Business o Enterprise."
+                            )
+
+                if attrs.get("is_main"):
+                    existing_main = Branch.objects.filter(tenant=tenant, is_main=True)
+                    if self.instance:
+                        existing_main = existing_main.exclude(pk=self.instance.pk)
+                    if existing_main.exists():
+                        raise serializers.ValidationError(
+                            {"is_main": "Ya existe una sucursal principal"}
+                        )
         return attrs
 
 

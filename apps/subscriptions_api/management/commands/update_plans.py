@@ -9,7 +9,8 @@ class Command(BaseCommand):
         updates = {
             'basic': {
                 'description': 'Entrada seria para barberias pequenas que necesitan citas, caja, clientes y reportes sin complicarse.',
-                'price': 29.00,
+                'price': 29.99,
+                'annual_price': 299.88,
                 'max_employees': 5,
                 'max_users': 10,
                 'allows_multiple_branches': False,
@@ -32,7 +33,8 @@ class Command(BaseCommand):
             },
             'standard': {
                 'description': 'El plan recomendado para negocios en crecimiento que necesitan inventario, reportes avanzados y mas capacidad.',
-                'price': 59.00,
+                'price': 59.99,
+                'annual_price': 599.88,
                 'max_employees': 15,
                 'max_users': 30,
                 'allows_multiple_branches': False,
@@ -55,7 +57,8 @@ class Command(BaseCommand):
             },
             'premium': {
                 'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
-                'price': 99.00,
+                'price': 119.99,
+                'annual_price': 1199.88,
                 'max_employees': 50,
                 'max_users': 100,
                 'allows_multiple_branches': True,
@@ -78,7 +81,8 @@ class Command(BaseCommand):
             },
             'enterprise': {
                 'description': 'Para cadenas y operaciones que necesitan escala ilimitada, soporte prioritario y acompanamiento.',
-                'price': 149.00,
+                'price': 199.99,
+                'annual_price': 2039.88,
                 'max_employees': 0,
                 'max_users': 0,
                 'allows_multiple_branches': True,

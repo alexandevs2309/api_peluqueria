@@ -37,8 +37,8 @@ class Command(BaseCommand):
             {
                 'name': 'basic',
                 'description': 'Entrada seria para barberias pequenas que necesitan citas, caja, clientes y reportes sin complicarse.',
-                'price': 29.00,
-                'annual_price': 278.40,
+                'price': 29.99,
+                'annual_price': 299.88,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',
@@ -66,8 +66,8 @@ class Command(BaseCommand):
             {
                 'name': 'standard',
                 'description': 'El plan recomendado para negocios en crecimiento que necesitan inventario, reportes avanzados y mas capacidad.',
-                'price': 59.00,
-                'annual_price': 566.40,
+                'price': 59.99,
+                'annual_price': 599.88,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',
@@ -95,8 +95,8 @@ class Command(BaseCommand):
             {
                 'name': 'premium',
                 'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
-                'price': 99.00,
-                'annual_price': 950.40,
+                'price': 119.99,
+                'annual_price': 1199.88,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',
@@ -125,8 +125,8 @@ class Command(BaseCommand):
             {
                 'name': 'enterprise',
                 'description': 'Para cadenas y operaciones que necesitan escala ilimitada, soporte prioritario y acompanamiento.',
-                'price': 149.00,
-                'annual_price': 1430.40,
+                'price': 199.99,
+                'annual_price': 2039.88,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',
