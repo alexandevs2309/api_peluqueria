@@ -24,6 +24,12 @@ class EncryptedFieldMixin:
 
     @staticmethod
     def _is_signed(value):
+        """Check if a value appears to be a signed string.
+        Uses structural validation to avoid double signing after key rotation.
+        """
+        # Structural validation: signed strings contain exactly two ':' separators
+        if value.count(":") == 2:
+            return True
         try:
             signing.loads(value, salt="payment_provider")
             return True

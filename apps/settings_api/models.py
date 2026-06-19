@@ -172,7 +172,15 @@ class SystemSettings(models.Model):
 
     @staticmethod
     def _is_encrypted(value):
+        """Determine if a value appears to be encrypted.
+        This check first verifies the structural pattern of a signed string
+        (payload:timestamp:signature). If it matches, we treat it as encrypted
+        even if the signature cannot be validated due to key rotation.
+        """
         if not value:
+            return True
+        # Structural validation: signed strings contain exactly two ':' separators
+        if value.count(":") == 2:
             return True
         try:
             signing.loads(value, salt="system_settings")
