@@ -8,6 +8,7 @@ from datetime import datetime, timezone as dt_timezone
 from unittest.mock import patch
 
 import pytest
+from django.core.cache import cache
 from django.urls import reverse
 from django.utils import timezone
 from rest_framework import status
@@ -45,34 +46,10 @@ def _stub_paypal_auth():
     return "fake-token", None
 
 
-def _stub_paypal_create(*a, **kw):
-    return {
-        "order_id": "ORDER-123",
-        "approve_url": "https://paypal.test/approve/ORDER-123",
-        "sandbox": True,
-        "amount": "10.00",
-    }, None
-
-
-def _stub_paypal_capture(*a, **kw):
-    return {
-        "capture_id": "CAP-123",
-        "status": "COMPLETED",
-        "amount": 10.00,
-        "currency": "USD",
-    }, None
-
-
-def _stub_paypal_webhook_verify(b, h):
-    return True
-
-
-@pytest.fixture
-def paypal_provider():
-    provider, _ = PaymentProvider.objects.get_or_create(
-        name='paypal', defaults={'is_active': True},
-    )
-    return provider
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    """Clear Django cache before each test to avoid cross-test pollution."""
+    cache.clear()
 
 
 # ─────────────────────────────────────────
@@ -86,7 +63,12 @@ def test_paypal_create_order_success(monkeypatch):
     plan = tenant.subscription_plan
 
     monkeypatch.setattr("apps.payments_api.services.PayPalService.get_access_token", lambda s: _stub_paypal_auth())
-    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: _stub_paypal_create())
+    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: ({
+        "order_id": "ORDER-CREATE-OK",
+        "approve_url": "https://paypal.test/approve/ORDER-CREATE-OK",
+        "sandbox": True,
+        "amount": "10.00",
+    }, None))
 
     client = APIClient()
     client.force_authenticate(user=user)
@@ -100,7 +82,7 @@ def test_paypal_create_order_success(monkeypatch):
 
     assert resp.status_code == 200
     assert resp.data["provider"] == "paypal"
-    assert resp.data["order_id"] == "ORDER-123"
+    assert resp.data["order_id"] == "ORDER-CREATE-OK"
     assert "paypal.test" in resp.data["approve_url"]
 
 
@@ -134,8 +116,18 @@ def test_paypal_capture_order_success(monkeypatch, paypal_provider):
     plan = tenant.subscription_plan
 
     monkeypatch.setattr("apps.payments_api.services.PayPalService.get_access_token", lambda s: _stub_paypal_auth())
-    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: _stub_paypal_create())
-    monkeypatch.setattr("apps.payments_api.services.PayPalService.capture_order", lambda s, *a, **kw: _stub_paypal_capture())
+    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: ({
+        "order_id": "ORDER-CAPTURE-OK",
+        "approve_url": "https://paypal.test/approve/ORDER-CAPTURE-OK",
+        "sandbox": True,
+        "amount": "10.00",
+    }, None))
+    monkeypatch.setattr("apps.payments_api.services.PayPalService.capture_order", lambda s, *a, **kw: ({
+        "capture_id": "CAP-CAPTURE-OK",
+        "status": "COMPLETED",
+        "amount": 10.00,
+        "currency": "USD",
+    }, None))
 
     client = APIClient()
     client.force_authenticate(user=user)
@@ -192,6 +184,7 @@ def test_paypal_capture_order_expired_cache(monkeypatch):
     }, format="json")
 
     assert resp.status_code == 410
+    assert "expir" in str(resp.data).lower()
 
 
 @pytest.mark.django_db
@@ -202,7 +195,12 @@ def test_paypal_capture_order_mismatch(monkeypatch):
     plan = tenant_a.subscription_plan
 
     monkeypatch.setattr("apps.payments_api.services.PayPalService.get_access_token", lambda s: _stub_paypal_auth())
-    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: _stub_paypal_create())
+    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: ({
+        "order_id": "ORDER-MISMATCH",
+        "approve_url": "https://paypal.test/approve/ORDER-MISMATCH",
+        "sandbox": True,
+        "amount": "10.00",
+    }, None))
 
     client_a = APIClient()
     client_a.force_authenticate(user=user_a)
@@ -240,7 +238,7 @@ def test_webhook_capture_completed_creates_invoice_with_tenant(monkeypatch):
     user, tenant = _make_tenant("wh-tenant-fix")
     custom_id = f"user:{user.id}|tenant:{tenant.id}|plan:{tenant.subscription_plan.id}|months:1"
 
-    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", _stub_paypal_webhook_verify)
+    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", lambda b, h: True)
 
     client = APIClient()
     event_payload = {
@@ -270,7 +268,7 @@ def test_webhook_idempotency(monkeypatch):
     user, tenant = _make_tenant("wh-idemp")
     custom_id = f"user:{user.id}|tenant:{tenant.id}|plan:{tenant.subscription_plan.id}|months:1"
 
-    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", _stub_paypal_webhook_verify)
+    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", lambda b, h: True)
 
     client = APIClient()
     event_id = f"EVENT-DUP-{uuid.uuid4().hex[:6]}"
@@ -306,7 +304,7 @@ def test_webhook_capture_refunded_marks_invoice(monkeypatch):
         status="paid", stripe_payment_intent_id="CAP-REFUND-001",
     )
 
-    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", _stub_paypal_webhook_verify)
+    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", lambda b, h: True)
 
     client = APIClient()
     resp = client.post("/api/billing/webhooks/paypal/", {
@@ -326,7 +324,7 @@ def test_webhook_capture_denied_creates_payment_attempt(monkeypatch):
     user, tenant = _make_tenant("wh-denied")
     custom_id = f"user:{user.id}|tenant:{tenant.id}|plan:{tenant.subscription_plan.id}|months:1"
 
-    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", _stub_paypal_webhook_verify)
+    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", lambda b, h: True)
 
     client = APIClient()
     resp = client.post("/api/billing/webhooks/paypal/", {
@@ -360,10 +358,23 @@ def test_capture_and_webhook_do_not_create_duplicate_invoices(monkeypatch, paypa
     user, tenant = _make_tenant("race")
     plan = tenant.subscription_plan
 
+    ORDER_ID = "ORDER-RACE"
+    CAPTURE_ID = "CAP-RACE"
+
     monkeypatch.setattr("apps.payments_api.services.PayPalService.get_access_token", lambda s: _stub_paypal_auth())
-    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: _stub_paypal_create())
-    monkeypatch.setattr("apps.payments_api.services.PayPalService.capture_order", lambda s, *a, **kw: _stub_paypal_capture())
-    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", _stub_paypal_webhook_verify)
+    monkeypatch.setattr("apps.payments_api.services.PayPalService.create_order", lambda s, *a, **kw: ({
+        "order_id": ORDER_ID,
+        "approve_url": f"https://paypal.test/approve/{ORDER_ID}",
+        "sandbox": True,
+        "amount": "10.00",
+    }, None))
+    monkeypatch.setattr("apps.payments_api.services.PayPalService.capture_order", lambda s, *a, **kw: ({
+        "capture_id": CAPTURE_ID,
+        "status": "COMPLETED",
+        "amount": 10.00,
+        "currency": "USD",
+    }, None))
+    monkeypatch.setattr("apps.billing_api.paypal_webhook._verify_paypal_webhook", lambda b, h: True)
 
     client = APIClient()
     client.force_authenticate(user=user)
@@ -377,26 +388,25 @@ def test_capture_and_webhook_do_not_create_duplicate_invoices(monkeypatch, paypa
         "auto_renew": False,
     }, format="json")
     assert create_resp.status_code == 200
-    order_id = create_resp.data["order_id"]
 
     # Capture
     capture_resp = client.post(reverse("renew-subscription"), {
         "payment_provider": "paypal",
         "paypal_action": "capture_order",
-        "paypal_order_id": order_id,
+        "paypal_order_id": ORDER_ID,
     }, format="json")
     assert capture_resp.status_code == 200
 
-    # Webhook llega después
+    # Webhook llega después con el mismo capture_id
     webhook_resp = client.post("/api/billing/webhooks/paypal/", {
         "id": f"EVENT-RACE-{uuid.uuid4().hex[:6]}",
         "event_type": "PAYMENT.CAPTURE.COMPLETED",
         "resource": {
-            "id": "CAP-123",
+            "id": CAPTURE_ID,
             "status": "COMPLETED",
             "amount": {"value": "10.00", "currency_code": "USD"},
             "purchase_units": [{"custom_id": f"user:{user.id}|tenant:{tenant.id}|plan:{plan.id}|months:1"}],
-            "supplementary_data": {"related_ids": {"order_id": "ORDER-123"}},
+            "supplementary_data": {"related_ids": {"order_id": ORDER_ID}},
         },
     }, format="json")
     assert webhook_resp.status_code == 200
@@ -436,3 +446,11 @@ def test_webhook_requires_valid_json():
         content_type="application/json",
     )
     assert resp.status_code == 400
+
+
+@pytest.fixture
+def paypal_provider():
+    provider, _ = PaymentProvider.objects.get_or_create(
+        name='paypal', defaults={'is_active': True},
+    )
+    return provider

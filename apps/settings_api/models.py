@@ -23,8 +23,13 @@ class Branch(models.Model):
 
     def save(self, *args, **kwargs):
         # Verificar que el tenant tenga un plan que permita multiples sucursales
-        subscription = self.tenant.subscription_set.filter(is_active=True).first()
-        if subscription and not subscription.plan.allows_multiple_branches:
+        plan = self.tenant.subscription_plan
+        if not plan:
+            subscription = self.tenant.subscription_set.filter(is_active=True).first()
+            if subscription:
+                plan = subscription.plan
+
+        if plan and not plan.allows_multiple_branches:
             if Branch.objects.filter(tenant=self.tenant).exists() and not self.pk:
                 raise ValueError(_("Su plan actual no permite multiples sucursales"))
         super().save(*args, **kwargs)

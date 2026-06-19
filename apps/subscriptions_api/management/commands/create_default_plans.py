@@ -66,8 +66,8 @@ class Command(BaseCommand):
             {
                 'name': 'standard',
                 'description': 'El plan recomendado para negocios en crecimiento que necesitan inventario, reportes avanzados y mas capacidad.',
-                'price': 59.99,
-                'annual_price': 599.88,
+                'price': 69.99,
+                'annual_price': 699.88,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',
@@ -95,8 +95,8 @@ class Command(BaseCommand):
             {
                 'name': 'premium',
                 'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
-                'price': 119.99,
-                'annual_price': 1199.88,
+                'price': 129.99,
+                'annual_price': 1299.88,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',
@@ -125,8 +125,8 @@ class Command(BaseCommand):
             {
                 'name': 'enterprise',
                 'description': 'Para cadenas y operaciones que necesitan escala ilimitada, soporte prioritario y acompanamiento.',
-                'price': 199.99,
-                'annual_price': 2039.88,
+                'price': 149.00,
+                'annual_price': 1490.00,
                 'duration_month': 1,
                 'stripe_price_id': '',
                 'stripe_annual_price_id': '',

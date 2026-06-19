@@ -285,3 +285,47 @@ def test_setting_unique_branch_constraint():
     Setting.objects.create(branch=branch, business_name="Negocio 1")
     with pytest.raises((ValueError, IntegrityError)):
         Setting.objects.create(branch=branch, business_name="Negocio 2")
+
+@pytest.mark.django_db
+def test_branch_limit_enforcement_for_basic_plan():
+    from apps.subscriptions_api.models import SubscriptionPlan
+    plan_basic = SubscriptionPlan.objects.create(
+        name="basic",
+        price=29.99,
+        annual_price=299.88,
+        allows_multiple_branches=False
+    )
+    tenant = Tenant.objects.create(
+        name="Tenant Basic Limit Test", 
+        subdomain="tenant-basic-limit",
+        subscription_plan=plan_basic
+    )
+    
+    branch1 = Branch.objects.create(name="Sucursal Principal", tenant=tenant)
+    assert branch1.id is not None
+    
+    with pytest.raises(ValueError) as exc:
+        Branch.objects.create(name="Sucursal Secundaria", tenant=tenant)
+    assert "no permite" in str(exc.value)
+
+@pytest.mark.django_db
+def test_branch_limit_enforcement_for_business_plan():
+    from apps.subscriptions_api.models import SubscriptionPlan
+    plan_premium = SubscriptionPlan.objects.create(
+        name="premium",
+        price=129.99,
+        annual_price=1299.88,
+        allows_multiple_branches=True
+    )
+    tenant = Tenant.objects.create(
+        name="Tenant Premium Limit Test", 
+        subdomain="tenant-premium-limit",
+        subscription_plan=plan_premium
+    )
+    
+    branch1 = Branch.objects.create(name="Sucursal A", tenant=tenant)
+    branch2 = Branch.objects.create(name="Sucursal B", tenant=tenant)
+    
+    assert branch1.id is not None
+    assert branch2.id is not None
+    assert Branch.objects.filter(tenant=tenant).count() == 2
