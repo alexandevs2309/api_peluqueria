@@ -10,17 +10,12 @@ class BarbershopPublicSerializer(serializers.ModelSerializer):
     logo = serializers.SerializerMethodField()
     brand_colors = serializers.SerializerMethodField()
     
-    class Meta:
-        model = BarbershopSettings
-        fields = [
-            'name',
-            'logo',
-            'brand_colors',
-            'currency',
-            'currency_symbol',
-            'business_hours',
-            'contact',
-        ]
+    name = serializers.CharField(required=False, allow_blank=True)
+    primary_color = serializers.CharField(required=False)
+    secondary_color = serializers.CharField(required=False)
+    accent_color = serializers.CharField(required=False)
+    currency = serializers.CharField(required=False)
+    currency_symbol = serializers.CharField(required=False)
     
     def get_logo(self, obj):
         return obj.logo.url if obj.logo else None
@@ -31,6 +26,21 @@ class BarbershopPublicSerializer(serializers.ModelSerializer):
             'secondary': obj.secondary_color,
             'accent': obj.accent_color,
         }
+
+    class Meta:
+        model = BarbershopSettings
+        fields = [
+            'name',
+            'logo',
+            'brand_colors',
+            'primary_color',
+            'secondary_color',
+            'accent_color',
+            'currency',
+            'currency_symbol',
+            'business_hours',
+            'contact',
+        ]
 
 
 class BarbershopAdminSerializer(serializers.ModelSerializer):
@@ -68,6 +78,15 @@ class BarbershopAdminSerializer(serializers.ModelSerializer):
 
 
 class BarbershopWriteSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(required=True, allow_blank=False)
+    business_name = serializers.CharField(required=False, write_only=True, allow_blank=False)
+
+    def validate(self, attrs):
+        # Allow 'business_name' as an alias for 'name'
+        if 'business_name' in attrs:
+            attrs['name'] = attrs.pop('business_name')
+        return attrs
+
     """
     Serializer para escritura (POST/PUT/PATCH).
     Validaciones adicionales para campos críticos.
@@ -76,6 +95,7 @@ class BarbershopWriteSerializer(serializers.ModelSerializer):
         model = BarbershopSettings
         fields = [
             'name',
+            'business_name',
             'primary_color',
             'secondary_color',
             'accent_color',

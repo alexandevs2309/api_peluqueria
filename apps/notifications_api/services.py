@@ -174,50 +174,38 @@ class NotificationService:
 
     def _send_whatsapp(self, notification):
         """
-        Enviar notificación por WhatsApp via Twilio o QR del tenant
+        Enviar notificación por WhatsApp usando la capa de abstracción.
         """
         try:
-            from apps.settings_api.integration_service import IntegrationService
-            from django.conf import settings as django_settings
-            phone = getattr(notification.recipient, 'phone', None)
-            override = getattr(django_settings, 'DEV_WHATSAPP_OVERRIDE', '')
-            if override:
-                phone = override
-                logger.info("DEV_WHATSAPP_OVERRIDE activo: forzando teléfono a %s", phone)
-            if not phone or not str(phone).strip():
-                logger.warning("Cannot send WhatsApp notification: recipient has no phone")
-                NotificationLog.objects.create(
-                    notification=notification,
-                    channel='whatsapp',
-                    provider='system',
-                    status='failed',
-                    error_message='Recipient has no phone number'
-                )
+            from apps.notifications_api.provider import get_notification_provider
+            # Determinar tenant asociado al destinatario (cliente)
+            tenant = getattr(notification.recipient, 'tenant', None)
+            if not tenant and notification.template and getattr(notification.template, 'tenant', None):
+                tenant = notification.template.tenant
+            if not tenant:
+                logger.warning('WhatsApp send attempted without tenant context; skipping.')
                 return False
-
+            # Obtener provider para contexto de cliente
+            provider = get_notification_provider(context='client', tenant=tenant)
+            phone = getattr(notification.recipient, 'phone', None)
+            if not phone or not str(phone).strip():
+                logger.warning('Cannot send WhatsApp notification: recipient has no phone')
+                return False
+            # Normalizar número
             if not str(phone).startswith('+'):
                 phone = f'+1{phone}' if str(phone).isdigit() else phone
-
-            # Obtener el tenant del recipiente o del template
-            tenant = getattr(notification.recipient, 'tenant', None)
-            if not tenant and notification.template and notification.template.tenant:
-                tenant = notification.template.tenant
-
-            result = IntegrationService.send_whatsapp(phone=phone, message=notification.message, tenant=tenant)
-            provider_name = 'evolution_api' if result == 'success_qr' else 'twilio'
-
+            # Enviar vía Evolution
+            provider.send_whatsapp(to=phone, template=notification.message, data={})
             NotificationLog.objects.create(
                 notification=notification,
                 channel='whatsapp',
-                provider=provider_name,
+                provider='evolution_api',
                 status='sent',
-                response_data={'phone': phone, 'method': result}
+                response_data={'phone': phone, 'method': 'evolution_api'}
             )
-
             return True
-
         except Exception as e:
-            logger.error(f"WhatsApp sending failed: {str(e)}")
+            logger.error(f"WhatsApp sending failed via Evolution API: {str(e)}")
             NotificationLog.objects.create(
                 notification=notification,
                 channel='whatsapp',

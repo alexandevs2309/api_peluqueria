@@ -268,7 +268,7 @@ class Payment(models.Model):
             ('other', 'Other'),
         ], default='cash')
     amount = models.DecimalField(max_digits=14, decimal_places=2)
-    stripe_payment_intent_id = models.CharField(max_length=255, null=True, blank=True, help_text='Stripe PaymentIntent ID for card payments')
+    provider_transaction_id = models.CharField(max_length=255, null=True, blank=True, help_text='Transaction ID from payment provider (Stripe, CardNET, etc.)')
 
 class CashRegister(models.Model):
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='cash_registers', null=True)

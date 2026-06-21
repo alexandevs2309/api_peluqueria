@@ -23,7 +23,7 @@ class SaleDetailSerializer(serializers.ModelSerializer):
 class PaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Payment
-        fields = ['id', 'method', 'amount', 'stripe_payment_intent_id']
+        fields = ['id', 'method', 'amount', 'provider_transaction_id']
 
 class SaleSerializer(serializers.ModelSerializer):
     details = SaleDetailSerializer(many=True)

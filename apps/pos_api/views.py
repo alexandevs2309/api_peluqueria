@@ -41,7 +41,7 @@ class SaleViewSet(TenantScopedViewSet):
         'print_receipt': 'pos_api.view_sale',
         'search_sales': 'pos_api.view_sale',
         'validate_stock': 'pos_api.add_sale',
-        'create_payment_intent': 'pos_api.add_sale',
+        'charge_card': 'pos_api.add_sale',
     }
 
     def _get_business_info(self, request):
@@ -348,11 +348,13 @@ class SaleViewSet(TenantScopedViewSet):
                     f"El descuento ({discount}) no puede ser mayor al total ({total})"
                 )
 
-            # Requerir motivo para descuentos altos
-            discount_threshold_percent = Decimal(str(getattr(settings, 'POS_HIGH_DISCOUNT_THRESHOLD_PERCENT', 20)))
+            # Requerir motivo para descuentos altos **solo cuando no provenga de un cupón o promoción**
+            discount_threshold_percent = Decimal('100')
+            is_coupon = self.request.data.get('coupon_id') or self.request.data.get('coupon_code')
+            promotion_id = self.request.data.get('promotion_id')
             if total > 0:
                 discount_percent = (discount / total) * Decimal('100')
-                if discount_percent > discount_threshold_percent:
+                if discount_percent > discount_threshold_percent and not (is_coupon or promotion_id):
                     discount_reason = (self.request.data.get('discount_reason') or '').strip()
                     if len(discount_reason) < 10:
                         raise serializers.ValidationError(
@@ -380,13 +382,17 @@ class SaleViewSet(TenantScopedViewSet):
                 except Promotion.DoesNotExist:
                     raise serializers.ValidationError("Promoción no encontrada")
 
-            # Validar cupón si se especificó coupon_id
+            # Validar cupón si se especificó coupon_id o coupon_code
             coupon_obj = None
             coupon_id = self.request.data.get('coupon_id')
-            if coupon_id:
+            coupon_code = self.request.data.get('coupon_code')
+            if coupon_id or coupon_code:
                 try:
                     tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
-                    coupon_obj = Coupon.objects.select_for_update().get(id=coupon_id, tenant=tenant)
+                    if coupon_id:
+                        coupon_obj = Coupon.objects.select_for_update().get(id=coupon_id, tenant=tenant)
+                    else:
+                        coupon_obj = Coupon.objects.select_for_update().get(code=coupon_code, tenant=tenant)
                     if not coupon_obj.is_active:
                         raise serializers.ValidationError("El cupón no está activo")
                     
@@ -396,7 +402,7 @@ class SaleViewSet(TenantScopedViewSet):
                         raise serializers.ValidationError("El cupón aún no está vigente")
                     if now > coupon_obj.end_date:
                         raise serializers.ValidationError("El cupón ha expirado")
-
+                    
                     # Validar usos
                     if coupon_obj.max_uses is not None and coupon_obj.current_uses >= coupon_obj.max_uses:
                         raise serializers.ValidationError("El cupón ha alcanzado su límite de usos")
@@ -640,11 +646,13 @@ class SaleViewSet(TenantScopedViewSet):
         return qs
 
     @action(detail=False, methods=['post'])
-    def create_payment_intent(self, request):
-        stripe.api_key = settings.STRIPE_SECRET_KEY
+    def charge_card(self, request):
+        """Cobra con tarjeta usando el proveedor del país del tenant."""
+        from apps.payments_api.factory import PaymentProviderFactory
 
         amount = request.data.get('amount')
-        currency = request.data.get('currency', 'usd')
+        currency = request.data.get('currency', 'DOP')
+        tenant = self._get_request_tenant()
 
         if not amount or float(amount) <= 0:
             return Response(
@@ -652,23 +660,44 @@ class SaleViewSet(TenantScopedViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        try:
-            intent = stripe.PaymentIntent.create(
-                amount=int(round(float(amount) * 100)),
-                currency=currency.lower(),
-                metadata={
-                    'tenant_id': str(getattr(request, 'tenant_id', '') or ''),
-                    'user_id': str(request.user.id),
-                    'source': 'pos',
-                }
-            )
-            return Response({'client_secret': intent.client_secret, 'id': intent.id})
-        except stripe.error.StripeError as e:
-            logger.error(f"Stripe error creating payment intent: {str(e)}")
+        if not tenant:
             return Response(
-                {'error': 'Error al procesar el pago con tarjeta'},
-                status=status.HTTP_502_BAD_GATEWAY
+                {'error': 'Tenant no encontrado'},
+                status=status.HTTP_400_BAD_REQUEST
             )
+
+        provider = PaymentProviderFactory.get_provider(tenant)
+        if not provider.is_available():
+            return Response(
+                {'error': 'Pago con tarjeta no disponible. Configura un proveedor de pago.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        result = provider.charge(
+            amount=Decimal(str(amount)),
+            currency=currency,
+            metadata={
+                'tenant_id': str(tenant.id),
+                'user_id': str(request.user.id),
+                'business_name': getattr(tenant, 'name', ''),
+                'order_id': f"pos-{tenant.id}-{int(timezone.now().timestamp())}",
+            },
+        )
+
+        if result.success:
+            response_data = {
+                'success': True,
+                'transaction_id': result.transaction_id,
+                'authorization_code': result.authorization_code,
+            }
+            if result.raw_response and 'client_secret' in result.raw_response:
+                response_data['client_secret'] = result.raw_response['client_secret']
+            return Response(response_data)
+        else:
+            return Response({
+                'success': False,
+                'error': result.error_message,
+            }, status=status.HTTP_402_PAYMENT_REQUIRED)
 
     @action(detail=False, methods=['post'])
     def open_register(self, request):

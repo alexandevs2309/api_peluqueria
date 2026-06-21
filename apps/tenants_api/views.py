@@ -154,6 +154,29 @@ class TenantViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(tenant)
         return response.Response(serializer.data, status=status.HTTP_200_OK)
 
+    @decorators.action(detail=True, methods=["post"])
+    def extend_subscription(self, request, pk=None):
+        """Extiende manualmente la suscripción de un tenant."""
+        tenant = self.get_object()
+        days = request.data.get("days")
+        reason = request.data.get("reason", "").strip()
+
+        if not days or not isinstance(days, int) or days < 1:
+            return response.Response(
+                {"error": "Se requiere 'days' (entero positivo)."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        tenant.extend_subscription(days=days)
+
+        self._create_audit_log(
+            request.user,
+            f"Extendió suscripción {days} días ({reason})" if reason else f"Extendió suscripción {days} días",
+            tenant
+        )
+        serializer = self.get_serializer(tenant)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)
+
     @decorators.action(detail=True, methods=["get"])
     def stats(self, request, pk=None):
         tenant = self.get_object()

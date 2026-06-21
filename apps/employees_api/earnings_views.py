@@ -26,6 +26,7 @@ class PayrollViewSet(viewsets.ViewSet):
         'submit_for_approval': 'employees_api.change_employee_payroll',
         'approve_period': 'employees_api.approve_payroll',
         'reject_period': 'employees_api.approve_payroll',
+        'history': 'employees_api.view_employee_payroll',
     }
     
     def _require_admin_role(self, request):
@@ -47,7 +48,11 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='client/payroll')
     def list_periods(self, request):
         """Endpoint compatible con frontend: GET /payroll/client/payroll/"""
+        status_filter = request.query_params.get('status')
         periods = self.get_queryset().select_related('employee__user')
+        
+        if status_filter:
+            periods = periods.filter(status=status_filter)
         
         # Recalcular períodos abiertos si el desglose no coincide con el bruto
         for period in periods:
@@ -79,6 +84,35 @@ class PayrollViewSet(viewsets.ViewSet):
                 'pay_block_reason': period.pay_block_reason
             })
         
+        return Response({'periods': periods_data})
+
+    @action(detail=False, methods=['get'], url_path='client/payroll/history')
+    def history(self, request):
+        """Listar períodos pagados o cerrados (historial) con datos completos"""
+        # Filtrar períodos que ya fueron pagados o aprobados (incluye los que fueron cerrados)
+        periods = self.get_queryset().filter(status__in=['paid', 'approved', 'closed', 'rejected'])
+        periods_data = []
+        for p in periods:
+            # Mapear estados legacy
+            status = p.status
+            if status == 'ready':
+                status = 'approved'
+            periods_data.append({
+                'id': p.id,
+                'employee_name': p.employee.user.full_name or p.employee.user.email,
+                'period_display': p.period_display,
+                'status': status,
+                'base_salary': float(p.base_salary),
+                'commission_earnings': float(p.commission_earnings),
+                'gross_amount': float(p.gross_amount),
+                'net_amount': float(p.net_amount),
+                'deductions_total': float(p.deductions_total),
+                'period_start': p.period_start.isoformat(),
+                'period_end': p.period_end.isoformat(),
+                'can_pay': p.can_pay,
+                'pay_block_reason': p.pay_block_reason,
+                'paid_at': p.paid_at.isoformat() if p.paid_at else None,
+            })
         return Response({'periods': periods_data})
 
     @action(detail=False, methods=['get'], url_path='client/payroll/my-earnings')
@@ -129,7 +163,7 @@ class PayrollViewSet(viewsets.ViewSet):
         periods = PayrollPeriod.objects.filter(
             employee=employee,
             employee__tenant=getattr(request, 'tenant', request.user.tenant)
-        )
+        ).exclude(status='rejected')
 
         total_gross = sum(float(p.gross_amount) for p in periods)
         total_net = sum(float(p.net_amount) for p in periods)

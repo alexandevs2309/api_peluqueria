@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from django.db import transaction
 from .barbershop_models import BarbershopSettings
 from .barbershop_serializers import (
@@ -249,9 +249,18 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             settings = None
             is_update = False
         
-        # Usar serializer para validación
-        serializer = BarbershopWriteSerializer(settings, data=data, partial=is_update)
-        serializer.is_valid(raise_exception=True)
+        # Si no se envía 'name' pero sí hay nombre en la configuración POS, usarlo
+        if not data.get('name') and pos_config_data and pos_config_data.get('business_name'):
+            data['name'] = pos_config_data.get('business_name')
+        
+        # Log incoming payload for debugging
+        logger.debug(f"Barbershop create payload: {data}")
+        serializer = BarbershopWriteSerializer(data=data, context={'request': request})
+        try:
+            serializer.is_valid(raise_exception=True)
+        except ValidationError as e:
+            logger.error(f"Barbershop validation error: {e.detail}")
+            raise
         
         # FIX 2: Validar cambio de moneda
         if is_update and 'currency' in data:
