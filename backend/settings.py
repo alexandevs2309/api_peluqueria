@@ -146,6 +146,7 @@ INSTALLED_APPS = [
     'apps.support_api',
     'apps.tutorials_api',
     'apps.booking_api',
+    'apps.chatbot_api',
 ]
 
 MIDDLEWARE = [
@@ -542,6 +543,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 DEV_EMAIL_OVERRIDE = env('DEV_EMAIL_OVERRIDE', default='') if DEBUG else ''
 # En desarrollo, redirige todos los WhatsApp a este número
 DEV_WHATSAPP_OVERRIDE = env('DEV_WHATSAPP_OVERRIDE', default='') if DEBUG else ''
+
+# Configuraciones para Chatbot Inteligente (LLM)
+OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
+GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
+
 
 if "pytest" in sys.modules:
     CELERY_TASK_ALWAYS_EAGER = True
