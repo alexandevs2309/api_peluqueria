@@ -90,10 +90,11 @@ CRON_GROUPS = {
 def cron_run(request):
     """Ejecuta tareas programadas. Invocado por cron-job.org.
     Requiere header X-Cron-Key. Grupos: frequent, hourly, daily, weekly, all."""
-    if CRON_API_KEY:
-        auth = request.META.get('HTTP_X_CRON_KEY', '')
-        if auth != CRON_API_KEY:
-            return JsonResponse({'error': 'Forbidden'}, status=403)
+    if not CRON_API_KEY:
+        return JsonResponse({'error': 'CRON_API_KEY not configured'}, status=503)
+    auth = request.META.get('HTTP_X_CRON_KEY', '')
+    if not auth or auth != CRON_API_KEY:
+        return JsonResponse({'error': 'Forbidden'}, status=403)
 
     task_name = request.GET.get('task', '')
     group = request.GET.get('group', '')
@@ -137,8 +138,6 @@ def cron_run(request):
     })
 
 urlpatterns = [
-    path('', include('django_prometheus.urls')),  # Métricas en /metrics
-    path('admin/', admin.site.urls),
     path('api/', include([
         path('auth/', include('apps.auth_api.urls')),
         path('roles/', include('apps.roles_api.urls')),
@@ -172,6 +171,8 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += [
+        path('', include('django_prometheus.urls')),
+        path('admin/', admin.site.urls),
         path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
         path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
     ]

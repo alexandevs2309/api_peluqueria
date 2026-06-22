@@ -180,6 +180,7 @@ if DEBUG:
         'register': '5/hour',
         'password_reset': '5/hour',
         'public_booking': '200/hour',
+        'mfa_verify': '10/min',
     }
 else:
     # Production: Strict security limits
@@ -190,6 +191,7 @@ else:
         'register': '1/day',  # 1 registro por IP/día en producción
         'password_reset': '3/hour',
         'public_booking': '100/hour',
+        'mfa_verify': '5/min',
     }
 
 REST_FRAMEWORK = {

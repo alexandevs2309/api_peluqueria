@@ -247,11 +247,6 @@ def register_with_plan(request):
                     'subdomain': subdomain,
                     'note': 'Configuración completando en segundo plano'
                 },
-                'credentials': {
-                    'email': user.email,
-                    'temporary_password': password,
-                    'note': 'Credenciales enviadas por email'
-                },
                 'email_status': {
                     'email_sent': True,
                     'recipient': user.email,

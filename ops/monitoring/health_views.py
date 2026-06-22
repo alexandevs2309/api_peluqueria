@@ -181,10 +181,11 @@ def cron_run(request):
       GET /api/cron/run/?group=daily           # diario
       GET /api/cron/run/?task=mark_expired_appointments  # tarea específica
     """
-    if CRON_API_KEY:
-        auth = request.META.get('HTTP_X_CRON_KEY', '')
-        if auth != CRON_API_KEY:
-            return JsonResponse({'error': 'Forbidden'}, status=403)
+    if not CRON_API_KEY:
+        return JsonResponse({'error': 'CRON_API_KEY not configured'}, status=503)
+    auth = request.META.get('HTTP_X_CRON_KEY', '')
+    if not auth or auth != CRON_API_KEY:
+        return JsonResponse({'error': 'Forbidden'}, status=403)
 
     task_name = request.GET.get('task', '')
     group = request.GET.get('group', '')

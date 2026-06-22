@@ -171,6 +171,9 @@ class LoginThrottle(AnonRateThrottle):
 class PasswordResetThrottle(AnonRateThrottle):
     scope = 'password_reset'
 
+class MFAVerifyThrottle(UserRateThrottle):
+    scope = 'mfa_verify'
+
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
@@ -748,6 +751,7 @@ class MFASetupView(APIView):
 
 class MFAVerifyView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [MFAVerifyThrottle]
 
     def post(self, request):
         if not is_mfa_globally_enabled():
@@ -772,6 +776,7 @@ class MFAVerifyView(APIView):
 
 class MFADisableView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [MFAVerifyThrottle]
 
     def post(self, request):
         user = request.user
