@@ -23,6 +23,15 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        # Always scope queries to the current tenant to avoid cross‑tenant data leaks
+        if not self.request.user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                qs = qs.filter(tenant=tenant)
+        # Apply optional branch filter supplied via querystring (e.g. ?branch=2)
+        branch_id = self.request.query_params.get('branch')
+        if branch_id:
+            qs = qs.filter(branch_id=branch_id)
         if self.action in ('list', 'retrieve', 'today'):
             qs = qs.select_related('client', 'stylist', 'service', 'role')
             qs = qs.prefetch_related(
