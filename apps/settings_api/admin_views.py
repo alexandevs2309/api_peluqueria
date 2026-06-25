@@ -563,8 +563,8 @@ def _test_email_service(request):
         
         # Test real de email
         IntegrationService.send_email(
-            'test@barbersaas.com',
-            'Test Email - BarberSaaS',
+            'test@auronsuite.com',
+            'Test Email - Auron Suite',
             'Email service is working correctly.'
         )
         

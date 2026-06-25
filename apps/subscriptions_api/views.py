@@ -317,6 +317,13 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
                     action='cancelled',
                     description=f'Suscripción al plan "{subscription.plan.name}" cancelada. Acceso hasta {subscription.end_date.strftime("%d/%m/%Y") if subscription.end_date else "fin del período"}. Stripe: {stripe_cancelled}'
                 )
+            
+            # Send cancellation email confirmation
+            from apps.subscriptions_api.tasks import send_cancellation_confirmation_email
+            try:
+                send_cancellation_confirmation_email(request.user, tenant, subscription)
+            except Exception as e:
+                logger.error(f"Failed to send cancellation confirmation email: {e}")
 
             end_date_str = subscription.end_date.strftime('%d/%m/%Y') if subscription.end_date else 'el final del período'
             return Response(
@@ -726,10 +733,7 @@ class RenewSubscriptionView(APIView):
 
     def _create_paypal_order(self, request, tenant, plan, months, auto_renew, billing_interval='month'):
         if auto_renew:
-            return Response({
-                'error': 'PayPal auto-renew no disponible',
-                'message': 'Por ahora PayPal solo esta habilitado para pagos manuales por periodo.'
-            }, status=status.HTTP_400_BAD_REQUEST)
+            return self._create_paypal_subscription(request, tenant, plan, billing_interval)
 
         from apps.payments_api.services import PayPalService
         svc = PayPalService()
@@ -754,6 +758,32 @@ class RenewSubscriptionView(APIView):
         return Response({
             'provider': 'paypal',
             'order_id': result['order_id'],
+            'approve_url': result['approve_url'],
+            'sandbox': result['sandbox'],
+        })
+
+    def _create_paypal_subscription(self, request, tenant, plan, billing_interval):
+        from apps.payments_api.services import PayPalService
+        svc = PayPalService()
+        result, err = svc.create_subscription(request.user, tenant, plan, billing_interval)
+        if err:
+            return Response(err, status=status.HTTP_502_BAD_GATEWAY)
+
+        # Usar el cache para recordar qué plan intentó suscribirse y poder confirmarlo en caso de webhooks fallidos o lentos
+        cache.set(
+            PayPalService.order_cache_key(result['subscription_id']),
+            {
+                'user_id': request.user.id,
+                'tenant_id': tenant.id,
+                'plan_id': plan.id,
+                'billing_interval': billing_interval,
+            },
+            timeout=60 * 60 * 24,
+        )
+
+        return Response({
+            'provider': 'paypal_subscription',
+            'subscription_id': result['subscription_id'],
             'approve_url': result['approve_url'],
             'sandbox': result['sandbox'],
         })
@@ -850,6 +880,75 @@ class RenewSubscriptionView(APIView):
 
         cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
         cache.delete(PayPalService.order_cache_key(order_id))
+        return Response(response_payload)
+
+    def _capture_paypal_subscription(self, request, tenant, subscription_id):
+        if not subscription_id:
+            return Response({'error': 'PayPal subscription ID required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.payments_api.services import PayPalService
+        svc = PayPalService()
+        cache_key = PayPalService.capture_cache_key(subscription_id)
+
+        cached_completion = cache.get(cache_key)
+        if cached_completion:
+            return Response(cached_completion)
+
+        cached_order = cache.get(PayPalService.order_cache_key(subscription_id))
+        if not cached_order:
+            return Response({
+                'error': 'PayPal subscription expired or not found',
+                'message': 'La suscripción no existe en nuestro registro. Inicia el checkout nuevamente.'
+            }, status=status.HTTP_410_GONE)
+
+        if cached_order.get('user_id') != request.user.id or cached_order.get('tenant_id') != tenant.id:
+            return Response({
+                'error': 'PayPal subscription mismatch',
+                'message': 'La suscripción PayPal no pertenece a esta cuenta.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            plan = SubscriptionPlan.objects.get(id=cached_order['plan_id'], is_active=True)
+        except SubscriptionPlan.DoesNotExist:
+            return Response({'error': 'Invalid plan'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # En lugar de "capturar" un pago, en suscripciones de PayPal solo comprobamos el estado.
+        # Si el usuario aprobó en frontend, PayPal empezará a cobrar y enviará webhooks.
+        # Asumiremos la suscripción como exitosa preliminarmente y le daremos 1 día de gracia si no hay pago inmediato.
+        # El webhook BILLING.SUBSCRIPTION.ACTIVATED o PAYMENT.SALE.COMPLETED actualizará permanentemente.
+        with transaction.atomic():
+            access_until = self._apply_paid_access(
+                tenant,
+                request.user,
+                plan,
+                1,  # Temporal grace period or actual period if webhook was fast
+                auto_renew=True,
+                billing_interval=cached_order.get('billing_interval', 'month')
+            )
+
+            Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
+            Subscription.objects.update_or_create(
+                tenant=tenant,
+                plan=plan,
+                defaults={
+                    'paypal_subscription_id': subscription_id,
+                    'is_active': True,
+                    'billing_interval': cached_order.get('billing_interval', 'month')
+                }
+            )
+
+        response_payload = {
+            'message': 'Subscription approved successfully',
+            'provider': 'paypal_subscription',
+            'plan': plan.name,
+            'status': tenant.subscription_status,
+            'access_level': tenant.get_access_level(),
+            'access_until': access_until,
+            'subscription_id': subscription_id
+        }
+
+        cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
+        cache.delete(PayPalService.order_cache_key(subscription_id))
         return Response(response_payload)
 
     def _handle_auto_renew_payment(self, tenant, user, plan, payment_method_id, customer_id, billing_interval='month', months=1):
@@ -1043,6 +1142,10 @@ class RenewSubscriptionView(APIView):
 
         if payment_provider == 'paypal' and paypal_action == 'capture_order':
             return self._capture_paypal_order(request, tenant, paypal_order_id)
+            
+        if payment_provider == 'paypal' and paypal_action == 'capture_subscription':
+            subscription_id = request.data.get('subscription_id')
+            return self._capture_paypal_subscription(request, tenant, subscription_id)
 
         if months is None:
             return Response({'error': 'Months must be an integer between 1 and 24'}, status=400)

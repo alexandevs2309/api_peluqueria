@@ -187,8 +187,9 @@ class RegisterView(generics.CreateAPIView):
         
         # Transacción atómica para garantizar tenant antes de usuario
         with transaction.atomic():
-            # Plan de onboarding para iniciar el tenant en trial sin exponer un plan gratis permanente en la oferta publica.
-            starter_plan = SubscriptionPlan.objects.filter(name='free').first()
+            # Usar el plan seleccionado por el usuario o Basic como default para trial
+            plan_name = self.request.data.get('planType', '').lower() or 'basic'
+            starter_plan = SubscriptionPlan.objects.filter(name=plan_name).first()
             if not starter_plan:
                 starter_plan = SubscriptionPlan.objects.filter(name='basic').first()
             if not starter_plan:

@@ -391,10 +391,126 @@ def handle_capture_refunded(resource):
         logger.warning("No invoice found for capture %s — cannot suspend tenant", capture_id)
 
 
+def handle_subscription_activated(resource):
+    """Manejar BILLING.SUBSCRIPTION.ACTIVATED."""
+    from apps.subscriptions_api.models import Subscription, SubscriptionPlan
+    
+    sub_id = resource.get('id')
+    custom_id = resource.get('custom_id') or ''
+    
+    user_id, tenant_id, plan_id, interval = None, None, None, 'month'
+    for part in custom_id.split('|'):
+        if part.startswith('user:'): user_id = part.split(':')[1]
+        elif part.startswith('tenant:'): tenant_id = part.split(':')[1]
+        elif part.startswith('plan:'): plan_id = part.split(':')[1]
+        elif part.startswith('interval:'): interval = part.split(':')[1]
+
+    if not sub_id or not tenant_id or not plan_id:
+        logger.warning("Subscription activated missing vital custom_id data: %s", custom_id)
+        return
+
+    try:
+        plan = SubscriptionPlan.objects.get(id=plan_id)
+        Subscription.objects.update_or_create(
+            tenant_id=tenant_id,
+            plan=plan,
+            defaults={
+                'paypal_subscription_id': sub_id,
+                'is_active': True,
+                'billing_interval': interval
+            }
+        )
+        logger.info("Subscription %s activated for tenant %s", sub_id, tenant_id)
+    except Exception as e:
+        logger.exception("Error handling subscription activated: %s", e)
+
+
+def handle_subscription_cancelled(resource):
+    """Manejar BILLING.SUBSCRIPTION.CANCELLED."""
+    from apps.subscriptions_api.models import Subscription
+    sub_id = resource.get('id')
+    if not sub_id: return
+    
+    Subscription.objects.filter(paypal_subscription_id=sub_id).update(is_active=False)
+    logger.info("Subscription %s cancelled via webhook", sub_id)
+
+
+def handle_payment_sale_completed(resource):
+    """Manejar PAYMENT.SALE.COMPLETED."""
+    from apps.subscriptions_api.models import Subscription
+    from apps.payments_api.services import PayPalService
+    from dateutil.relativedelta import relativedelta
+    
+    sub_id = resource.get('billing_agreement_id')
+    amount_str = resource.get('amount', {}).get('total', '0')
+    sale_id = resource.get('id')
+    
+    if not sub_id:
+        logger.warning("Sale completed missing billing_agreement_id (subscription id)")
+        return
+        
+    subscription = Subscription.objects.filter(paypal_subscription_id=sub_id).first()
+    if not subscription:
+        logger.warning("Sale completed for unknown subscription %s", sub_id)
+        return
+        
+    tenant = subscription.tenant
+    user = tenant.owner if hasattr(tenant, 'owner') else None  # fallback si no hay custom_id
+    if not user:
+        # Intenta obtener de custom_id si viene en el recurso, las sales no siempre lo traen
+        custom = resource.get('custom', '')
+        for part in custom.split('|'):
+            if part.startswith('user:'):
+                try: user = User.objects.get(id=part.split(':')[1])
+                except: pass
+                
+    months = 12 if subscription.billing_interval == 'year' else 1
+    
+    with transaction.atomic():
+        now = datetime.now(tz=dt_timezone.utc)
+        base_time = now
+        if tenant.access_until and tenant.access_until > now:
+            base_time = tenant.access_until
+        access_until = base_time + relativedelta(months=months)
+        
+        tenant.access_until = access_until
+        tenant.subscription_status = 'active'
+        tenant.is_active = True
+        tenant.save(update_fields=['access_until', 'subscription_status', 'is_active', 'updated_at'])
+        
+        # Guardar factura y pago
+        payment = PayPalService.create_payment_record(
+            user=user,
+            tenant=tenant,
+            amount=float(amount_str),
+            capture_id=sale_id,
+            order_id=sub_id,
+        )
+        Invoice.objects.create(
+            user=user,
+            tenant=tenant,
+            amount=float(amount_str),
+            due_date=now,
+            is_paid=True,
+            paid_at=now,
+            payment_method='paypal',
+            status='paid',
+            stripe_payment_intent_id=sale_id,
+            paypal_order_id=sub_id,
+            payment=payment,
+            description=f"PayPal Subscription {sub_id} - Sale {sale_id}",
+        )
+        
+    logger.info("Processed sale %s for subscription %s, tenant extended to %s", sale_id, sub_id, access_until)
+
+
 EVENT_HANDLERS = {
     'PAYMENT.CAPTURE.COMPLETED': handle_capture_completed,
     'PAYMENT.CAPTURE.DENIED': handle_capture_denied,
     'PAYMENT.CAPTURE.REFUNDED': handle_capture_refunded,
+    'BILLING.SUBSCRIPTION.ACTIVATED': handle_subscription_activated,
+    'BILLING.SUBSCRIPTION.CANCELLED': handle_subscription_cancelled,
+    'PAYMENT.SALE.COMPLETED': handle_payment_sale_completed,
 }
 
 

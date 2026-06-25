@@ -90,6 +90,27 @@ class SubscriptionPlan(models.Model):
         db_index=True,
         help_text="Stripe Price ID (ej: price_...) para cobro recurrente anual"
     )
+    paypal_product_id = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="PayPal Product ID (ej: PROD-...) para producto base"
+    )
+    paypal_plan_id = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="PayPal Plan ID (ej: P-...) para cobro mensual"
+    )
+    paypal_annual_plan_id = models.CharField(
+        max_length=120,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="PayPal Plan ID (ej: P-...) para cobro anual"
+    )
     is_active = models.BooleanField(default=True)
     is_public = models.BooleanField(default=True, help_text="Visible y elegible en catalogo publico y onboarding")
     max_employees = models.PositiveIntegerField(default=0)
@@ -222,6 +243,7 @@ class Subscription(models.Model):
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE)
     plan = models.ForeignKey(SubscriptionPlan, on_delete=models.PROTECT)
     stripe_subscription_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    paypal_subscription_id = models.CharField(max_length=255, unique=True, null=True, blank=True)
     is_active = models.BooleanField(default=True)
     billing_interval = models.CharField(
         max_length=20,

@@ -298,17 +298,17 @@ def send_welcome_email(user, password, tenant):
     frontend_url = getattr(django_settings, 'FRONTEND_URL', 'http://localhost:4200')
     login_url = f"{frontend_url}/auth/login"
 
-    subject = f"¡Bienvenido a BarberSaaS, {user.full_name}!"
+    subject = f"¡Bienvenido a Auron Suite, {user.full_name}!"
 
     text_body = (
         f"Hola {user.full_name},\n\n"
         f"Tu cuenta ha sido creada exitosamente.\n\n"
-        f"Barbería: {tenant.name}\n"
+        f"Negocio: {tenant.name}\n"
         f"Email: {user.email}\n"
         f"Contraseña temporal: {password}\n\n"
         f"Inicia sesión en: {login_url}\n\n"
         f"Por seguridad, cambia tu contraseña después de iniciar sesión.\n\n"
-        f"El equipo de BarberSaaS"
+        f"El equipo de Auron Suite"
     )
 
     html_body = EmailRenderer.render('welcome.html', {

@@ -149,6 +149,7 @@ def send_trial_expiration_warnings(self):
     """
     Task para enviar avisos de expiración próxima
     Ejecutar diariamente a las 10:00 AM
+    Envía avisos a 3 y 1 día antes del fin del trial.
     """
     try:
         today = timezone.now().date()
@@ -332,28 +333,30 @@ def send_trial_expired_email(tenant):
     """Enviar email cuando el trial expira"""
     from apps.auth_api.tasks import send_email_async
 
+    # FIX: branding corregido a "Auron Suite"
     subject = f"Tu prueba gratuita ha expirado - {tenant.name}"
     message = f"""
     Hola {tenant.owner.full_name},
     
     Tu prueba gratuita de 7 días para {tenant.name} ha expirado.
     
-    Para continuar usando BarberSaaS:
+    Para continuar usando Auron Suite:
     1. Inicia sesión en tu cuenta
     2. Ve a Configuración > Suscripción
     3. Selecciona un plan de pago
     
     ¡No pierdas tus datos! Reactiva tu cuenta hoy.
     
-    El equipo de BarberSaaS
+    El equipo de Auron Suite
     """
     
     try:
         html_message = _build_html_email(tenant, subject, [
             f"Hola {tenant.owner.full_name},",
             f"Tu prueba gratuita de 7 días para {tenant.name} ha expirado.",
-            "Para continuar usando BarberSaaS inicia sesión y selecciona un plan de pago.",
-            "No pierdas tus datos. Reactiva tu cuenta hoy."
+            "Para continuar usando Auron Suite inicia sesión y selecciona un plan de pago.",
+            '<a href="https://auronsuite.com/client/payment" style="display:inline-block;padding:12px 24px;background-color:#3B82F6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Ver planes</a>',
+            "No pierdas tus datos. Reactiva tu cuenta hoy.",
         ])
         send_email_async.delay(
             subject=subject,
@@ -395,6 +398,7 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
         )
         return
 
+    # FIX: branding corregido a "Auron Suite"
     subject = f"Tu prueba gratuita expira en {days_remaining} días - {tenant.name}"
     message = f"""
     Hola {owner.full_name or owner.email},
@@ -408,7 +412,7 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
     
     ¡No esperes hasta el último momento!
     
-    El equipo de BarberSaaS
+    El equipo de Auron Suite
     """
     
     try:
@@ -418,7 +422,8 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
             f"Hola {owner.full_name or owner.email},",
             f"Tu prueba gratuita de {tenant.name} expira en {days_remaining} días.",
             "Para evitar suspensión, entra a configuración de suscripción y elige un plan.",
-            "No esperes al último momento."
+            '<a href="https://auronsuite.com/client/payment" style="display:inline-block;padding:12px 24px;background-color:#3B82F6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Ver planes</a>',
+            "No esperes al último momento.",
         ])
         send_email_async.delay(
             subject=subject,
@@ -434,3 +439,68 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
     except Exception as e:
         logger.error(f"Error sending trial warning email to {recipient}: {str(e)}")
         raise self.retry(exc=e)
+
+
+def send_cancellation_confirmation_email(user, tenant, subscription):
+    """
+    Enviar email de confirmación cuando el usuario cancela su suscripción.
+    Incluye fecha de acceso final y enlace para reactivar.
+    """
+    from apps.auth_api.tasks import send_email_async
+
+    recipient = getattr(user, 'email', None) or getattr(tenant, 'contact_email', None)
+    if not recipient:
+        logger.warning(
+            "send_cancellation_confirmation_email: no recipient email for user_id=%s",
+            user.id,
+        )
+        return
+
+    plan_name = subscription.plan.get_name_display() if subscription.plan else 'Plan'
+    access_until = subscription.end_date.strftime('%d/%m/%Y') if subscription.end_date else 'el final del período'
+    reactivate_url = f"{getattr(settings, 'FRONTEND_URL', 'https://auronsuite.com').rstrip('/')}/client/profile"
+
+    subject = f"Suscripción cancelada — Acceso hasta {access_until}"
+
+    message = f"""
+    Hola {user.full_name or user.email},
+
+    Confirmamos que tu suscripción al plan {plan_name} de {tenant.name} ha sido cancelada.
+
+    Acceso activo hasta: {access_until}
+    
+    No se realizarán más cobros automáticos. Tus datos están seguros y seguirán disponibles hasta esa fecha.
+
+    ¿Cambiaste de opinión? Puedes reactivar tu suscripción en cualquier momento desde tu perfil:
+    {reactivate_url}
+
+    El equipo de Auron Suite
+    """
+
+    try:
+        html_message = _build_html_email(tenant, subject, [
+            f"Hola {user.full_name or user.email},",
+            f"Confirmamos que tu suscripción al plan <strong>{plan_name}</strong> ha sido cancelada.",
+            f"<strong>Acceso activo hasta: {access_until}</strong>",
+            "No se realizarán más cobros automáticos. Tus datos seguirán disponibles hasta esa fecha.",
+            f'<a href="{reactivate_url}" style="display:inline-block;padding:12px 24px;background-color:#3B82F6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Reactivar suscripción</a>',
+            "Si tienes preguntas, escríbenos a soporte@auronsuite.com.",
+        ])
+        send_email_async.delay(
+            subject=subject,
+            message=message,
+            from_email='',
+            recipient_list=[recipient],
+            html_message=html_message,
+        )
+        logger.info(
+            "send_cancellation_confirmation_email: sent to %s for subscription_id=%s",
+            recipient,
+            subscription.id,
+        )
+    except Exception as e:
+        logger.error(
+            "Error sending cancellation confirmation email to %s: %s",
+            recipient,
+            str(e),
+        )

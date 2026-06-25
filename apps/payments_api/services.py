@@ -150,6 +150,145 @@ class PayPalService:
             'amount': total_amount,
         }, None
 
+    def sync_paypal_plan(self, plan: SubscriptionPlan, billing_interval='month'):
+        """Crea producto y plan en PayPal si no existen."""
+        token, err = self.get_access_token()
+        if err:
+            return None, err
+            
+        # 1. Crear producto si no existe
+        if not plan.paypal_product_id:
+            payload = {
+                "name": f"Auron Suite - {plan.get_name_display()}",
+                "description": f"Suscripción al plan {plan.get_name_display()} de Auron Suite",
+                "type": "SERVICE",
+                "category": "SOFTWARE"
+            }
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/v1/catalogs/products",
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=20
+                )
+                if resp.status_code in {200, 201}:
+                    plan.paypal_product_id = resp.json().get('id')
+                    plan.save(update_fields=['paypal_product_id'])
+                else:
+                    return None, {'error': 'Error creando producto', 'message': resp.text}
+            except Exception as e:
+                return None, {'error': 'Error de conexion', 'message': str(e)}
+        
+        # 2. Crear plan si no existe
+        target_field = 'paypal_annual_plan_id' if billing_interval == 'year' else 'paypal_plan_id'
+        plan_id = getattr(plan, target_field)
+        
+        if not plan_id:
+            price = plan.annual_price if billing_interval == 'year' else plan.price
+            if billing_interval == 'year' and not price:
+                price = plan.price * 12 * Decimal('0.8')
+                
+            interval_unit = "YEAR" if billing_interval == 'year' else "MONTH"
+            
+            payload = {
+                "product_id": plan.paypal_product_id,
+                "name": f"Auron Suite - {plan.get_name_display()} ({interval_unit})",
+                "description": f"Plan {plan.get_name_display()} cobrado de forma {interval_unit.lower()}",
+                "status": "ACTIVE",
+                "billing_cycles": [
+                    {
+                        "frequency": {
+                            "interval_unit": interval_unit,
+                            "interval_count": 1
+                        },
+                        "tenure_type": "REGULAR",
+                        "sequence": 1,
+                        "total_cycles": 0,
+                        "pricing_scheme": {
+                            "fixed_price": {
+                                "value": str(price),
+                                "currency_code": "USD"
+                            }
+                        }
+                    }
+                ],
+                "payment_preferences": {
+                    "auto_bill_outstanding": True,
+                    "setup_fee": {
+                        "value": "0",
+                        "currency_code": "USD"
+                    },
+                    "setup_fee_failure_action": "CONTINUE",
+                    "payment_failure_threshold": 3
+                }
+            }
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/v1/billing/plans",
+                    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=20
+                )
+                if resp.status_code in {200, 201}:
+                    plan_id = resp.json().get('id')
+                    setattr(plan, target_field, plan_id)
+                    plan.save(update_fields=[target_field])
+                else:
+                    return None, {'error': 'Error creando plan de suscripcion', 'message': resp.text}
+            except Exception as e:
+                return None, {'error': 'Error de conexion', 'message': str(e)}
+                
+        return plan_id, None
+
+    def create_subscription(self, user, tenant, plan, billing_interval='month'):
+        """Crea una suscripción de PayPal y devuelve el enlace de aprobación."""
+        plan_id, err = self.sync_paypal_plan(plan, billing_interval)
+        if err:
+            return None, err
+            
+        token, err = self.get_access_token()
+        if err:
+            return None, err
+            
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        
+        payload = {
+            "plan_id": plan_id,
+            "custom_id": f"user:{user.id}|tenant:{tenant.id}|plan:{plan.id}|interval:{billing_interval}",
+            "application_context": {
+                "brand_name": "Auron Suite",
+                "shipping_preference": "NO_SHIPPING",
+                "user_action": "SUBSCRIBE_NOW",
+                "return_url": f"{frontend_url}/client/checkout?paypal_sub=success",
+                "cancel_url": f"{frontend_url}/client/checkout?paypal_sub=cancelled"
+            }
+        }
+        
+        try:
+            resp = requests.post(
+                f"{self.base_url}/v1/billing/subscriptions",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Prefer": "return=representation"
+                },
+                json=payload,
+                timeout=20
+            )
+            if resp.status_code in {200, 201}:
+                data = resp.json()
+                sub_id = data.get('id')
+                approve_url = next((l.get('href') for l in data.get('links', []) if l.get('rel') == 'approve'), None)
+                return {
+                    'subscription_id': sub_id,
+                    'approve_url': approve_url,
+                    'sandbox': self.sandbox
+                }, None
+            else:
+                return None, {'error': 'Error creando subscripcion', 'message': resp.text}
+        except Exception as e:
+            return None, {'error': 'Error de conexion', 'message': str(e)}
+
     def capture_order(self, order_id):
         """Capturar orden PayPal. Retorna dict con capture_id, status, amount."""
         token, err = self.get_access_token()

@@ -14,41 +14,59 @@ def demo_request(request):
     try:
         data = request.data
         
-        # Validar campos requeridos
-        required_fields = ['name', 'email']
-        for field in required_fields:
-            if not data.get(field):
-                return Response({
-                    'error': f'Campo {field} es requerido'
-                }, status=status.HTTP_400_BAD_REQUEST)
+        # Validar solo email (name opcional para landing)
+        email = data.get('email')
+        if not email:
+            return Response({
+                'error': 'Campo email es requerido'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Preparar email
-        subject = f'Nueva solicitud de demo - {data.get("name")}'
-        message = f"""
-        Nueva solicitud de demo recibida:
+        name = data.get('name') or 'Lead sin nombre'
         
-        Nombre: {data.get('name')}
-        Email: {data.get('email')}
-        Teléfono: {data.get('phone', 'No proporcionado')}
-        Tipo de negocio: {data.get('businessType', 'No especificado')}
-        
-        Mensaje:
-        {data.get('message', 'Sin mensaje adicional')}
-        """
-        
-        # Enviar email
+        # Notificar al equipo de soporte
         try:
             from apps.auth_api.tasks import send_email_async
-            contac_email = getattr(settings, 'SUPPORT_EMAIL', None) or getattr(settings, 'CONTACT_EMAIL', None)
-            if contac_email:
+            support_email = getattr(settings, 'SUPPORT_EMAIL', None)
+            if support_email:
                 send_email_async.delay(
-                    subject=subject,
-                    message=message,
+                    subject=f'Nueva solicitud de video demo - {name}',
+                    message=f"""
+                    Nueva solicitud de video demo personalizado:
+                    
+                    Nombre: {name}
+                    Email: {email}
+                    Teléfono: {data.get('phone', 'No proporcionado')}
+                    Tipo de negocio: {data.get('businessType', 'No especificado')}
+                    Mensaje: {data.get('message', 'Sin mensaje adicional')}
+                    """,
                     from_email='',
-                    recipient_list=[contac_email] if isinstance(contac_email, str) else contac_email,
+                    recipient_list=[support_email] if isinstance(support_email, str) else support_email,
                 )
         except Exception as e:
-            logger.error(f"Error sending demo request email: {str(e)}")
+            logger.error(f"Error notifying support about demo request: {str(e)}")
+        
+        # Acuse al usuario
+        try:
+            send_email_async.delay(
+                subject='Recibimos tu solicitud de video demo - Auron Suite',
+                message=f"""
+                Hola{', ' + name if name != 'Lead sin nombre' else ''}
+                
+                Gracias por tu interés en Auron Suite. Hemos recibido tu solicitud de video demo personalizado.
+                
+                En las próximas horas uno de nuestros asesores te enviará un video mostrando cómo Auron Suite puede ayudar a tu negocio.
+                
+                Mientras tanto, puedes visitar nuestra página para más información:
+                https://auronsuite.com
+                
+                Saludos,
+                Equipo de Auron Suite
+                """,
+                from_email='',
+                recipient_list=[email],
+            )
+        except Exception as e:
+            logger.error(f"Error sending demo confirmation to user: {str(e)}")
         
         return Response({
             'message': 'Solicitud de demo enviada correctamente',
