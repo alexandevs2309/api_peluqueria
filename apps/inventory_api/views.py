@@ -51,7 +51,6 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
     @action(detail=True, methods=['post'])
     def adjust_stock(self, request, pk=None):
         """Ajustar stock de un producto"""
-        product = self.get_object()
         quantity = request.data.get('quantity', 0)
         reason = request.data.get('reason', 'Ajuste manual')
         
@@ -61,16 +60,16 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 status=400
             )
         
-        # Crear movimiento de stock
-        StockMovement.objects.create(
-            product=product,
-            quantity=quantity,
-            reason=reason
-        )
-        
-        # Actualizar stock
-        product.stock += quantity
-        product.save()
+        from django.db import transaction
+        with transaction.atomic():
+            product = Product.objects.select_for_update().get(pk=self.get_object().pk)
+            Product.objects.filter(pk=product.pk).update(stock=F('stock') + quantity)
+            StockMovement.objects.create(
+                product=product,
+                quantity=quantity,
+                reason=reason
+            )
+            product.refresh_from_db()
         
         return Response({
             'detail': f'Stock ajustado. Nuevo stock: {product.stock}',

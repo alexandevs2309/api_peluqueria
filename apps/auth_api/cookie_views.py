@@ -11,6 +11,7 @@ from django_ratelimit.core import is_ratelimited
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import LoginSerializer, get_explicit_tenant_input
+from .views import hash_token
 from .models import ActiveSession, AccessLog, LoginAudit
 from .utils import get_client_ip, get_user_agent, get_client_jti
 from .settings_policy import is_mfa_globally_enabled, get_jwt_expiry_minutes
@@ -166,7 +167,7 @@ class CookieLoginView(APIView):
             ip_address=get_client_ip(request),
             user_agent=_safe_user_agent(request),
             token_jti=jti,
-            refresh_token=refresh_token,
+            refresh_token=hash_token(refresh_token),
             is_active=True,
             tenant=tenant
         )
@@ -331,6 +332,7 @@ class CookieRefreshView(APIView):
 
 class LookupSubdomainView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [CookieLoginThrottle]
 
     @method_decorator(csrf_exempt)
     def dispatch(self, *args, **kwargs):
@@ -340,8 +342,8 @@ class LookupSubdomainView(APIView):
         from apps.tenants_api.models import Tenant
         email = (request.data.get('email') or '').strip().lower()
         if not email:
-            return Response({'error': 'Email requerido'}, status=400)
+            return Response({'detail': 'Email requerido'}, status=400)
         tenant = Tenant.objects.filter(contact_email=email, deleted_at__isnull=True).first()
         if not tenant:
-            return Response({'error': 'No encontrado'}, status=404)
+            return Response({'subdomain': None}, status=200)
         return Response({'subdomain': tenant.subdomain, 'name': tenant.name})

@@ -5,27 +5,9 @@ from rest_framework import viewsets
 from rest_framework.exceptions import PermissionDenied
 
 
-class TenantScopedViewSet(viewsets.ModelViewSet):
-    """
-    ViewSet base que filtra automáticamente por tenant.
-    
-    Comportamiento:
-    - SuperAdmin: Ve todos los registros
-    - Usuario con tenant: Ve solo registros de su tenant
-    - Usuario sin tenant: No ve nada
-    
-    Uso:
-        class MyViewSet(TenantScopedViewSet):
-            queryset = MyModel.objects.all()
-            serializer_class = MySerializer
-            
-            # get_queryset() ya está implementado
-    
-    Requisitos:
-    - El modelo debe tener campo 'tenant' (ForeignKey a Tenant)
-    - request.tenant debe estar seteado por middleware
-    """
-    
+class TenantQuerySetMixin:
+    """Mixin con lógica de filtrado por tenant compartida entre ViewSets."""
+
     def get_queryset(self):
         queryset = super().get_queryset()
 
@@ -66,6 +48,28 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
                 pass
 
         return queryset
+
+
+class TenantScopedViewSet(TenantQuerySetMixin, viewsets.ModelViewSet):
+    """
+    ViewSet base que filtra automáticamente por tenant.
+    
+    Comportamiento:
+    - SuperAdmin: Ve todos los registros
+    - Usuario con tenant: Ve solo registros de su tenant
+    - Usuario sin tenant: No ve nada
+    
+    Uso:
+        class MyViewSet(TenantScopedViewSet):
+            queryset = MyModel.objects.all()
+            serializer_class = MySerializer
+            
+            # get_queryset() ya está implementado
+    
+    Requisitos:
+    - El modelo debe tener campo 'tenant' (ForeignKey a Tenant)
+    - request.tenant debe estar seteado por middleware
+    """
 
     def perform_create(self, serializer):
         user = self.request.user
@@ -129,7 +133,7 @@ class TenantScopedViewSet(viewsets.ModelViewSet):
         serializer.save()
 
 
-class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
+class TenantScopedReadOnlyViewSet(TenantQuerySetMixin, viewsets.ReadOnlyModelViewSet):
     """
     Versión ReadOnly de TenantScopedViewSet.
     
@@ -138,44 +142,3 @@ class TenantScopedReadOnlyViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = MyModel.objects.all()
             serializer_class = MySerializer
     """
-    
-    def get_queryset(self):
-        queryset = super().get_queryset()
-
-        if self.request.user.is_superuser:
-            tenant = getattr(self.request, 'tenant', None)
-            if tenant:
-                queryset = queryset.filter(tenant=tenant)
-        elif not hasattr(self.request, 'tenant') or not self.request.tenant:
-            return queryset.none()
-        else:
-            queryset = queryset.filter(tenant=self.request.tenant)
-
-        # Filtrado opcional por sucursal si el modelo la soporta
-        branch_id = self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
-        
-        # Restricción estricta de sucursal para empleados no administradores
-        user = self.request.user
-        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
-            user_role = getattr(self.request, '_role_cache', None)
-            if user_role is None:
-                from apps.auth_api.role_utils import get_effective_role_api
-                user_role = get_effective_role_api(user, tenant=self.request.tenant)
-                setattr(self.request, '_role_cache', user_role)
-            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
-                if user.employee_profile.branch_id:
-                    branch_id = user.employee_profile.branch_id
-
-        if branch_id:
-            from django.core.exceptions import FieldDoesNotExist
-            try:
-                queryset.model._meta.get_field('branch')
-                if queryset.model.__name__ in ('Employee', 'Service'):
-                    from django.db.models import Q
-                    queryset = queryset.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
-                else:
-                    queryset = queryset.filter(branch_id=branch_id)
-            except FieldDoesNotExist:
-                pass
-
-        return queryset

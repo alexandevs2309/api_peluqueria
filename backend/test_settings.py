@@ -102,7 +102,7 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 100,
+    'PAGE_SIZE': 25,
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.AnonRateThrottle',
@@ -116,6 +116,8 @@ REST_FRAMEWORK = {
         'mfa_verify': '10/min',
     },
 }
+
+PAYPAL_SANDBOX = True
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),

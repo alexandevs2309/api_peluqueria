@@ -56,7 +56,12 @@ class EmployeeViewSet(TenantScopedViewSet):
         if user.is_superuser:
             # Asignar tenant si no viene en data
             if 'tenant' not in serializer.validated_data:
-                tenant = user.tenant or Tenant.objects.first()
+                from rest_framework.exceptions import ValidationError
+                tenant_id = self.request.data.get('tenant_id')
+                if not tenant_id:
+                    raise ValidationError("Se requiere tenant_id para crear empleados como superadmin")
+                from django.shortcuts import get_object_or_404
+                tenant = get_object_or_404(Tenant, pk=tenant_id)
                 serializer.save(tenant=tenant)
             else:
                 serializer.save()

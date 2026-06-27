@@ -196,8 +196,8 @@ else:
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'apps.auth_api.authentication.DualJWTAuthentication',  # Soporta localStorage Y cookies
-        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Fallback
+        'apps.auth_api.authentication.DualJWTAuthentication',  # DEPRECATED: migrar a solo CookieJWTAuthentication (target: Q3 2026)
+        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Fallback — eliminar junto con DualJWT
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -209,8 +209,8 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',
     ],
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
-    'PAGE_SIZE': 100,
-    'MAX_PAGE_SIZE': 500,
+    'PAGE_SIZE': 25,
+    'MAX_PAGE_SIZE': 100,
     'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.UserRateThrottle',
@@ -224,7 +224,10 @@ STRIPE_SECRET_KEY = env('STRIPE_SECRET_KEY', default='')
 STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')
 PAYPAL_CLIENT_ID = env('PAYPAL_CLIENT_ID', default='')
 PAYPAL_SECRET = env('PAYPAL_SECRET', default='')
-PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX', default=True)
+if not DEBUG:
+    PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX')
+else:
+    PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX', default=True)
 PAYPAL_WEBHOOK_ID = env('PAYPAL_WEBHOOK_ID', default='')
 
 GEO_LOCK_ENABLED = env.bool('GEO_LOCK_ENABLED', default=False)
