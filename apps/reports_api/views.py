@@ -384,7 +384,7 @@ class AdminReportsView(views.APIView):
                 'revenue': float(item['total_revenue']),
                 'commission_amount': float(calculate_platform_commission(item['total_revenue'])),
                 'net_revenue': float(calculate_platform_net_revenue(item['total_revenue'])),
-                'plan': item['tenant__subscription_plan__name'] or 'FREE'
+                'plan': item['tenant__subscription_plan__name'] or 'Trial'
             } for item in top_tenants_data]
             
             return Response({

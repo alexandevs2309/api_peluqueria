@@ -8,33 +8,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         plans = [
             {
-                'name': 'free',
-                'description': 'Prueba gratis por 7 dias para conocer la plataforma antes de suscribirte.',
-                'price': 0.00,
-                'annual_price': 0.00,
-                'duration_month': 0,
-                'max_employees': 3,
-                'max_users': 3,
-                'is_public': False,
-                'features': {
-                    'appointments': True,
-                    'reports': True,
-                    'cash_register': True,
-                    'client_history': True,
-                    'inventory': False,
-
-                    'multi_location': False,
-                    'api_access': False,
-                    'custom_branding': False,
-                    'priority_support': False
-                },
-                'commercial_benefits': [
-                    'Prueba gratis por 7 dias',
-                    'Ideal para evaluar antes de pagar'
-                ],
-                'is_active': True
-            },
-            {
                 'name': 'basic',
                 'description': 'Entrada seria para barberias pequenas que necesitan citas, caja, clientes y reportes sin complicarse.',
                 'price': 29.99,

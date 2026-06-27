@@ -198,7 +198,7 @@ class RegisterView(generics.CreateAPIView):
             # Crear subdomain único
             full_name = serializer.validated_data.get('full_name', 'barbershop')
             subdomain = re.sub(r'[^a-zA-Z0-9]', '', full_name.lower())[:50]
-            if not subdomain:
+            if not subdomain or len(subdomain) < 3:
                 subdomain = 'barbershop'
             
             counter = 1

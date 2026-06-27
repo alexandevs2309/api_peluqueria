@@ -85,7 +85,12 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             }, status=403)
             
         tenant = getattr(request, 'tenant', request.user.tenant)
-        sync_subscription_state(tenant, save=True)
+
+        # Cache sync: solo sincronizar cada 5 minutos para evitar query + save en cada request
+        _sync_cache_key = f'sub_sync:{tenant.id}'
+        if cache.get(_sync_cache_key) is None:
+            sync_subscription_state(tenant, save=True)
+            cache.set(_sync_cache_key, True, 300)  # 5 min TTL
         
         if tenant.subscription_status in {'archived', 'cancelled'}:
             return JsonResponse({
@@ -102,7 +107,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'action_required': 'contact_admin'
             }, status=403)
             
-        # Validar expiración de plan FREE con período de gracia
+        # Validar expiración de trial con período de gracia
         if (tenant.subscription_status == 'trial' and 
             tenant.trial_end_date and 
             tenant.trial_end_date < timezone.now().date()):
@@ -118,7 +123,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 return None
             else:
                 return JsonResponse({
-                    'error': 'Free trial expired',
+                    'error': 'Trial expired',
                     'code': 'TRIAL_EXPIRED',
                     'expired_date': tenant.trial_end_date.isoformat(),
                     'days_expired': days_expired,

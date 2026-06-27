@@ -3,6 +3,7 @@ import logging
 from .payment_providers import PaymentProvider
 from .cardnet_provider import CardNETProvider
 from .stripe_provider import StripePosProvider
+from .azul_provider import AzulProvider
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +12,7 @@ class PaymentProviderFactory:
     """Fábrica que retorna el proveedor de pago POS según el país del tenant."""
 
     PROVIDERS = {
-        'DO': CardNETProvider,
+        'DO': AzulProvider,  # Azul es el procesador primario para RD
     }
 
     DEFAULT_PROVIDER = StripePosProvider

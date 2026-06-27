@@ -1,5 +1,3 @@
-from django.utils.decorators import method_decorator
-from django.views.decorators.cache import cache_page
 from rest_framework import generics, permissions, response, status, views
 
 from apps.core.permissions import IsSuperAdmin
@@ -12,11 +10,11 @@ from .utils import clear_system_config_cache, get_system_config
 
 
 class PublicBrandingSettingsView(views.APIView):
-    """Expose solo branding seguro para frontend público. Cacheado 5 min en Redis."""
+    """Expose solo branding seguro para frontend público. Cacheado 5 min vía headers HTTP."""
 
     permission_classes = [permissions.AllowAny]
+    throttle_classes = []
 
-    @method_decorator(cache_page(60 * 5))
     def get(self, request, *args, **kwargs):
         settings = get_system_config()
         platform_domain = (settings.platform_domain or "").strip()

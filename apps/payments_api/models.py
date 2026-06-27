@@ -38,8 +38,10 @@ class EncryptedFieldMixin:
 
 class PaymentProvider(models.Model, EncryptedFieldMixin):
     PROVIDER_CHOICES = [
+        ('azul', 'Azul (RD)'),
         ('stripe', 'Stripe'),
         ('paypal', 'PayPal'),
+        ('cardnet', 'CardNET (RD)'),
         ('manual', 'Manual'),
     ]
     

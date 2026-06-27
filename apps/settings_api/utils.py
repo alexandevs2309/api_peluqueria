@@ -5,11 +5,18 @@ from apps.subscriptions_api.plan_consistency import build_plan_settings_snapshot
 
 
 def get_system_config():
-    """Obtener configuraciones del sistema con cache"""
-    config = cache.get('system_settings')
-    if not config:
-        config = SystemSettings.get_settings()
+    """Obtener configuraciones del sistema con cache (fallback a DB si Redis no disponible)"""
+    try:
+        config = cache.get('system_settings')
+        if config:
+            return config
+    except Exception:
+        pass
+    config = SystemSettings.get_settings()
+    try:
         cache.set('system_settings', config, 300)  # 5 minutos
+    except Exception:
+        pass
     return config
 
 
@@ -58,9 +65,9 @@ def _get_next_upgrade_plan(tenant, capacity_field, current_limit):
     if not active_plans:
         return None
 
-    priority = {'free': 0, 'basic': 1, 'standard': 2, 'premium': 3, 'enterprise': 4}
+    priority = {'basic': 1, 'standard': 2, 'premium': 3, 'enterprise': 4}
     current_plan = getattr(tenant, 'subscription_plan', None)
-    current_plan_name = getattr(current_plan, 'name', None) or getattr(tenant, 'plan_type', 'free')
+    current_plan_name = getattr(current_plan, 'name', None) or getattr(tenant, 'plan_type', '') or 'basic'
 
     def plan_sort_key(plan):
         return (priority.get(plan.name, 99), getattr(plan, capacity_field, 0))
@@ -84,7 +91,7 @@ def _apply_auto_upgrade(tenant, next_plan, changed_by, trigger, current_count, p
     from apps.audit_api.models import AuditLog
 
     current_plan = getattr(tenant, 'subscription_plan', None)
-    old_plan_name = getattr(current_plan, 'name', None) or getattr(tenant, 'plan_type', 'free')
+    old_plan_name = getattr(current_plan, 'name', None) or getattr(tenant, 'plan_type', '') or 'basic'
 
     tenant.subscription_plan = next_plan
     tenant.plan_type = next_plan.name

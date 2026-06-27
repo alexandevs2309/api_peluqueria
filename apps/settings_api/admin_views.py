@@ -102,7 +102,7 @@ class SaasMetricsView(views.APIView):
             ).order_by('-created_at')[:10]:
                 recent_signups.append({
                     'tenant_name': tenant.name,
-                    'plan': tenant.subscription_plan.name if tenant.subscription_plan else 'FREE',
+                    'plan': tenant.subscription_plan.name if tenant.subscription_plan else 'Trial',
                     'created_at': tenant.created_at.isoformat(),
                     'subscription_status': tenant.subscription_status,
                     'trial_days_remaining': tenant.get_trial_days_remaining() if tenant.subscription_status == 'trial' else 0

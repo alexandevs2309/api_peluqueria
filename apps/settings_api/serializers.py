@@ -161,6 +161,14 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             "twilio_account_sid",
             "twilio_auth_token",
             "twilio_phone_number",
+            # Azul (payment processor primario)
+            "azul_enabled",
+            "azul_sandbox",
+            "azul_store_id",
+            "azul_merchant_id",
+            "azul_auth1",
+            "azul_auth2",
+            "azul_cert_key",
             # Preferencias
             "maintenance_mode",
             "email_notifications",
@@ -176,6 +184,15 @@ class SystemSettingsSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            # Stripe es tercera opción/legacy (Azul es el procesador primario para RD)
+            'stripe_secret_key': {'write_only': True},
+            'webhook_secret': {'write_only': True},
+            # Azul — secretos de pago nunca se leen por API
+            'azul_auth1': {'write_only': True},
+            'azul_auth2': {'write_only': True},
+            'azul_cert_key': {'write_only': True},
+        }
         read_only_fields = ["created_at", "updated_at"]
 
     def to_representation(self, instance):

@@ -71,6 +71,9 @@ SECRET_FIELDS = [
     'webhook_secret',
     'paypal_client_secret',
     'twilio_auth_token',
+    'azul_auth1',
+    'azul_auth2',
+    'azul_cert_key',
 ]
 
 class SystemSettings(models.Model):
@@ -133,6 +136,16 @@ class SystemSettings(models.Model):
     twilio_account_sid = models.CharField(_("Twilio account SID"), max_length=64, blank=True)
     twilio_auth_token = models.CharField(_("Twilio auth token"), max_length=255, blank=True)
     twilio_phone_number = models.CharField(_("Twilio phone number"), max_length=32, blank=True)
+
+    # Azul (payment processor primario para RD)
+    azul_enabled = models.BooleanField(_("Azul habilitado"), default=False)
+    azul_sandbox = models.BooleanField(_("Azul sandbox"), default=True)
+    azul_store_id = models.CharField(_("Azul Store ID"), max_length=255, blank=True)
+    azul_merchant_id = models.CharField(_("Azul Merchant ID"), max_length=255, blank=True)
+    azul_auth1 = models.CharField(_("Azul Auth1 (usuario)"), max_length=255, blank=True)
+    azul_auth2 = models.CharField(_("Azul Auth2 (password)"), max_length=255, blank=True)
+    azul_cert_key = models.TextField(_("Azul cert/key (PEM)"), blank=True,
+                                      help_text="Certificado PEM para autenticación SSL mutua (opcional en JSON mode)")
 
     # Preferencias del Sistema
     maintenance_mode = models.BooleanField(_("Modo mantenimiento"), default=False)
@@ -237,6 +250,13 @@ class SystemSettings(models.Model):
                 'twilio_account_sid': '',
                 'twilio_auth_token': '',
                 'twilio_phone_number': '',
+                'azul_enabled': False,
+                'azul_sandbox': True,
+                'azul_store_id': '',
+                'azul_merchant_id': '',
+                'azul_auth1': '',
+                'azul_auth2': '',
+                'azul_cert_key': '',
                 'maintenance_mode': False,
                 'email_notifications': True,
                 'auto_suspend_expired': True,

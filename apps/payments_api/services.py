@@ -7,6 +7,7 @@ import os
 import json
 from decimal import Decimal
 from datetime import datetime, timezone as dt_timezone
+from typing import Optional
 import requests
 from django.conf import settings
 from django.db.models import Q
@@ -17,6 +18,7 @@ from apps.subscriptions_api.models import UserSubscription, SubscriptionPlan
 from apps.tenants_api.models import Tenant
 from django.contrib.auth import get_user_model
 from apps.settings_api.integration_service import IntegrationService
+from .azul_provider import AZUL_CURRENCY_CODES, ERROR_MAP
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -422,6 +424,210 @@ class PayPalService:
             "Payment record created id=%s user=%s amount=%s",
             payment.id, user.id, amount,
         )
+        return payment
+
+
+class AzulService:
+    """Servicio de pagos con Azul para suscripciones (checkout).
+
+    Azul es el procesador primario para República Dominicana.
+    Stripe/PayPal quedan como opciones legacy/terceras.
+    """
+
+    def __init__(self):
+        self._load_config()
+
+    def _load_config(self):
+        system = IntegrationService.get_system_settings()
+        self.sandbox = getattr(system, 'azul_sandbox', True)
+        self.base_url = (
+            'https://sandbox.azul.com.do' if self.sandbox else 'https://azul.com.do'
+        )
+        self.store = (
+            system.azul_store_id
+            or os.getenv('AZUL_STORE_ID', '')
+        )
+        self.merchant = (
+            system.azul_merchant_id
+            or os.getenv('AZUL_MERCHANT_ID', '')
+        )
+        self.auth1 = (
+            system.azul_auth1
+            or os.getenv('AZUL_AUTH1', '')
+        )
+        self.auth2 = (
+            system.azul_auth2
+            or os.getenv('AZUL_AUTH2', '')
+        )
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.store and self.merchant and self.auth1 and self.auth2)
+
+    def _auth(self) -> dict:
+        return {
+            'store': self.store,
+            'merchant': self.merchant,
+            'auth1': self.auth1,
+            'auth2': self.auth2,
+        }
+
+    def _post(self, path: str, payload: dict, timeout: int = 30) -> dict:
+        url = f'{self.base_url}{path}'
+        logger.info('AzulService request path=%s store=%s', path, self.store)
+        try:
+            resp = requests.post(
+                url,
+                json=payload,
+                headers={'Content-Type': 'application/json', 'Accept': 'application/json'},
+                timeout=timeout,
+            )
+        except requests.RequestException as exc:
+            logger.exception('AzulService network error path=%s', path)
+            return {'success': False, 'error_message': f'Error de conexión con Azul: {str(exc)}'}
+
+        if resp.status_code not in (200, 201):
+            logger.warning('AzulService HTTP %s path=%s body=%s', resp.status_code, path, resp.text[:500])
+            return {
+                'success': False,
+                'responseCode': 'ERR',
+                'error_message': f'Azul respondió con estado HTTP {resp.status_code}',
+            }
+
+        try:
+            return resp.json()
+        except (ValueError, json.JSONDecodeError):
+            logger.error('AzulService invalid JSON path=%s', path)
+            return {'success': False, 'responseCode': 'ERR', 'error_message': 'Respuesta inválida de Azul'}
+
+    def create_checkout_sale(
+        self,
+        order_number: str,
+        amount: Decimal,
+        currency: str = 'DOP',
+        customer_email: str = '',
+        metadata: dict = None,
+    ) -> dict:
+        """Crear una venta directa en Azul.
+
+        Retorna dict con:
+        - success: bool
+        - txn_number: str (ID de transacción Azul)
+        - auth_code: str (código de autorización)
+        - response_code: str
+        - error_message: str si falla
+        """
+        metadata = metadata or {}
+        currency_code = AZUL_CURRENCY_CODES.get(currency.upper(), '214')
+        amount_str = str(int(amount * 100))
+
+        payload = {
+            **self._auth(),
+            'typeService': 'JSON',
+            'orderNumber': order_number[:20],
+            'amount': amount_str,
+            'currency': currency_code,
+            'customerEmail': customer_email,
+            'customFields': json.dumps({
+                'tenant_id': metadata.get('tenant_id', ''),
+                'user_id': metadata.get('user_id', ''),
+                'plan_id': metadata.get('plan_id', ''),
+                'source': 'subscription_checkout',
+            }),
+        }
+
+        data = self._post('/sales', payload)
+        return self._parse_checkout_response(data, amount, currency)
+
+    def verify_transaction(self, order_number: str) -> dict:
+        """Verificar estado de una transacción."""
+        payload = {
+            **self._auth(),
+            'typeService': 'JSON',
+            'orderNumber': order_number[:20],
+        }
+        data = self._post('/verify', payload)
+        response_code = data.get('responseCode', '99')
+        return {
+            'success': response_code == '00',
+            'response_code': response_code,
+            'txn_number': data.get('txnNumber', ''),
+            'auth_code': data.get('authCode', ''),
+            'iso_response': data.get('IsoResponse', ''),
+            'raw': data,
+        }
+
+    def void_transaction(self, txn_number: str, amount: Optional[Decimal] = None) -> dict:
+        """Anular o reembolsar una transacción."""
+        payload = {
+            **self._auth(),
+            'typeService': 'JSON',
+            'orderNumber': f'VOID-{txn_number[:12]}',
+            'txnNumber': txn_number,
+        }
+        if amount is not None:
+            payload['amount'] = str(int(amount * 100))
+        data = self._post('/void', payload)
+        return self._parse_checkout_response(data, amount or Decimal('0'), 'DOP')
+
+    def _parse_checkout_response(self, data: dict, amount: Decimal, currency: str) -> dict:
+        if data.get('success') is False and data.get('error_message'):
+            return {
+                'success': False,
+                'error': data['error_message'],
+            }
+
+        response_code = data.get('responseCode', '99')
+        txn_number = data.get('txnNumber', '')
+        auth_code = data.get('authCode', '')
+
+        if response_code == '00':
+            logger.info('AzulService sale approved txn=%s auth=%s', txn_number, auth_code)
+            return {
+                'success': True,
+                'txn_number': txn_number,
+                'auth_code': auth_code,
+                'response_code': response_code,
+                'amount': float(amount),
+                'currency': currency,
+                'raw': data,
+            }
+
+        error_msg = ERROR_MAP.get(response_code, data.get('IsoResponse', f'Código {response_code}'))
+        logger.warning('AzulService sale denied code=%s txn=%s', response_code, txn_number)
+        return {
+            'success': False,
+            'response_code': response_code,
+            'error': error_msg,
+            'txn_number': txn_number,
+        }
+
+    @staticmethod
+    def create_payment_record(
+        user, tenant, amount: Decimal, txn_number: str, order_number: str,
+        plan=None, months: int = 1,
+    ):
+        """Crear registro de Payment en payments_api."""
+        provider = PaymentProvider.objects.filter(name='azul').first()
+        if not provider:
+            logger.warning('Azul PaymentProvider not found — skipping Payment record')
+            return None
+        payment = Payment.objects.create(
+            user=user,
+            tenant=tenant,
+            provider=provider,
+            amount=amount,
+            currency='DOP',
+            status='completed',
+            provider_payment_id=txn_number or '',
+            metadata={
+                'azul_order_number': order_number or '',
+                'plan_id': str(plan.id) if plan else '',
+                'months': months,
+                'source': 'azul_checkout',
+            },
+        )
+        logger.info('Azul Payment record created id=%s user=%s amount=%s', payment.id, user.id, amount)
         return payment
 
 

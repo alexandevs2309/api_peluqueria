@@ -1,17 +1,21 @@
+import json
+from decimal import Decimal
+
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.conf import settings
 import logging
 
 import stripe
 
 from apps.core.tenant_permissions import TenantPermissionByAction
-from .models import Payment
-from .services import StripeService
+from .models import Payment, PaymentProvider
+from .services import StripeService, AzulService
 from .serializers import PaymentSerializer
 
 logger = logging.getLogger(__name__)
@@ -107,6 +111,139 @@ class PaymentViewSet(viewsets.ModelViewSet):
         )
 
 from django.views import View
+
+
+# ---------------------------------------------------------------------------
+# Azul — Payment processor primario para RD
+# ---------------------------------------------------------------------------
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def azul_checkout(request):
+    """Crear venta Azul para suscripción (checkout).
+
+    Body: { order_number, amount, currency, customer_email, plan_id, months }
+    """
+    user = request.user
+    tenant = getattr(request, 'tenant', None) or getattr(user, 'tenant', None)
+    if not tenant:
+        return Response({'error': 'Tenant no encontrado'}, status=status.HTTP_400_BAD_REQUEST)
+
+    order_number = request.data.get('order_number', '')
+    amount = request.data.get('amount')
+    currency = request.data.get('currency', 'DOP')
+    customer_email = request.data.get('customer_email', user.email)
+    plan_id = request.data.get('plan_id', '')
+    months = int(request.data.get('months', 1))
+
+    if not amount:
+        return Response({'error': 'amount es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        amount_decimal = Decimal(str(amount))
+    except (ValueError, TypeError):
+        return Response({'error': 'amount inválido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not order_number:
+        order_number = f"SUB-{tenant.id}-{int(__import__('time').time() * 1000) % 100000}"
+
+    service = AzulService()
+    if not service.is_configured:
+        return Response(
+            {'error': 'Azul no está configurado. Ve a Configuración del Sistema para configurar Azul.'},
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+
+    result = service.create_checkout_sale(
+        order_number=order_number,
+        amount=amount_decimal,
+        currency=currency,
+        customer_email=customer_email,
+        metadata={
+            'tenant_id': str(tenant.id),
+            'user_id': str(user.id),
+            'plan_id': plan_id,
+        },
+    )
+
+    if not result.get('success'):
+        return Response(
+            {'error': result.get('error', 'Error en el pago con Azul'), 'response_code': result.get('response_code')},
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+
+    # Crear registro de Payment
+    payment = AzulService.create_payment_record(
+        user=user,
+        tenant=tenant,
+        amount=amount_decimal,
+        txn_number=result['txn_number'],
+        order_number=order_number,
+        plan=None,
+        months=months,
+    )
+
+    return Response({
+        'success': True,
+        'txn_number': result['txn_number'],
+        'auth_code': result['auth_code'],
+        'payment_id': str(payment.id) if payment else None,
+    })
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def azul_verify(request):
+    """Verificar estado de una transacción Azul."""
+    order_number = request.data.get('order_number', '')
+    if not order_number:
+        return Response({'error': 'order_number es requerido'}, status=status.HTTP_400_BAD_REQUEST)
+
+    service = AzulService()
+    if not service.is_configured:
+        return Response({'error': 'Azul no configurado'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+    result = service.verify_transaction(order_number)
+    return Response(result)
+
+
+@csrf_exempt
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def azul_webhook(request):
+    """Webhook público para notificaciones de Azul.
+
+    Azul envía POST con datos de la transacción cuando cambia el estado.
+    """
+    logger.info('Azul webhook received from=%s', request.META.get('REMOTE_ADDR', 'unknown'))
+
+    try:
+        data = json.loads(request.body) if request.body else {}
+    except (json.JSONDecodeError, ValueError):
+        data = {}
+
+    response_code = data.get('responseCode', '')
+    txn_number = data.get('txnNumber', '') or data.get('transactionId', '')
+    order_number = data.get('orderNumber', '')
+
+    logger.info('Azul webhook txn=%s code=%s order=%s', txn_number, response_code, order_number)
+
+    if response_code == '00' and txn_number:
+        try:
+            from apps.payments_api.models import Payment
+            payment = Payment.objects.filter(provider_payment_id=txn_number).first()
+            if payment:
+                payment.status = 'completed'
+                payment.completed_at = __import__('django.utils.timezone', fromlist=['now']).now()
+                payment.save(update_fields=['status', 'completed_at'])
+                logger.info('Azul webhook: payment %s completed', payment.id)
+            else:
+                logger.info('Azul webhook: no local Payment found for txn %s', txn_number)
+        except Exception as e:
+            logger.exception('Azul webhook processing error: %s', e)
+
+    return JsonResponse({'received': True})
+
 
 class StripeWebhookView(View):
     """Compatibilidad legacy: delega al webhook idempotente de billing."""

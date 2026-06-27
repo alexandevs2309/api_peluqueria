@@ -24,11 +24,10 @@ from .subscription_lifecycle import (
 
 class Tenant(models.Model):
     PLAN_CHOICES = [
-        ("free", "Free"),
         ("basic", "Basic"),
+        ("standard", "Pro"),
         ("premium", "Business"),
         ("enterprise", "Enterprise"),
-        ("standard", "Pro"),
     ]
     SUBSCRIPTION_STATUS = [
         ("trial", "Trial"),
@@ -53,7 +52,7 @@ class Tenant(models.Model):
     date_format = models.CharField(max_length=20, default='dd/MM/yyyy', help_text='Date format for display')
     time_zone = models.CharField(max_length=50, default='America/Santo_Domingo', help_text='IANA timezone')
 
-    plan_type = models.CharField(max_length=20, choices=PLAN_CHOICES, default="free")
+    plan_type = models.CharField(max_length=20, choices=PLAN_CHOICES, blank=True, default="")
     subscription_plan = models.ForeignKey('subscriptions_api.SubscriptionPlan', on_delete=models.SET_NULL, null=True, blank=True)
     subscription_status = models.CharField(max_length=20, choices=SUBSCRIPTION_STATUS, default="trial")
     trial_end_date = models.DateField(null=True, blank=True)

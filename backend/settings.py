@@ -188,7 +188,7 @@ else:
         'user': '500/hour',
         'anon': '50/hour',
         'login': '5/min',
-        'register': '1/day',  # 1 registro por IP/día en producción
+        'register': '5/day',  # 5 registros por IP/día en producción (NAT compartido)
         'password_reset': '3/hour',
         'public_booking': '100/hour',
         'mfa_verify': '5/min',
@@ -654,7 +654,7 @@ LOGGING = {
         },
         '': {
             'handlers': ['console'],
-            'level': env('LOG_LEVEL', default='DEBUG' if DEBUG else 'INFO'),
+            'level': env('LOG_LEVEL', default='INFO'),
         },
     },
 }
@@ -720,6 +720,16 @@ if not DEBUG:
             RuntimeWarning,
             stacklevel=2,
         )
+
+    # Validar que FINANCE_ALERT_EMAILS no use dominios placeholder
+    _placeholder_domains = {'yourdomain.com', 'tudominio.com', 'example.com'}
+    for _alert_email in FINANCE_ALERT_EMAILS:
+        _domain = _alert_email.split('@')[-1].lower().strip() if '@' in _alert_email else ''
+        if _domain in _placeholder_domains:
+            raise RuntimeError(
+                f'FINANCE_ALERT_EMAILS contiene un dominio placeholder ({_domain}). '
+                'Define direcciones reales antes de ir a produccion.'
+            )
 
     # ALLOWED_HOSTS no puede contener solo hosts locales en produccion
     _unsafe_hosts = {'localhost', '127.0.0.1', 'testserver', ''}

@@ -515,14 +515,15 @@ class MyEntitlementsView(APIView):
             except Exception:
                 employee_count = 0
             
-            # Plan gratuito básico
+            # Sin suscripción activa — período trial
             return Response({
-                "plan": "free",
-                "plan_display": "Plan Gratuito",
+                "plan": "trial",
+                "plan_display": "Trial",
                 "features": {},
                 "limits": {"max_employees": 1},
                 "usage": {"employees": employee_count},
-                "duration_month": 0
+                "duration_month": 0,
+                "is_trial": True
             })
 
         plan = sub.plan
