@@ -430,7 +430,7 @@ CELERY_BEAT_SCHEDULE = {
 }
 
 # Financial reconciliation alerts
-FINANCE_ALERT_EMAILS = env.list('FINANCE_ALERT_EMAILS', default=['finance@yourdomain.com'])
+FINANCE_ALERT_EMAILS = env.list('FINANCE_ALERT_EMAILS', default=['finance@auronsuite.com'])
 STRIPE_WEBHOOK_SECRET = env('STRIPE_WEBHOOK_SECRET', default='')
 CRON_API_KEY = env('CRON_API_KEY', default='')
 
