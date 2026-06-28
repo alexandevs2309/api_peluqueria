@@ -118,6 +118,9 @@ secrets/
 *.dump
 backups/
 
+# Debug scripts locales
+scripts/debug/
+
 # Spyder project settings
 .spyderproject
 .spyproject

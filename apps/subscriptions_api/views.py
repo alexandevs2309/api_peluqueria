@@ -1141,6 +1141,11 @@ class RenewSubscriptionView(APIView):
                 'message': f'Proveedor no soportado: {payment_provider}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        if payment_provider == 'paypal' and paypal_action == 'create_order' and auto_renew:
+            return Response({
+                'error': 'Auto-renew is not supported for standard PayPal orders.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         if payment_provider == 'paypal' and paypal_action == 'capture_order':
             return self._capture_paypal_order(request, tenant, paypal_order_id)
             
