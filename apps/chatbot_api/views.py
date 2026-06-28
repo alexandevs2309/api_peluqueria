@@ -183,6 +183,12 @@ def get_local_fallback_response(prompt):
     return KNOWLEDGE_BASE[best_intent]
 
 
+from rest_framework.throttling import AnonRateThrottle
+
+class ChatBotThrottle(AnonRateThrottle):
+    scope = 'chatbot'
+
+
 class ChatBotView(APIView):
     """
     Endpoint público para interactuar con el chatbot inteligente de Auron Suite.
@@ -190,6 +196,7 @@ class ChatBotView(APIView):
     """
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [ChatBotThrottle]
 
     def post(self, request, *args, **kwargs):
         serializer = ChatPromptSerializer(data=request.data)

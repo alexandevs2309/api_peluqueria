@@ -181,6 +181,7 @@ if DEBUG:
         'password_reset': '5/hour',
         'public_booking': '200/hour',
         'mfa_verify': '10/min',
+        'chatbot': '200/hour',
     }
 else:
     # Production: Strict security limits
@@ -192,6 +193,7 @@ else:
         'password_reset': '3/hour',
         'public_booking': '100/hour',
         'mfa_verify': '5/min',
+        'chatbot': '20/hour',
     }
 
 REST_FRAMEWORK = {
@@ -225,7 +227,7 @@ STRIPE_PUBLISHABLE_KEY = env('STRIPE_PUBLISHABLE_KEY', default='')
 PAYPAL_CLIENT_ID = env('PAYPAL_CLIENT_ID', default='')
 PAYPAL_SECRET = env('PAYPAL_SECRET', default='')
 if not DEBUG:
-    PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX')
+    PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX', default=False)
 else:
     PAYPAL_SANDBOX = env.bool('PAYPAL_SANDBOX', default=True)
 PAYPAL_WEBHOOK_ID = env('PAYPAL_WEBHOOK_ID', default='')

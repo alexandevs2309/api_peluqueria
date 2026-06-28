@@ -207,6 +207,8 @@ def azul_verify(request):
     return Response(result)
 
 
+from apps.settings_api.integration_service import IntegrationService
+
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -216,6 +218,16 @@ def azul_webhook(request):
     Azul envía POST con datos de la transacción cuando cambia el estado.
     """
     logger.info('Azul webhook received from=%s', request.META.get('REMOTE_ADDR', 'unknown'))
+
+    # N-1: Verificar credenciales del webhook
+    auth1 = request.META.get('HTTP_AUTH1', '')
+    auth2 = request.META.get('HTTP_AUTH2', '')
+    system = IntegrationService.get_system_settings()
+
+    if auth1 != system.azul_auth1 or auth2 != system.azul_auth2:
+        logger.warning('Azul webhook: credenciales inválidas desde %s',
+                       request.META.get('REMOTE_ADDR', 'unknown'))
+        return JsonResponse({'error': 'Unauthorized'}, status=401)
 
     try:
         data = json.loads(request.body) if request.body else {}
