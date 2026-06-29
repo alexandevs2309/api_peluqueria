@@ -64,10 +64,12 @@ class IntegrationService:
 
     @staticmethod
     def is_sendgrid_enabled():
-        """Verificar si Email esta habilitado y configurado correctamente (sin conexión SMTP real)"""
+        """Verificar si Email (SendGrid/Resend) esta habilitado y configurado correctamente"""
         system_settings = IntegrationService.get_system_settings()
         has_env_smtp = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
-        if not system_settings.sendgrid_enabled and not has_env_smtp:
+        resend_api_key = os.getenv('RESEND_API_KEY')
+        
+        if not system_settings.sendgrid_enabled and not has_env_smtp and not resend_api_key:
             return False
 
         smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
@@ -79,7 +81,7 @@ class IntegrationService:
         api_key = os.getenv('SENDGRID_API_KEY')
         using_smtp = bool(smtp_host and smtp_port and smtp_username and smtp_password and from_email)
 
-        if not using_smtp and not api_key:
+        if not using_smtp and not api_key and not resend_api_key:
             return False
 
         if api_key and not api_key.startswith('SG.'):
@@ -222,65 +224,99 @@ class IntegrationService:
             AuditLogViewSet.log_integration_error('Twilio', f"Error enviando WhatsApp: {str(e)}")
             raise Exception(f"Error enviando WhatsApp: {str(e)}")
 
+
+
     @staticmethod
-    def send_email(to_email, subject, message, attachments=None):
-        """Enviar email si email/SMTP esta habilitado"""
-        if not IntegrationService.is_sendgrid_enabled():
-            raise Exception("Email no configurado")
+    def send_email(to_email, subject, html_message, text_message=None):
+        """
+        Enviar email transaccional usando Resend SMTP, SMTP propio, o fallback a consola.
 
-        try:
-            from django.core.mail import EmailMessage, get_connection
-            system_settings = IntegrationService.get_system_settings()
+        Prioridad:
+          1. RESEND_API_KEY  → Resend HTTP API
+          2. EMAIL_HOST/USER/PASSWORD  → SMTP genérico (incluye Resend SMTP)
+          3. DEBUG=True  → ConsoleEmailBackend (desarrollo)
+          4. Sin configuración  → excepción
+        """
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
 
-            smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
-            smtp_port = system_settings.smtp_port or int(os.getenv('EMAIL_PORT') or getattr(django_settings, 'EMAIL_PORT', 0) or 0)
-            smtp_username = IntegrationService._setting_or_env(system_settings.smtp_username, 'EMAIL_HOST_USER', 'EMAIL_HOST_USER')
-            smtp_password = IntegrationService._setting_or_env(system_settings.smtp_password, 'EMAIL_HOST_PASSWORD', 'EMAIL_HOST_PASSWORD')
-            from_email = (
-                IntegrationService._setting_or_env(system_settings.from_email, 'DEFAULT_FROM_EMAIL', 'DEFAULT_FROM_EMAIL')
-                or django_settings.DEFAULT_FROM_EMAIL
-            )
-            from_name = system_settings.from_name
+        resend_api_key = os.getenv('RESEND_API_KEY', '')
+        smtp_host = os.getenv('EMAIL_HOST', '')
+        smtp_port = int(os.getenv('EMAIL_PORT', 587) or 587)
+        smtp_user = os.getenv('EMAIL_HOST_USER', '')
+        smtp_password = os.getenv('EMAIL_HOST_PASSWORD', '')
+        use_tls = os.getenv('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 'yes')
+        from_email = os.getenv('DEFAULT_FROM_EMAIL', '') or os.getenv('SENDGRID_FROM_EMAIL', '')
 
-            use_ssl = smtp_port == 465
-            use_tls = smtp_port in (587, 25) and not use_ssl
-
-            from_header = from_email
-            if from_name and from_email:
-                from_header = f"{from_name} <{from_email}>"
-
-            connection = None
-            if smtp_host and smtp_port and smtp_username and smtp_password:
-                connection = get_connection(
-                    host=smtp_host,
-                    port=smtp_port,
-                    username=smtp_username,
-                    password=smtp_password,
-                    use_tls=use_tls,
-                    use_ssl=use_ssl,
-                    timeout=10,
+        # --- 1. Resend HTTP API ---
+        if resend_api_key and resend_api_key.startswith('re_'):
+            try:
+                import urllib.request
+                import json as _json
+                payload = _json.dumps({
+                    'from': from_email or 'noreply@auronsuite.com',
+                    'to': [to_email],
+                    'subject': subject,
+                    'html': html_message,
+                    **(({'text': text_message}) if text_message else {}),
+                }).encode()
+                req = urllib.request.Request(
+                    'https://api.resend.com/emails',
+                    data=payload,
+                    headers={
+                        'Authorization': f'Bearer {resend_api_key}',
+                        'Content-Type': 'application/json',
+                    },
+                    method='POST',
                 )
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    result = _json.loads(resp.read())
+                logger.info("Email sent via Resend API to %s id=%s", to_email, result.get('id'))
+                return result.get('id')
+            except Exception as e:
+                logger.error("Resend API error sending to %s: %s", to_email, str(e))
+                raise Exception(f"Error enviando email via Resend API: {str(e)}")
 
-            email = EmailMessage(
-                subject=subject,
-                body=message,
-                from_email=from_header,
-                to=[to_email],
-                connection=connection,
+        # --- 2. SMTP (Resend SMTP o cualquier otro) ---
+        if smtp_host and smtp_user and smtp_password:
+            try:
+                msg = MIMEMultipart('alternative')
+                msg['Subject'] = subject
+                msg['From'] = from_email or smtp_user
+                msg['To'] = to_email
+
+                if text_message:
+                    msg.attach(MIMEText(text_message, 'plain', 'utf-8'))
+                msg.attach(MIMEText(html_message, 'html', 'utf-8'))
+
+                if use_tls:
+                    server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                    server.starttls()
+                else:
+                    server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+
+                server.login(smtp_user, smtp_password)
+                server.sendmail(msg['From'], [to_email], msg.as_string())
+                server.quit()
+                logger.info("Email sent via SMTP to %s", to_email)
+                return True
+            except Exception as e:
+                logger.error("SMTP error sending to %s: %s", to_email, str(e))
+                raise Exception(f"Error enviando email via SMTP: {str(e)}")
+
+        # --- 3. Fallback consola en desarrollo ---
+        if getattr(django_settings, 'DEBUG', False):
+            logger.warning(
+                "EMAIL NOT CONFIGURED — printing to console\n"
+                "To: %s\nSubject: %s\n%s",
+                to_email, subject, text_message or html_message
             )
-            email.content_subtype = "html"
-
-            if attachments:
-                for filename, content, mimetype in attachments:
-                    email.attach(filename, content, mimetype)
-
-            email.send(fail_silently=False)
             return True
 
-        except Exception as e:
-            from apps.audit_api.views import AuditLogViewSet
-            AuditLogViewSet.log_integration_error('SendGrid', f"Error enviando email: {str(e)}")
-            raise Exception(f"Error enviando email: {str(e)}")
+        raise Exception(
+            "Email no configurado. Define RESEND_API_KEY o EMAIL_HOST/EMAIL_HOST_USER/EMAIL_HOST_PASSWORD en el entorno."
+        )
 
     @staticmethod
     def upload_to_s3(file, bucket, key):
