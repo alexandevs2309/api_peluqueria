@@ -250,7 +250,9 @@ class IntegrationService:
         from_email = os.getenv('DEFAULT_FROM_EMAIL', '') or os.getenv('SENDGRID_FROM_EMAIL', '')
 
         # --- 1. Resend HTTP API ---
-        if resend_api_key and resend_api_key.startswith('re_'):
+        # Si EMAIL_HOST ya es smtp.resend.com, usar SMTP directamente (evita doble uso de la key)
+        using_resend_smtp = smtp_host and 'resend.com' in smtp_host.lower()
+        if resend_api_key and resend_api_key.startswith('re_') and not using_resend_smtp:
             try:
                 import urllib.request
                 import json as _json
