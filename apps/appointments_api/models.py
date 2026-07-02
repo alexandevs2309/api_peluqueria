@@ -39,6 +39,7 @@ class Appointment(models.Model):
             models.Index(fields=['tenant', 'date_time']),
             models.Index(fields=['tenant', 'status']),
             models.Index(fields=['tenant', 'stylist', 'date_time']),
+            models.Index(fields=['tenant', 'branch', 'date_time']),
             models.Index(fields=['date_time']),
         ]
 

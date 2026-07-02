@@ -217,7 +217,7 @@ def test_list_appointments(api_client, client_factory, stylist, service_factory,
     service = service_factory.create(name='Corte Básico')
     EmployeeService.objects.create(employee=employee, service=service)
 
-    appointment_date = datetime(2025, 6, 12, tzinfo=dt_timezone.utc)
+    appointment_date = timezone.now() - timedelta(days=1)
     WorkSchedule.objects.filter(employee=employee).delete()
     weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
     WorkSchedule.objects.create(
@@ -226,13 +226,15 @@ def test_list_appointments(api_client, client_factory, stylist, service_factory,
         start_time=datetime(2025, 6, 12, 9, 0).time(),
         end_time=datetime(2025, 6, 12, 12, 0).time()
     )
+    apt1_time = appointment_date.replace(hour=10, minute=0, second=0, microsecond=0)
+    apt2_time = appointment_date.replace(hour=11, minute=0, second=0, microsecond=0)
     Appointment.objects.create(
         client=client_obj,
         stylist=stylist_user,
         service=service,
         role=stylist_role,
         tenant=test_tenant,
-        date_time=datetime(2025, 6, 12, 10, 0, tzinfo=dt_timezone.utc)
+        date_time=apt1_time
     )
     Appointment.objects.create(
         client=client_obj,
@@ -240,7 +242,7 @@ def test_list_appointments(api_client, client_factory, stylist, service_factory,
         service=None,
         role=stylist_role,
         tenant=test_tenant,
-        date_time=datetime(2025, 6, 12, 11, 0, tzinfo=dt_timezone.utc)
+        date_time=apt2_time
     )
     response = api_client.get(reverse('appointment-list'))
     assert response.status_code == status.HTTP_200_OK
@@ -351,12 +353,13 @@ def test_cross_tenant_cannot_list_other_appointments(authenticated_user, other_u
     stylist_user, employee = stylist
     client_obj = client_factory.create()
 
+    apt_time = timezone.now() - timedelta(days=1)
     appointment = Appointment.objects.create(
         client=client_obj,
         stylist=stylist_user,
         role=stylist_role,
         tenant=test_tenant,
-        date_time=datetime(2025, 6, 12, 10, 0, tzinfo=dt_timezone.utc)
+        date_time=apt_time
     )
 
     other_client = APIClient()
@@ -377,12 +380,13 @@ def test_cross_tenant_cannot_retrieve_other_appointment(authenticated_user, othe
     stylist_user, employee = stylist
     client_obj = client_factory.create()
 
+    apt_time = timezone.now() - timedelta(days=1)
     appointment = Appointment.objects.create(
         client=client_obj,
         stylist=stylist_user,
         role=stylist_role,
         tenant=test_tenant,
-        date_time=datetime(2025, 6, 12, 10, 0, tzinfo=dt_timezone.utc)
+        date_time=apt_time
     )
 
     other_client = APIClient()

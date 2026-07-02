@@ -32,8 +32,25 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         branch_id = self.request.query_params.get('branch')
         if branch_id:
             qs = qs.filter(branch_id=branch_id)
+        # Date range filter: default last 90 days for list, overridable via ?from=&to=
+        if self.action == 'list':
+            date_from = self.request.query_params.get('from')
+            date_to = self.request.query_params.get('to')
+            now = timezone.now()
+            if date_from:
+                try:
+                    qs = qs.filter(date_time__gte=datetime.fromisoformat(date_from))
+                except (ValueError, TypeError):
+                    pass
+            else:
+                qs = qs.filter(date_time__gte=now - timedelta(days=90))
+            if date_to:
+                try:
+                    qs = qs.filter(date_time__lte=datetime.fromisoformat(date_to))
+                except (ValueError, TypeError):
+                    pass
         if self.action in ('list', 'retrieve', 'today'):
-            qs = qs.select_related('client', 'stylist', 'service', 'role')
+            qs = qs.select_related('client', 'stylist', 'service', 'role', 'branch')
             qs = qs.prefetch_related(
                 Prefetch(
                     'stylist__employee_profile',
