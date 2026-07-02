@@ -7,7 +7,7 @@ Endpoints:
 """
 import os
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAdminUser
+from rest_framework.permissions import AllowAny, IsAdminUser
 from rest_framework.response import Response
 from django.core.cache import cache
 from django.db import connection
@@ -124,6 +124,7 @@ def health_check(request):
 
 
 @api_view(['GET'])
+@permission_classes([AllowAny])
 def public_health_check(request):
     """Health check público — sin autenticación.
     
