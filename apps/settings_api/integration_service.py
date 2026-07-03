@@ -247,9 +247,10 @@ class IntegrationService:
         # --- 1. Resend HTTP API (siempre primero — HTTPS puerto 443, más confiable que SMTP) ---
         using_resend_smtp = smtp_host and 'resend.com' in smtp_host.lower()
         resend_api_key = resend_api_key or (smtp_password if using_resend_smtp else '')
-        logger.info("[EMAIL][Path1] Resend API check: key_present=%s from=%s",
-                    bool(resend_api_key and resend_api_key.startswith('re_')), from_email or 'noreply@auronsuite.com')
-        if resend_api_key and resend_api_key.startswith('re_'):
+        logger.info("[EMAIL][Path1] Resend API check: key_present=%s key_starts_re=%s from=%s",
+                    bool(resend_api_key), bool(resend_api_key.startswith('re_')) if resend_api_key else False,
+                    from_email or 'noreply@auronsuite.com')
+        if resend_api_key:
             try:
                 import urllib.request
                 import urllib.error
