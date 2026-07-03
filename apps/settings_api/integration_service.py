@@ -245,6 +245,8 @@ class IntegrationService:
                     use_tls)
 
         # --- 1. Resend HTTP API (siempre primero — HTTPS puerto 443, más confiable que SMTP) ---
+        using_resend_smtp = smtp_host and 'resend.com' in smtp_host.lower()
+        resend_api_key = resend_api_key or (smtp_password if using_resend_smtp else '')
         logger.info("[EMAIL][Path1] Resend API check: key_present=%s from=%s",
                     bool(resend_api_key and resend_api_key.startswith('re_')), from_email or 'noreply@auronsuite.com')
         if resend_api_key and resend_api_key.startswith('re_'):
@@ -279,12 +281,9 @@ class IntegrationService:
                 return result.get('id')
             except urllib.error.HTTPError as e:
                 detail = e.read().decode(errors='replace')
-                logger.error("[EMAIL][Path1] Resend API HTTP error status=%s detail=%s to=%s",
-                             e.code, detail, to_email, exc_info=True)
-                raise Exception(f"Error enviando email via Resend API (HTTP {e.code}): {detail}")
+                logger.warning("[EMAIL][Path1] Resend API HTTP error status=%s detail=%s — falling through to SMTP", e.code, detail)
             except Exception as e:
-                logger.error("[EMAIL][Path1] Resend API error sending to=%s: %s", to_email, str(e), exc_info=True)
-                raise Exception(f"Error enviando email via Resend API: {str(e)}")
+                logger.warning("[EMAIL][Path1] Resend API error sending to=%s: %s — falling through to SMTP", to_email, str(e))
 
         # --- 2. SMTP (Resend SMTP o cualquier otro) ---
         logger.info("[EMAIL][Path2] SMTP check: host=%s port=%s user=%s has_pwd=%s tls=%s",
