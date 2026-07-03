@@ -114,11 +114,16 @@ class NotificationService:
                 except Exception as e:
                     logger.warning("Failed to generate ICS attachment: %s", str(e))
 
+            html_content = f"""
+            <html><body>
+                <h2>{notification.subject}</h2>
+                <p>{notification.message}</p>
+            </body></html>
+            """
             IntegrationService.send_email(
-                to_email=recipient,
-                subject=notification.subject,
-                message=notification.message,
-                attachments=attachments,
+                recipient,
+                notification.subject,
+                html_content,
             )
 
             NotificationLog.objects.create(

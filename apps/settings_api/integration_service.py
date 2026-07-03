@@ -64,29 +64,14 @@ class IntegrationService:
 
     @staticmethod
     def is_sendgrid_enabled():
-        """Verificar si Email (SendGrid/Resend) esta habilitado y configurado correctamente"""
-        system_settings = IntegrationService.get_system_settings()
-        has_env_smtp = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
-        resend_api_key = os.getenv('RESEND_API_KEY')
-        
-        if not system_settings.sendgrid_enabled and not has_env_smtp and not resend_api_key:
-            return False
+        """[DEPRECATED] Usar is_email_enabled()"""
+        return IntegrationService.is_email_enabled()
 
-        smtp_host = IntegrationService._setting_or_env(system_settings.smtp_host, 'EMAIL_HOST', 'EMAIL_HOST')
-        smtp_port = system_settings.smtp_port or int(os.getenv('EMAIL_PORT') or getattr(django_settings, 'EMAIL_PORT', 0) or 0)
-        smtp_username = IntegrationService._setting_or_env(system_settings.smtp_username, 'EMAIL_HOST_USER', 'EMAIL_HOST_USER')
-        smtp_password = IntegrationService._setting_or_env(system_settings.smtp_password, 'EMAIL_HOST_PASSWORD', 'EMAIL_HOST_PASSWORD')
-        from_email = IntegrationService._setting_or_env(system_settings.from_email, 'DEFAULT_FROM_EMAIL', 'DEFAULT_FROM_EMAIL')
-
-        api_key = os.getenv('SENDGRID_API_KEY')
-        using_smtp = bool(smtp_host and smtp_port and smtp_username and smtp_password and from_email)
-
-        if not using_smtp and not api_key and not resend_api_key:
-            return False
-
-        if api_key and not api_key.startswith('SG.'):
-            return False
-        return True
+    @staticmethod
+    def is_email_enabled():
+        has_smtp = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
+        has_resend = bool(os.getenv('RESEND_API_KEY', '').startswith('re_'))
+        return has_smtp or has_resend
 
     @staticmethod
     def is_aws_s3_enabled():
@@ -116,7 +101,7 @@ class IntegrationService:
             'stripe': IntegrationService.is_stripe_enabled(),
             'paypal': IntegrationService.is_paypal_enabled(),
             'twilio': IntegrationService.is_twilio_enabled(),
-            'sendgrid': IntegrationService.is_sendgrid_enabled(),
+            'email': IntegrationService.is_email_enabled(),
             'aws_s3': IntegrationService.is_aws_s3_enabled(),
             'cloudinary': IntegrationService.is_cloudinary_enabled(),
         }

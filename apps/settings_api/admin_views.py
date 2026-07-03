@@ -189,9 +189,9 @@ class SystemMonitorView(views.APIView):
     
     def _check_email(self):
         started = time.perf_counter()
-        configured = IntegrationService.is_sendgrid_enabled()
+        configured = IntegrationService.is_email_enabled()
         if configured:
-            recent_error = self._get_recent_integration_error('SENDGRID_ERROR')
+            recent_error = self._get_recent_integration_error('EMAIL_ERROR')
             if recent_error:
                 return {
                     'status': 'degraded',
@@ -555,25 +555,17 @@ def test_integration_service(request):
 
 def _test_email_service(request):
     try:
-        if not IntegrationService.is_sendgrid_enabled():
-            return response.Response({
-                'success': False,
-                'message': 'SendGrid no está configurado'
-            })
-        
-        # Test real de email
         IntegrationService.send_email(
-            'test@auronsuite.com',
+            request.user.email,
             'Test Email - Auron Suite',
             'Email service is working correctly.'
         )
-        
         return response.Response({
             'success': True,
             'message': 'Email de prueba enviado correctamente'
         })
     except Exception as e:
-        AuditLogViewSet.log_integration_error('SendGrid', str(e), request=request)
+        AuditLogViewSet.log_integration_error('EMAIL_ERROR', str(e), request=request)
         return response.Response({
             'success': False,
             'message': f'Error en email: {str(e)}'

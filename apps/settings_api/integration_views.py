@@ -40,21 +40,18 @@ class IntegrationTestView(views.APIView):
                 return response.Response({'success': False, 'message': 'Twilio no esta habilitado'})
 
             if integration_type in ('sendgrid', 'email'):
-                if not IntegrationService.is_sendgrid_enabled():
-                    return response.Response({'success': False, 'message': 'Email no configurado'})
-
                 try:
                     system_settings = IntegrationService.get_system_settings()
-                    test_recipient = system_settings.support_email or request.user.email
+                    test_recipient = request.data.get('test_email') or system_settings.support_email or request.user.email
                     IntegrationService.send_email(
                         test_recipient,
-                        'Prueba de Configuracion - Auron Suite',
+                        'Prueba de Integracion - Auron Suite',
                         'Si recibes este email, el correo esta configurado correctamente.'
                     )
                     return response.Response({'success': True, 'message': f'Email de prueba enviado a {test_recipient}'})
                 except Exception as e:
-                    AuditLogViewSet.log_integration_error('SendGrid', str(e), request=request)
-                    return response.Response({'success': False, 'message': f'Error en SendGrid: {str(e)}'})
+                    AuditLogViewSet.log_integration_error('EMAIL_ERROR', str(e), request=request)
+                    return response.Response({'success': False, 'message': f'Error al enviar email: {str(e)}'})
 
             if integration_type in ('stripe', 'payments'):
                 if not IntegrationService.is_stripe_enabled():
