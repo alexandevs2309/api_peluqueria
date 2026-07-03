@@ -248,13 +248,26 @@ class IntegrationService:
         smtp_password = os.getenv('EMAIL_HOST_PASSWORD', '')
         use_tls = os.getenv('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 'yes')
         from_email = os.getenv('DEFAULT_FROM_EMAIL', '') or os.getenv('SENDGRID_FROM_EMAIL', '')
+        is_debug = getattr(django_settings, 'DEBUG', False)
+        email_backend = getattr(django_settings, 'EMAIL_BACKEND', 'NOT SET')
+        logger.info("[EMAIL][SEND] entry to=%s subj=%s debug=%s backend=%s", to_email, subject, is_debug, email_backend)
+        logger.info("[EMAIL][SEND] env: DEFAULT_FROM_EMAIL=%s RESEND_API_KEY=%s EMAIL_HOST=%s EMAIL_HOST_USER=%s EMAIL_PORT=%s use_tls=%s",
+                    from_email or 'NOT SET',
+                    'PRESENT' if resend_api_key else 'NOT SET',
+                    smtp_host or 'NOT SET',
+                    smtp_user or 'NOT SET',
+                    smtp_port,
+                    use_tls)
 
         # --- 1. Resend HTTP API ---
         # Si EMAIL_HOST ya es smtp.resend.com, usar SMTP directamente (evita doble uso de la key)
         using_resend_smtp = smtp_host and 'resend.com' in smtp_host.lower()
+        logger.info("[EMAIL][Path1] Resend API check: key_present=%s using_resend_smtp=%s from=%s",
+                    bool(resend_api_key and resend_api_key.startswith('re_')), using_resend_smtp, from_email or 'noreply@auronsuite.com')
         if resend_api_key and resend_api_key.startswith('re_') and not using_resend_smtp:
             try:
                 import urllib.request
+                import urllib.error
                 import json as _json
                 payload = _json.dumps({
                     'from': from_email or 'noreply@auronsuite.com',
@@ -263,6 +276,8 @@ class IntegrationService:
                     'html': html_message,
                     **(({'text': text_message}) if text_message else {}),
                 }).encode()
+                logger.info("[EMAIL][Path1] POST https://api.resend.com/emails from=%s to=%s payload_len=%d",
+                            from_email or 'noreply@auronsuite.com', to_email, len(payload))
                 req = urllib.request.Request(
                     'https://api.resend.com/emails',
                     data=payload,
@@ -273,14 +288,24 @@ class IntegrationService:
                     method='POST',
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
-                    result = _json.loads(resp.read())
-                logger.info("Email sent via Resend API to %s id=%s", to_email, result.get('id'))
+                    raw = resp.read()
+                    status = resp.status
+                    result = _json.loads(raw)
+                logger.info("[EMAIL][Path1] Resend API success HTTP=%s body=%s id=%s to=%s",
+                            status, result, result.get('id'), to_email)
                 return result.get('id')
+            except urllib.error.HTTPError as e:
+                detail = e.read().decode(errors='replace')
+                logger.error("[EMAIL][Path1] Resend API HTTP error status=%s detail=%s to=%s",
+                             e.code, detail, to_email, exc_info=True)
+                raise Exception(f"Error enviando email via Resend API (HTTP {e.code}): {detail}")
             except Exception as e:
-                logger.error("Resend API error sending to %s: %s", to_email, str(e))
+                logger.error("[EMAIL][Path1] Resend API error sending to=%s: %s", to_email, str(e), exc_info=True)
                 raise Exception(f"Error enviando email via Resend API: {str(e)}")
 
         # --- 2. SMTP (Resend SMTP o cualquier otro) ---
+        logger.info("[EMAIL][Path2] SMTP check: host=%s port=%s user=%s has_pwd=%s tls=%s",
+                    smtp_host or 'NOT SET', smtp_port, smtp_user or 'NOT SET', bool(smtp_password), use_tls)
         if smtp_host and smtp_user and smtp_password:
             try:
                 msg = MIMEMultipart('alternative')
@@ -294,21 +319,31 @@ class IntegrationService:
 
                 if use_tls:
                     server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                    server.set_debuglevel(1)
                     server.starttls()
                 else:
                     server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+                    server.set_debuglevel(1)
 
                 server.login(smtp_user, smtp_password)
-                server.sendmail(msg['From'], [to_email], msg.as_string())
+                failed = server.sendmail(msg['From'], [to_email], msg.as_string())
+                logger.info("[EMAIL][Path2] SMTP sendmail failed_recipients=%s (empty=success) to=%s", failed, to_email)
                 server.quit()
-                logger.info("Email sent via SMTP to %s", to_email)
+                logger.info("[EMAIL][Path2] Email sent via SMTP to=%s from=%s", to_email, from_email or smtp_user)
                 return True
+            except smtplib.SMTPAuthenticationError:
+                logger.error("[EMAIL][Path2] SMTP AUTH FAILED user=%s host=%s", smtp_user, smtp_host)
+                raise Exception("Error enviando email via SMTP: SMTPAuthenticationError. Check EMAIL_HOST_USER/EMAIL_HOST_PASSWORD.")
+            except smtplib.SMTPException as e:
+                logger.error("[EMAIL][Path2] SMTP protocol error to=%s: %s", to_email, str(e), exc_info=True)
+                raise Exception(f"Error enviando email via SMTP: {str(e)}")
             except Exception as e:
-                logger.error("SMTP error sending to %s: %s", to_email, str(e))
+                logger.error("[EMAIL][Path2] SMTP error sending to=%s: %s", to_email, str(e), exc_info=True)
                 raise Exception(f"Error enviando email via SMTP: {str(e)}")
 
         # --- 3. Fallback consola en desarrollo ---
-        if getattr(django_settings, 'DEBUG', False):
+        if is_debug:
+            logger.warning("[EMAIL][Path3] Console fallback (DEBUG=True) to=%s from=%s", to_email, from_email or smtp_user)
             logger.warning(
                 "EMAIL NOT CONFIGURED — printing to console\n"
                 "To: %s\nSubject: %s\n%s",
@@ -316,6 +351,7 @@ class IntegrationService:
             )
             return True
 
+        logger.error("[EMAIL][SEND] ALL PATHS EXHAUSTED to=%s from=%s", to_email, from_email or smtp_user)
         raise Exception(
             "Email no configurado. Define RESEND_API_KEY o EMAIL_HOST/EMAIL_HOST_USER/EMAIL_HOST_PASSWORD en el entorno."
         )
