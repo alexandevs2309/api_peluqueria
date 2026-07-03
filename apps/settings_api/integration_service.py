@@ -244,12 +244,10 @@ class IntegrationService:
                     smtp_port,
                     use_tls)
 
-        # --- 1. Resend HTTP API ---
-        # Si EMAIL_HOST ya es smtp.resend.com, usar SMTP directamente (evita doble uso de la key)
-        using_resend_smtp = smtp_host and 'resend.com' in smtp_host.lower()
-        logger.info("[EMAIL][Path1] Resend API check: key_present=%s using_resend_smtp=%s from=%s",
-                    bool(resend_api_key and resend_api_key.startswith('re_')), using_resend_smtp, from_email or 'noreply@auronsuite.com')
-        if resend_api_key and resend_api_key.startswith('re_') and not using_resend_smtp:
+        # --- 1. Resend HTTP API (siempre primero — HTTPS puerto 443, más confiable que SMTP) ---
+        logger.info("[EMAIL][Path1] Resend API check: key_present=%s from=%s",
+                    bool(resend_api_key and resend_api_key.startswith('re_')), from_email or 'noreply@auronsuite.com')
+        if resend_api_key and resend_api_key.startswith('re_'):
             try:
                 import urllib.request
                 import urllib.error
