@@ -274,6 +274,7 @@ class IntegrationService:
                     headers={
                         'Authorization': f'Bearer {resend_api_key}',
                         'Content-Type': 'application/json',
+                        'User-Agent': 'AuronSuite/1.0',
                     },
                     method='POST',
                 )
