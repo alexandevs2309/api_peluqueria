@@ -9,6 +9,7 @@ from rest_framework.response import Response
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.core.tenant_permissions import TenantPermissionByAction, resolve_request_tenant, _check_permission_in_db
 from apps.auth_api.tasks import send_email_async
+from apps.emails.service import EmailRenderer
 
 from .models import SupportTicket
 from .serializers import SupportTicketSerializer
@@ -101,7 +102,7 @@ class SupportTicketViewSet(TenantScopedViewSet):
             support_email = getattr(settings, 'SUPPORT_EMAIL', 'soporte@auronsuite.com')
 
             alert_subject = f'[Soporte] Nuevo ticket: {ticket.subject}'
-            alert_message = (
+            alert_text = (
                 f"Se ha creado un nuevo ticket de soporte.\n\n"
                 f"Tenant: {tenant.name if tenant else 'N/A'}\n"
                 f"Usuario: {ticket.created_by.get_full_name()} ({ticket.created_by.email})\n"
@@ -110,14 +111,19 @@ class SupportTicketViewSet(TenantScopedViewSet):
                 f"Descripción: {ticket.description}\n\n"
                 f"Ingresa a la plataforma para gestionar este ticket."
             )
-            send_email_async.delay(
-                alert_subject, alert_message, '',
-                [support_email],
-                html_message=alert_message.replace('\n', '<br>')
-            )
+            alert_html = EmailRenderer.render('support_new_ticket.html', {
+                'title': 'Nuevo ticket de soporte',
+                'tenant_name': tenant.name if tenant else 'N/A',
+                'user_name': ticket.created_by.get_full_name(),
+                'user_email': ticket.created_by.email,
+                'priority': ticket.get_priority_display(),
+                'subject': ticket.subject,
+                'description': ticket.description,
+            })
+            send_email_async.delay(alert_subject, alert_text, '', [support_email], html_message=alert_html)
 
             ack_subject = f'Recibimos tu ticket: {ticket.subject}'
-            ack_message = (
+            ack_text = (
                 f"Hola {ticket.created_by.get_full_name()},\n\n"
                 f"Hemos recibido tu ticket de soporte y será revisado a la brevedad.\n\n"
                 f"Asunto: {ticket.subject}\n"
@@ -125,27 +131,31 @@ class SupportTicketViewSet(TenantScopedViewSet):
                 f"Prioridad: {ticket.get_priority_display()}\n\n"
                 f"Te notificaremos cuando haya una respuesta."
             )
-            send_email_async.delay(
-                ack_subject, ack_message, '',
-                [ticket.created_by.email],
-                html_message=ack_message.replace('\n', '<br>')
-            )
+            ack_html = EmailRenderer.render('support_ticket_received.html', {
+                'title': 'Recibimos tu solicitud',
+                'user_full_name': ticket.created_by.get_full_name(),
+                'subject': ticket.subject,
+                'description': ticket.description,
+                'priority': ticket.get_priority_display(),
+            })
+            send_email_async.delay(ack_subject, ack_text, '', [ticket.created_by.email], html_message=ack_html)
         except Exception as e:
             logger.error("Error sending ticket notification: %s", str(e))
 
     def _notify_status_change(self, ticket):
         try:
             subject = f'Ticket actualizado: {ticket.subject} — {ticket.get_status_display()}'
-            message = (
+            text = (
                 f"El estado de tu ticket ha cambiado.\n\n"
                 f"Asunto: {ticket.subject}\n"
                 f"Estado: {ticket.get_status_display()}\n\n"
                 f"Ver ticket en el panel de soporte."
             )
-            send_email_async.delay(
-                subject, message, '',
-                [ticket.created_by.email],
-                html_message=message.replace('\n', '<br>')
-            )
+            html = EmailRenderer.render('support_status_changed.html', {
+                'title': 'Ticket actualizado',
+                'subject': ticket.subject,
+                'status': ticket.get_status_display(),
+            })
+            send_email_async.delay(subject, text, '', [ticket.created_by.email], html_message=html)
         except Exception as e:
             logger.error("Error sending status notification: %s", str(e))

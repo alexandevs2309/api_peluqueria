@@ -1,10 +1,13 @@
 import os
-# Configure dummy email settings so IntegrationService considers email enabled during testing
-os.environ.setdefault('EMAIL_HOST', 'localhost')
-os.environ.setdefault('EMAIL_HOST_USER', 'test_user')
-os.environ.setdefault('EMAIL_HOST_PASSWORD', 'test_password')
-os.environ.setdefault('DEFAULT_FROM_EMAIL', 'webmaster@localhost')
-os.environ.setdefault('SENDGRID_API_KEY', 'SG.test_key_placeholder')
+# Ensure SMTP env vars are cleared so IntegrationService falls back to console in tests
+os.environ.pop('RESEND_API_KEY', None)
+os.environ.pop('EMAIL_HOST', None)
+os.environ.pop('EMAIL_HOST_USER', None)
+os.environ.pop('EMAIL_HOST_PASSWORD', None)
+os.environ.pop('EMAIL_PORT', None)
+os.environ.pop('EMAIL_USE_TLS', None)
+os.environ.pop('DEFAULT_FROM_EMAIL', None)
+os.environ.pop('SENDGRID_API_KEY', None)
 
 import django
 from django.conf import settings

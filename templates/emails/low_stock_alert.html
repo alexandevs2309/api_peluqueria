@@ -1,0 +1,11 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 12px;">El producto <strong>{{ product_name }}</strong> tiene stock bajo.</p>
+<div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;margin:16px 0;font-size:14px;">
+  <p style="margin:4px 0;"><strong>Producto:</strong> {{ product_name }}</p>
+  {% if sku %}<p style="margin:4px 0;"><strong>SKU:</strong> {{ sku }}</p>{% endif %}
+  <p style="margin:4px 0;"><strong>Stock actual:</strong> {{ current_stock }}</p>
+  <p style="margin:4px 0;"><strong>Stock mínimo:</strong> {{ min_stock }}</p>
+</div>
+<p style="margin:0;">Por favor, reabastecer lo antes posible.</p>
+{% endblock %}

@@ -1,5 +1,6 @@
 import json
 import logging
+from apps.emails.service import EmailRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -128,10 +129,14 @@ def appointment_created(sender, instance, created, **kwargs):
                         logger.warning("Failed to send confirmation email to %s: %s", client.email, str(e))
                 except NotificationTemplate.DoesNotExist:
                     try:
+                        fallback_html = EmailRenderer.render('trial_content.html', {
+                            'title': 'Confirmación de cita',
+                            'content': f"Hola {client_name}, tu cita fue agendada para el {email_context['appointment_date']} a las {email_context['appointment_time']} con {email_context['stylist_name']}.",
+                        })
                         IntegrationService.send_email(
                             to_email=client.email,
                             subject="Confirmación de cita",
-                            message=f"Hola {client_name}, tu cita fue agendada para el {email_context['appointment_date']} a las {email_context['appointment_time']} con {email_context['stylist_name']}.",
+                            message=fallback_html,
                             attachments=attachments,
                         )
                     except Exception as e:

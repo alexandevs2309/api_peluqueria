@@ -3,6 +3,7 @@ from django.dispatch import receiver
 from django.db import models
 from .models import Product, StockMovement
 from django.conf import settings
+from apps.emails.service import EmailRenderer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -47,18 +48,19 @@ def create_low_stock_alert(product):
     if hasattr(settings, 'ADMIN_EMAIL') and settings.ADMIN_EMAIL:
         try:
             from apps.auth_api.tasks import send_email_async
+            low_stock_html = EmailRenderer.render('low_stock_alert.html', {
+                'title': f'Alerta de Stock Bajo - {product.name}',
+                'product_name': product.name,
+                'sku': product.sku or '',
+                'current_stock': product.stock,
+                'min_stock': product.min_stock,
+            })
             send_email_async.delay(
                 subject=f'Alerta de Stock Bajo - {product.name}',
-                message=f'''
-                El producto {product.name} (SKU: {product.sku}) tiene stock bajo.
-                
-                Stock actual: {product.stock}
-                Stock mínimo: {product.min_stock}
-                
-                Por favor, reabastecer lo antes posible.
-                ''',
+                message=f'El producto {product.name} (SKU: {product.sku}) tiene stock bajo. Stock actual: {product.stock}, Mínimo: {product.min_stock}.',
                 from_email='',
                 recipient_list=[settings.ADMIN_EMAIL] if isinstance(settings.ADMIN_EMAIL, str) else settings.ADMIN_EMAIL,
+                html_message=low_stock_html,
             )
         except Exception as e:
             logger.exception("Error sending low stock alert email product_id=%s", product.id)

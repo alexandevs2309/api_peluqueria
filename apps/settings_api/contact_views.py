@@ -3,6 +3,7 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.conf import settings
+from apps.emails.service import EmailRenderer
 import logging
 
 logger = logging.getLogger(__name__)
@@ -28,42 +29,36 @@ def demo_request(request):
             from apps.auth_api.tasks import send_email_async
             support_email = getattr(settings, 'SUPPORT_EMAIL', None)
             if support_email:
+                inquiry_html = EmailRenderer.render('demo_inquiry.html', {
+                    'title': 'Nueva solicitud de video demo',
+                    'contact_name': name,
+                    'email': email,
+                    'phone': data.get('phone', 'No proporcionado'),
+                    'business_type': data.get('businessType', 'No especificado'),
+                    'demo_message': data.get('message', 'Sin mensaje adicional'),
+                })
                 send_email_async.delay(
                     subject=f'Nueva solicitud de video demo - {name}',
-                    message=f"""
-                    Nueva solicitud de video demo personalizado:
-                    
-                    Nombre: {name}
-                    Email: {email}
-                    Teléfono: {data.get('phone', 'No proporcionado')}
-                    Tipo de negocio: {data.get('businessType', 'No especificado')}
-                    Mensaje: {data.get('message', 'Sin mensaje adicional')}
-                    """,
+                    message=f'Nueva solicitud de demo de {name} ({email})',
                     from_email='',
                     recipient_list=[support_email] if isinstance(support_email, str) else support_email,
+                    html_message=inquiry_html,
                 )
         except Exception as e:
             logger.error(f"Error notifying support about demo request: {str(e)}")
         
         # Acuse al usuario
         try:
+            ack_html = EmailRenderer.render('demo_ack.html', {
+                'title': 'Recibimos tu solicitud',
+                'contact_name': name if name != 'Lead sin nombre' else '',
+            })
             send_email_async.delay(
                 subject='Recibimos tu solicitud de video demo - Auron Suite',
-                message=f"""
-                Hola{', ' + name if name != 'Lead sin nombre' else ''}
-                
-                Gracias por tu interés en Auron Suite. Hemos recibido tu solicitud de video demo personalizado.
-                
-                En las próximas horas uno de nuestros asesores te enviará un video mostrando cómo Auron Suite puede ayudar a tu negocio.
-                
-                Mientras tanto, puedes visitar nuestra página para más información:
-                https://auronsuite.com
-                
-                Saludos,
-                Equipo de Auron Suite
-                """,
+                message='Gracias por tu interés en Auron Suite. Hemos recibido tu solicitud de video demo personalizado.',
                 from_email='',
                 recipient_list=[email],
+                html_message=ack_html,
             )
         except Exception as e:
             logger.error(f"Error sending demo confirmation to user: {str(e)}")

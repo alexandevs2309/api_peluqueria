@@ -19,6 +19,7 @@ from apps.auth_api.models import User
 from apps.tenants_api.utils import get_active_tenant
 from apps.billing_api.models import Invoice, PaymentAttempt
 from apps.billing_api.reconciliation_models import ProcessedPayPalEvent
+from apps.emails.service import EmailRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -369,21 +370,14 @@ def handle_capture_refunded(resource):
                 f"Por favor, contacta a soporte para regularizar tu situación.\n\n"
                 f"El equipo de AuronSuite"
             )
-            html_body = (
-                f"<h2>Reembolso/Chargeback recibido</h2>"
-                f"<p>Hola {user.full_name or user.email},</p>"
-                f"<p>Se ha procesado un reembolso o chargeback en tu cuenta de PayPal "
-                f"por <strong>{amount} {currency}</strong> (Factura #{invoice.id}).</p>"
-                f"<p>Como resultado, tu suscripción ha sido <strong>suspendida</strong>.</p>"
-                f"<p>Por favor, contacta a <a href='mailto:soporte@auronsuite.com'>soporte@auronsuite.com</a> "
-                f"para regularizar tu situación.</p>"
-                f"<p>El equipo de AuronSuite</p>"
-            )
-            send_email_async.delay(
-                subject, text_body, '',
-                [user.email],
-                html_message=html_body,
-            )
+            html_body = EmailRenderer.render('refund_notification.html', {
+                'title': 'Reembolso/Chargeback recibido',
+                'user_name': user.full_name or user.email,
+                'amount': amount,
+                'currency': currency,
+                'invoice_id': invoice.id,
+            })
+            send_email_async.delay(subject, text_body, '', [user.email], html_message=html_body)
             logger.info("Refund notification email sent to %s for invoice %s", user.email, invoice.id)
         except Exception as exc:
             logger.exception("Failed to send refund notification email: %s", exc)

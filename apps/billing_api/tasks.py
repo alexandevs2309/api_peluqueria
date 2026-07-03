@@ -239,9 +239,23 @@ def send_reconciliation_alert(reconciliation):
     finance_emails = getattr(settings, 'FINANCE_ALERT_EMAILS', None)
     if finance_emails:
         from apps.auth_api.tasks import send_email_async
+        from apps.emails.service import EmailRenderer
+        rec_html = EmailRenderer.render('reconciliation_alert.html', {
+            'title': 'Alerta de conciliación financiera',
+            'date': reconciliation.started_at.date() if reconciliation.started_at else 'N/A',
+            'status': reconciliation.status,
+            'discrepancies': reconciliation.discrepancies_found,
+            'critical': critical_alerts,
+            'high': high_alerts,
+            'missing_db': len(reconciliation.missing_in_db),
+            'missing_stripe': len(reconciliation.missing_in_stripe),
+            'duplicates': len(reconciliation.duplicates),
+            'reconciliation_id': reconciliation.id,
+        })
         send_email_async.delay(
             subject='[CRITICAL] Financial Reconciliation Alert',
             message=message,
             from_email='',
             recipient_list=finance_emails if isinstance(finance_emails, list) else [finance_emails],
+            html_message=rec_html,
         )

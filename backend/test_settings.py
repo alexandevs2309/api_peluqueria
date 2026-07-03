@@ -1,9 +1,21 @@
 import os
 import sys
+from pathlib import Path
 
 os.environ.setdefault('DJANGO_ALLOW_ASYNC_UNSAFE', 'true')
 
+# Clear SMTP/email env vars so IntegrationService falls through to debug console
+os.environ.pop('RESEND_API_KEY', None)
+os.environ.pop('EMAIL_HOST', None)
+os.environ.pop('EMAIL_HOST_USER', None)
+os.environ.pop('EMAIL_HOST_PASSWORD', None)
+os.environ.pop('EMAIL_PORT', None)
+os.environ.pop('EMAIL_USE_TLS', None)
+os.environ.pop('DEFAULT_FROM_EMAIL', None)
+
 SECRET_KEY = 'test-secret-key-not-for-production'
+BASE_DIR = Path(__file__).resolve().parent.parent
+DEBUG = True
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -70,7 +82,7 @@ ROOT_URLCONF = 'backend.urls'
 USE_TZ = True
 LANGUAGE_CODE = 'es'
 STATIC_URL = '/static/'
-TEMPLATES = [{'BACKEND': 'django.template.backends.django.DjangoTemplates', 'DIRS': [], 'APP_DIRS': True, 'OPTIONS': {'context_processors': ['django.template.context_processors.debug', 'django.template.context_processors.request', 'django.contrib.auth.context_processors.auth', 'django.contrib.messages.context_processors.messages']}}]
+TEMPLATES = [{'BACKEND': 'django.template.backends.django.DjangoTemplates', 'DIRS': [BASE_DIR / 'templates'], 'APP_DIRS': True, 'OPTIONS': {'context_processors': ['django.template.context_processors.debug', 'django.template.context_processors.request', 'django.contrib.auth.context_processors.auth', 'django.contrib.messages.context_processors.messages']}}]
 AUTH_USER_MODEL = 'auth_api.User'
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
 STORAGES = {'default': {'BACKEND': 'django.core.files.storage.InMemoryStorage'}, 'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'}}

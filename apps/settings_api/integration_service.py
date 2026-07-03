@@ -69,9 +69,11 @@ class IntegrationService:
 
     @staticmethod
     def is_email_enabled():
-        has_smtp = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
+        system_settings = IntegrationService.get_system_settings()
+        has_smtp_db = bool(system_settings.smtp_host and system_settings.smtp_username and system_settings.smtp_password)
+        has_smtp_env = bool(os.getenv('EMAIL_HOST') and os.getenv('EMAIL_HOST_USER') and os.getenv('EMAIL_HOST_PASSWORD'))
         has_resend = bool(os.getenv('RESEND_API_KEY', '').startswith('re_'))
-        return has_smtp or has_resend
+        return has_smtp_db or has_smtp_env or has_resend
 
     @staticmethod
     def is_aws_s3_enabled():
@@ -226,13 +228,15 @@ class IntegrationService:
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
 
+        system_settings = IntegrationService.get_system_settings()
+
         resend_api_key = os.getenv('RESEND_API_KEY', '')
-        smtp_host = os.getenv('EMAIL_HOST', '')
-        smtp_port = int(os.getenv('EMAIL_PORT', 587) or 587)
-        smtp_user = os.getenv('EMAIL_HOST_USER', '')
-        smtp_password = os.getenv('EMAIL_HOST_PASSWORD', '')
+        smtp_host = os.getenv('EMAIL_HOST') or system_settings.smtp_host
+        smtp_port = int(os.getenv('EMAIL_PORT') or system_settings.smtp_port or 587)
+        smtp_user = os.getenv('EMAIL_HOST_USER') or system_settings.smtp_username
+        smtp_password = os.getenv('EMAIL_HOST_PASSWORD') or system_settings.smtp_password
         use_tls = os.getenv('EMAIL_USE_TLS', 'True').lower() in ('true', '1', 'yes')
-        from_email = os.getenv('DEFAULT_FROM_EMAIL', '') or os.getenv('SENDGRID_FROM_EMAIL', '')
+        from_email = os.getenv('DEFAULT_FROM_EMAIL') or system_settings.from_email or os.getenv('SENDGRID_FROM_EMAIL', '')
         is_debug = getattr(django_settings, 'DEBUG', False)
         email_backend = getattr(django_settings, 'EMAIL_BACKEND', 'NOT SET')
         logger.info("[EMAIL][SEND] entry to=%s subj=%s debug=%s backend=%s", to_email, subject, is_debug, email_backend)

@@ -3,6 +3,7 @@ from django.conf import settings
 from django.template import Template, Context
 from django.utils import timezone
 from django.db.models import Q
+from apps.emails.service import EmailRenderer
 from .models import Notification, NotificationLog, NotificationPreference
 
 logger = logging.getLogger(__name__)
@@ -114,16 +115,14 @@ class NotificationService:
                 except Exception as e:
                     logger.warning("Failed to generate ICS attachment: %s", str(e))
 
-            html_content = f"""
-            <html><body>
-                <h2>{notification.subject}</h2>
-                <p>{notification.message}</p>
-            </body></html>
-            """
+            email_html = EmailRenderer.render('notification_content.html', {
+                'title': notification.subject,
+                'content': notification.message,
+            })
             IntegrationService.send_email(
                 recipient,
                 notification.subject,
-                html_content,
+                email_html,
             )
 
             NotificationLog.objects.create(

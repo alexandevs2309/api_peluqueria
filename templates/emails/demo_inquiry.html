@@ -1,0 +1,11 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 12px;">Nueva solicitud de video demo personalizado:</p>
+<div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;font-size:14px;">
+  <p style="margin:4px 0;"><strong>Nombre:</strong> {{ contact_name }}</p>
+  <p style="margin:4px 0;"><strong>Email:</strong> {{ email }}</p>
+  <p style="margin:4px 0;"><strong>Teléfono:</strong> {{ phone }}</p>
+  <p style="margin:4px 0;"><strong>Tipo de negocio:</strong> {{ business_type }}</p>
+  <p style="margin:4px 0;"><strong>Mensaje:</strong> {{ demo_message }}</p>
+</div>
+{% endblock %}
