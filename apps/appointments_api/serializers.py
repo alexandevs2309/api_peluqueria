@@ -83,6 +83,11 @@ class AppointmentSerializer(serializers.ModelSerializer):
         # Usuario sin tenant no puede crear appointments
         if not tenant:
             raise serializers.ValidationError(_('User without assigned tenant'))
+
+        # Imponer límite de citas del plan solo al CREAR una cita nueva
+        if self.instance is None:
+            from apps.subscriptions_api.validators import SubscriptionLimitValidator
+            SubscriptionLimitValidator.validate_appointment_limit(request.user, tenant=tenant)
         
         # Validar client pertenece al tenant
         client = attrs.get('client')

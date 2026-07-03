@@ -920,9 +920,6 @@ class UserPermission(TenantPermissionByAction):
         if not action:
             return False
 
-        if action in ['update', 'partial_update']:
-            return True
-
         return super().has_permission(request, view)
 
     def has_object_permission(self, request, view, obj):

@@ -89,6 +89,45 @@ def _get_next_upgrade_plan(tenant, capacity_field, current_limit):
 def _apply_auto_upgrade(tenant, next_plan, changed_by, trigger, current_count, previous_limit):
     from apps.subscriptions_api.models import UserSubscription, Subscription, SubscriptionAuditLog
     from apps.audit_api.models import AuditLog
+    from rest_framework.exceptions import ValidationError
+
+    active_subscription = Subscription.objects.filter(tenant=tenant, is_active=True).first()
+
+    # Si no tiene suscripción activa o no posee un stripe_subscription_id, denegar el upgrade gratuito
+    if not active_subscription or not active_subscription.stripe_subscription_id:
+        raise ValidationError(
+            "Límite alcanzado. No se pudo realizar el auto-upgrade automático porque no cuenta con una suscripción de Stripe activa. "
+            "Por favor, actualice su plan manualmente en el panel de facturación."
+        )
+
+    # Determinar el precio destino de Stripe
+    if active_subscription.billing_interval == 'year':
+        new_price_id = next_plan.stripe_annual_price_id or next_plan.stripe_price_id
+    else:
+        new_price_id = next_plan.stripe_price_id or next_plan.stripe_annual_price_id
+
+    if not new_price_id:
+        raise ValidationError("El plan de destino no tiene un ID de precio de Stripe configurado.")
+
+    # Intentar actualizar en Stripe con cobro de prorrateo inmediato
+    import stripe
+    from django.conf import settings
+    stripe.api_key = settings.STRIPE_SECRET_KEY
+    try:
+        # Obtener los items de la suscripción actual de Stripe para cambiar el precio
+        stripe_sub = stripe.Subscription.retrieve(active_subscription.stripe_subscription_id)
+        subscription_item_id = stripe_sub['items']['data'][0]['id']
+        
+        stripe.Subscription.modify(
+            active_subscription.stripe_subscription_id,
+            proration_behavior='always_invoice',
+            items=[{
+                'id': subscription_item_id,
+                'price': new_price_id,
+            }]
+        )
+    except stripe.error.StripeError as e:
+        raise ValidationError(f"Error al actualizar la suscripción en Stripe: {str(e)}")
 
     current_plan = getattr(tenant, 'subscription_plan', None)
     old_plan_name = getattr(current_plan, 'name', None) or getattr(tenant, 'plan_type', '') or 'basic'

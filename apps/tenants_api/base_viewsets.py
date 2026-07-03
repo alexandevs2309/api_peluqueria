@@ -15,6 +15,13 @@ class TenantQuerySetMixin:
             tenant = getattr(self.request, 'tenant', None)
             if tenant:
                 queryset = queryset.filter(tenant=tenant)
+            else:
+                # SuperAdmin sin tenant en request: requiere filtro explícito por ?tenant=<id>
+                tenant_id = self.request.query_params.get('tenant')
+                if tenant_id:
+                    queryset = queryset.filter(tenant_id=tenant_id)
+                else:
+                    return queryset.none()
         elif not hasattr(self.request, 'tenant') or not self.request.tenant:
             return queryset.none()
         else:

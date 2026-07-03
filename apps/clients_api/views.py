@@ -8,6 +8,7 @@ from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.subscriptions_api.permissions import requires_feature
+from apps.subscriptions_api.validators import SubscriptionLimitValidator
 from .models import Client, LoyaltyTransaction
 from .serializers import ClientSerializer
 
@@ -46,6 +47,8 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
         tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         if not tenant and not self.request.user.is_superuser:
             raise ValidationError('Usuario sin tenant asignado')
+
+        SubscriptionLimitValidator.validate_client_limit(self.request.user, tenant=tenant)
 
         instance = serializer.save(
             tenant=tenant,

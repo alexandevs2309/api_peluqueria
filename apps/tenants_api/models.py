@@ -175,9 +175,11 @@ class Tenant(models.Model):
         if self.subscription_status != 'active':
             return False
         if not self.access_until:
-            # Compatibilidad hacia atrás: tenants activos sin access_until
-            # no se bloquean hasta migración completa.
-            return False
+            # Sin access_until: solo permitir en DEBUG o si el tenant fue creado
+            # antes de que se introdujera el campo (migración gradual).
+            # En producción con DEBUG=False, tratar como expirado para forzar renovación.
+            from django.conf import settings as django_settings
+            return not django_settings.DEBUG
         return timezone.now() > self.access_until
     
     def get_trial_days_remaining(self):

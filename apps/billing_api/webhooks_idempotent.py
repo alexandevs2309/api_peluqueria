@@ -153,6 +153,7 @@ def handle_payment_succeeded(invoice_data):
                 # Crear nueva factura
                 invoice = Invoice.objects.create(
                     user=user,
+                    tenant=user.tenant if hasattr(user, 'tenant') else None,
                     amount=invoice_data['amount_paid'] / 100,
                     due_date=timezone.now(),
                     is_paid=True,
@@ -166,6 +167,18 @@ def handle_payment_succeeded(invoice_data):
         # Reactivar tenant si estaba suspendido
         if hasattr(user, 'tenant') and user.tenant:
             tenant = user.tenant
+
+            # Validar que el monto pagado corresponde al plan activo del tenant
+            amount_paid = invoice_data.get('amount_paid', 0) / 100
+            if tenant.subscription_plan:
+                expected_price = float(tenant.subscription_plan.price)
+                if amount_paid > 0 and amount_paid < expected_price * 0.5:
+                    logger.warning(
+                        "Webhook amount mismatch tenant=%s amount_paid=%.2f expected=%.2f — skipping activation",
+                        tenant.id, amount_paid, expected_price
+                    )
+                    return
+
             update_fields = []
             if tenant.subscription_status != 'active':
                 tenant.subscription_status = 'active'
@@ -243,10 +256,14 @@ def handle_payment_failed(invoice_data):
             message=f"Payment failed: {invoice_data.get('failure_reason', 'Unknown')}"
         )
         
-        # Suspender tenant después de 3 intentos fallidos
+        # Suspender tenant después de 3 intentos fallidos en los últimos 30 días
+        from django.utils import timezone as tz
+        cutoff = tz.now() - __import__('datetime').timedelta(days=30)
         failed_attempts = PaymentAttempt.objects.filter(
             invoice__user=user,
-            success=False
+            invoice__tenant=user.tenant if hasattr(user, 'tenant') else None,
+            success=False,
+            created_at__gte=cutoff,
         ).count()
         
         if failed_attempts >= 3 and hasattr(user, 'tenant'):
@@ -322,14 +339,16 @@ def handle_invoice_created(invoice_data):
                 logger.warning(f"Invoice created for inactive tenant {user.tenant.id}: {str(e)}")
                 return
         
+        stripe_invoice_id = invoice_data.get('id', '')
         Invoice.objects.get_or_create(
-            user=user,
-            amount=invoice_data['amount_due'] / 100,
+            description=f"Subscription - {stripe_invoice_id}",
             defaults={
+                'user': user,
+                'tenant': user.tenant if hasattr(user, 'tenant') else None,
+                'amount': invoice_data['amount_due'] / 100,
                 'due_date': timezone.datetime.fromtimestamp(
                     invoice_data['due_date'], tz=timezone.utc
                 ),
-                'description': f"Subscription - {invoice_data.get('description', '')}",
                 'status': 'pending'
             }
         )

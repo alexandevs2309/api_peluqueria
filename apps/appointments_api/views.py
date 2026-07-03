@@ -9,6 +9,7 @@ from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
 from apps.subscriptions_api.permissions import HasFeaturePermission
+from apps.subscriptions_api.validators import SubscriptionLimitValidator
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
@@ -161,10 +162,11 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     f"El estilista no trabaja en ese horario el {day_of_week}"
                 )
 
+        SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
+
         serializer.save(**save_kwargs)
 
-    @action(detail=False, methods=['get'])
-    def availability(self, request):
+    @action(detail=False, methods=['get'])(self, request):
         stylist_id = request.query_params.get('stylist_id')
         date = request.query_params.get('date')
         exclude_id = request.query_params.get('exclude_id') or request.query_params.get('exclude_appointment_id')

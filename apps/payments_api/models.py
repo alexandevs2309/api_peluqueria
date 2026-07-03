@@ -5,7 +5,15 @@ from apps.subscriptions_api.models import UserSubscription
 import uuid
 
 class EncryptedFieldMixin:
-    """Mixin que encripta/desencripta campos automaticamente usando SECRET_KEY"""
+    """
+    Mixin que 'encripta' campos usando django.core.signing (HMAC + compresion).
+
+    ADVERTENCIA TECNICA: django.core.signing NO es cifrado simetrico real.
+    Proporciona integridad (HMAC-SHA256) pero no confidencialidad verdadera:
+    el valor base64 es reversible si se tiene la SECRET_KEY.
+    Para cifrado real usar django-encrypted-model-fields o cryptography.Fernet.
+    Pendiente migrar antes de almacenar claves de produccion de terceros.
+    """
 
     @staticmethod
     def encrypt(value):

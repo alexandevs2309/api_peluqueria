@@ -390,7 +390,41 @@ class PayPalService:
             logger.exception("PayPal webhook verification request failed")
             return False
 
-    @staticmethod
+    def get_subscription(self, subscription_id):
+        """Consultar el estado real de una suscripción en PayPal.
+
+        Devuelve (data, error) donde data contiene al menos 'status'
+        ('ACTIVE', 'APPROVAL_PENDING', 'SUSPENDED', 'CANCELLED', 'EXPIRED').
+        """
+        token, err = self.get_access_token()
+        if err:
+            return None, err
+
+        try:
+            resp = requests.get(
+                f"{self.base_url}/v1/billing/subscriptions/{subscription_id}",
+                headers={
+                    'Authorization': f"Bearer {token}",
+                    'Content-Type': 'application/json',
+                },
+                timeout=20,
+            )
+        except requests.RequestException as exc:
+            logger.exception('PayPal get_subscription failed id=%s', subscription_id)
+            return None, {'error': 'PayPal unavailable', 'message': str(exc)}
+
+        if resp.status_code not in {200, 201}:
+            logger.warning(
+                'PayPal get_subscription failed status=%s id=%s body=%s',
+                resp.status_code, subscription_id, resp.text[:300],
+            )
+            return None, {
+                'error': 'No se pudo consultar la suscripción PayPal',
+                'message': resp.text,
+            }
+
+        return resp.json(), None
+
     def order_cache_key(order_id):
         return f'paypal:subscription:order:{order_id}'
 
@@ -656,9 +690,14 @@ class StripeService:
         """Crear pago para suscripción"""
         try:
             plan = SubscriptionPlan.objects.get(id=plan_id)
-            
-            # Crear customer si no existe
-            customer = self.create_customer(user)
+
+            # Reusar customer existente o crear uno nuevo
+            if getattr(user, 'stripe_customer_id', None):
+                customer = self.stripe.Customer.retrieve(user.stripe_customer_id)
+            else:
+                customer = self.create_customer(user)
+                user.stripe_customer_id = customer.id
+                user.save(update_fields=['stripe_customer_id'])
             
             # Crear payment intent
             payment_intent = self.stripe.PaymentIntent.create(

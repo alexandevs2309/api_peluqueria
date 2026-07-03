@@ -107,21 +107,12 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'action_required': 'contact_admin'
             }, status=403)
             
-        # Validar expiración de trial con período de gracia
-        if (tenant.subscription_status == 'trial' and 
-            tenant.trial_end_date and 
+        # Validar expiración de trial — el grace period lo maneja TenantMiddleware
+        if (tenant.subscription_status == 'trial' and
+            tenant.trial_end_date and
             tenant.trial_end_date < timezone.now().date()):
-            
-            # Calcular días desde expiración
             days_expired = (timezone.now().date() - tenant.trial_end_date).days
-            
-            # Período de gracia de 3 días
-            if days_expired <= 3:
-                # Permitir acceso limitado durante período de gracia
-                request.grace_period = True
-                request.days_remaining = 3 - days_expired
-                return None
-            else:
+            if days_expired > 3:
                 return JsonResponse({
                     'error': 'Trial expired',
                     'code': 'TRIAL_EXPIRED',
@@ -129,7 +120,9 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                     'days_expired': days_expired,
                     'action_required': 'upgrade_plan',
                     'upgrade_url': '/subscriptions/plans/'
-                }, status=402)  # Payment Required
+                }, status=402)
+            # Dentro del grace period: TenantMiddleware ya seteó request.grace_period
+            return None
 
         if tenant.subscription_status == 'past_due':
             request.subscription_limited = True
@@ -146,12 +139,19 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'renewal_url': '/client/payment'
             }, status=402)
             
-        # Validar suscripciones de usuario expiradas
-        user_subscription = UserSubscription.objects.filter(
-            user=request.user, 
-            is_active=True
-        ).first()
+        # Validar suscripciones de usuario expiradas (con cache 5 min)
+        _usub_cache_key = f'usub:{request.user.id}'
+        user_subscription = cache.get(_usub_cache_key)
+        if user_subscription is None:
+            user_subscription = UserSubscription.objects.filter(
+                user=request.user,
+                is_active=True
+            ).first()
+            cache.set(_usub_cache_key, user_subscription or False, 300)
         
+        if user_subscription is False:
+            user_subscription = None
+
         if user_subscription:
             # Si está cancelada (cancelled_at set) pero end_date no ha pasado, aún tiene acceso
             if user_subscription.cancelled_at and user_subscription.end_date and user_subscription.end_date > timezone.now():
@@ -160,9 +160,9 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 return None
 
             if user_subscription.end_date and user_subscription.end_date < timezone.now():
-                # Marcar como expirada
                 user_subscription.is_active = False
                 user_subscription.save()
+                cache.delete(f'usub:{request.user.id}')
                 
                 return JsonResponse({
                     'error': 'Subscription expired',

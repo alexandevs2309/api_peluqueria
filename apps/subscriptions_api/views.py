@@ -321,6 +321,7 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
             # Send cancellation email confirmation
             from apps.subscriptions_api.tasks import send_cancellation_confirmation_email
             try:
+                tenant = subscription.user.tenant
                 send_cancellation_confirmation_email(request.user, tenant, subscription)
             except Exception as e:
                 logger.error(f"Failed to send cancellation confirmation email: {e}")
@@ -574,24 +575,18 @@ class OnboardingView(APIView):
 
         data = serializer.validated_data
         try:
-            # ✅ Validar que customer existe en Stripe
+            # Crear customer en Stripe desde el backend — nunca aceptar customer_id del cliente
             try:
-                customer = stripe.Customer.retrieve(data['stripe_customer_id'])
-            except stripe.error.InvalidRequestError:
-                return Response({
-                    'error': 'Invalid Stripe customer ID'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # ✅ Validar que tiene método de pago
-            if not customer.invoice_settings.default_payment_method:
-                payment_methods = stripe.PaymentMethod.list(
-                    customer=customer.id,
-                    type='card'
+                customer = stripe.Customer.create(
+                    email=data['owner_email'],
+                    name=data['owner_name'],
+                    metadata={'salon_name': data['salon_name']}
                 )
-                if not payment_methods.data:
-                    return Response({
-                        'error': 'No payment method attached to customer'
-                    }, status=status.HTTP_400_BAD_REQUEST)
+            except stripe.error.StripeError as e:
+                return Response({
+                    'error': 'Error al crear cliente en Stripe',
+                    'detail': str(e)
+                }, status=status.HTTP_400_BAD_REQUEST)
             
             # 1. Crear Tenant
             tenant = Tenant.objects.create(
@@ -818,6 +813,19 @@ class RenewSubscriptionView(APIView):
         if err:
             return Response(err, status=status.HTTP_502_BAD_GATEWAY)
 
+        # Verificar que PayPal confirmó el pago como COMPLETED
+        capture_status = capture.get('status', '')
+        if capture_status != 'COMPLETED':
+            logger.warning(
+                'PayPal capture not completed order_id=%s status=%s user=%s',
+                order_id, capture_status, request.user.id
+            )
+            return Response({
+                'error': 'PayPal payment not completed',
+                'message': f'El pago PayPal no fue completado (estado: {capture_status}). No se activó la suscripción.',
+                'paypal_status': capture_status,
+            }, status=status.HTTP_402_PAYMENT_REQUIRED)
+
         try:
             plan = SubscriptionPlan.objects.get(id=cached_order['plan_id'], is_active=True)
         except SubscriptionPlan.DoesNotExist:
@@ -868,8 +876,6 @@ class RenewSubscriptionView(APIView):
             'access_level': tenant.get_access_level(),
             'months': cached_order['months'],
             'access_until': access_until,
-            'order_id': order_id,
-            'capture_id': capture['capture_id'],
         }
 
         send_purchase_confirmation(
@@ -913,44 +919,82 @@ class RenewSubscriptionView(APIView):
         except SubscriptionPlan.DoesNotExist:
             return Response({'error': 'Invalid plan'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # En lugar de "capturar" un pago, en suscripciones de PayPal solo comprobamos el estado.
-        # Si el usuario aprobó en frontend, PayPal empezará a cobrar y enviará webhooks.
-        # Asumiremos la suscripción como exitosa preliminarmente y le daremos 1 día de gracia si no hay pago inmediato.
-        # El webhook BILLING.SUBSCRIPTION.ACTIVATED o PAYMENT.SALE.COMPLETED actualizará permanentemente.
-        with transaction.atomic():
-            access_until = self._apply_paid_access(
-                tenant,
-                request.user,
-                plan,
-                1,  # Temporal grace period or actual period if webhook was fast
-                auto_renew=True,
-                billing_interval=cached_order.get('billing_interval', 'month')
-            )
+        # Consultar el estado real de la suscripción en PayPal antes de activar nada
+        paypal_sub, err = svc.get_subscription(subscription_id)
+        if err:
+            return Response({
+                'error': 'PayPal verification failed',
+                'message': err.get('message', 'No se pudo verificar el estado en PayPal. Intente más tarde.')
+            }, status=status.HTTP_502_BAD_GATEWAY)
 
-            Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
-            Subscription.objects.update_or_create(
-                tenant=tenant,
-                plan=plan,
-                defaults={
-                    'paypal_subscription_id': subscription_id,
-                    'is_active': True,
-                    'billing_interval': cached_order.get('billing_interval', 'month')
-                }
-            )
+        paypal_status = paypal_sub.get('status')
+        if paypal_status == 'ACTIVE':
+            months = 12 if cached_order.get('billing_interval', 'month') == 'year' else 1
+            with transaction.atomic():
+                access_until = self._apply_paid_access(
+                    tenant,
+                    request.user,
+                    plan,
+                    months,
+                    auto_renew=True,
+                    billing_interval=cached_order.get('billing_interval', 'month')
+                )
 
-        response_payload = {
-            'message': 'Subscription approved successfully',
-            'provider': 'paypal_subscription',
-            'plan': plan.name,
-            'status': tenant.subscription_status,
-            'access_level': tenant.get_access_level(),
-            'access_until': access_until,
-            'subscription_id': subscription_id
-        }
+                Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
+                Subscription.objects.update_or_create(
+                    tenant=tenant,
+                    plan=plan,
+                    defaults={
+                        'paypal_subscription_id': subscription_id,
+                        'is_active': True,
+                        'billing_interval': cached_order.get('billing_interval', 'month')
+                    }
+                )
 
-        cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
-        cache.delete(PayPalService.order_cache_key(subscription_id))
-        return Response(response_payload)
+            response_payload = {
+                'message': 'Subscription approved successfully',
+                'provider': 'paypal_subscription',
+                'plan': plan.name,
+                'status': tenant.subscription_status,
+                'access_level': tenant.get_access_level(),
+                'access_until': access_until,
+            }
+
+            cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
+            cache.delete(PayPalService.order_cache_key(subscription_id))
+            return Response(response_payload, status=status.HTTP_200_OK)
+
+        elif paypal_status == 'APPROVAL_PENDING':
+            # El usuario aprobó la suscripción, pero el pago inicial está en procesamiento
+            with transaction.atomic():
+                Subscription.objects.filter(tenant=tenant, is_active=True).update(is_active=False)
+                Subscription.objects.update_or_create(
+                    tenant=tenant,
+                    plan=plan,
+                    defaults={
+                        'paypal_subscription_id': subscription_id,
+                        'is_active': False,  # Se activará cuando llegue el webhook
+                        'billing_interval': cached_order.get('billing_interval', 'month')
+                    }
+                )
+
+            response_payload = {
+                'message': 'Suscripción en proceso. Esperando la confirmación de pago de PayPal.',
+                'provider': 'paypal_subscription',
+                'plan': plan.name,
+                'status': 'pending',
+                'subscription_id': subscription_id
+            }
+
+            cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
+            cache.delete(PayPalService.order_cache_key(subscription_id))
+            return Response(response_payload, status=status.HTTP_202_ACCEPTED)
+
+        else:
+            return Response({
+                'error': 'PayPal subscription invalid status',
+                'message': f'La suscripción PayPal no está activa en PayPal (Estado actual: {paypal_status}).'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
     def _handle_auto_renew_payment(self, tenant, user, plan, payment_method_id, customer_id, billing_interval='month', months=1):
         # Adjuntar método de pago y establecerlo por defecto para cobros automáticos.
@@ -1062,7 +1106,6 @@ class RenewSubscriptionView(APIView):
             'months': months,
             'access_until': access_until,
             'auto_renew': True,
-            'stripe_subscription_id': stripe_subscription.id
         })
     
     def get(self, request):
@@ -1181,7 +1224,8 @@ class RenewSubscriptionView(APIView):
         
         # En desarrollo permitimos activación manual para no bloquear onboarding.
         # Producción siempre requiere Stripe.
-        if settings.DEBUG and payment_method_id in {'manual', 'manual_entry', 'test'}:
+        _is_dev_bypass = settings.DEBUG and not getattr(settings, 'STRIPE_LIVE_MODE_CONFIRMED', False)
+        if _is_dev_bypass and payment_method_id in {'manual', 'manual_entry', 'test'}:
             if auto_renew:
                 return Response({'error': 'Auto-renew requires a real Stripe payment method'}, status=400)
             with transaction.atomic():

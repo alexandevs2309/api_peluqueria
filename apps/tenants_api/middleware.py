@@ -283,6 +283,16 @@ class TenantMiddleware(MiddlewareMixin):
                 elif access_level == 'limited':
                     request.grace_period = True
                     request.subscription_limited = True
+
+                # Bloqueo de escritura para cuentas con pagos pendientes (past_due)
+                if request.tenant.subscription_status == 'past_due':
+                    if request.method in ('POST', 'PUT', 'PATCH', 'DELETE'):
+                        return JsonResponse({
+                            'error': 'Subscription past due',
+                            'code': 'PAYMENT_REQUIRED',
+                            'message': 'Su cuenta tiene facturas pendientes de pago. Por favor complete el pago para restablecer las operaciones de escritura.',
+                            'renewal_url': '/client/payment'
+                        }, status=402)
             
             # Enviar notificaciones de trial
             self.check_trial_notifications(request.tenant)

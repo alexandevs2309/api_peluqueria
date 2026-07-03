@@ -128,7 +128,6 @@ class OnboardingSerializer(serializers.Serializer):
     owner_email = serializers.EmailField()
     plan_id = serializers.IntegerField()
     password = serializers.CharField(min_length=8)
-    stripe_customer_id = serializers.CharField()
     country = serializers.CharField(required=False, allow_blank=True)
     billing_interval = serializers.ChoiceField(choices=['month', 'year'], default='month', required=False)
 

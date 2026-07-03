@@ -701,6 +701,11 @@ if not DEBUG:
                 raise RuntimeError(
                     'Variable requerida para Stripe en produccion no definida o con placeholder: ' + _var
                 )
+        if not STRIPE_WEBHOOK_SECRET:
+            raise RuntimeError(
+                'STRIPE_WEBHOOK_SECRET no puede estar vacío en producción. '
+                'Sin este valor todos los webhooks de Stripe serán rechazados silenciosamente.'
+            )
 
     STRIPE_LIVE_MODE_CONFIRMED = env.bool('STRIPE_LIVE_MODE_CONFIRMED', default=False)
     _using_stripe_test_keys = STRIPE_SECRET_KEY.startswith('sk_test_')

@@ -388,10 +388,12 @@ def handle_capture_refunded(resource):
 def handle_subscription_activated(resource):
     """Manejar BILLING.SUBSCRIPTION.ACTIVATED."""
     from apps.subscriptions_api.models import Subscription, SubscriptionPlan
-    
+    from apps.subscriptions_api.utils import apply_paid_access
+    from apps.tenants_api.models import Tenant
+
     sub_id = resource.get('id')
     custom_id = resource.get('custom_id') or ''
-    
+
     user_id, tenant_id, plan_id, interval = None, None, None, 'month'
     for part in custom_id.split('|'):
         if part.startswith('user:'): user_id = part.split(':')[1]
@@ -405,15 +407,36 @@ def handle_subscription_activated(resource):
 
     try:
         plan = SubscriptionPlan.objects.get(id=plan_id)
+        tenant = Tenant.objects.get(id=tenant_id)
+        user = User.objects.get(id=user_id) if user_id else None
+        months = 12 if interval == 'year' else 1
+
         Subscription.objects.update_or_create(
             tenant_id=tenant_id,
             plan=plan,
             defaults={
                 'paypal_subscription_id': sub_id,
                 'is_active': True,
-                'billing_interval': interval
+                'billing_interval': interval,
             }
         )
+
+        apply_paid_access(
+            tenant=tenant,
+            user=user,
+            plan=plan,
+            months=months,
+            auto_renew=True,
+            billing_interval=interval,
+        )
+
+        try:
+            from apps.subscriptions_api.views import send_purchase_confirmation
+            if user:
+                send_purchase_confirmation(user, tenant, plan, 0, months, payment_method='paypal')
+        except Exception:
+            logger.exception("Error sending confirmation for subscription %s", sub_id)
+
         logger.info("Subscription %s activated for tenant %s", sub_id, tenant_id)
     except Exception as e:
         logger.exception("Error handling subscription activated: %s", e)

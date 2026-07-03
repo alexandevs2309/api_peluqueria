@@ -38,6 +38,11 @@ class ClientSerializer(serializers.ModelSerializer):
             
             if not tenant:
                 raise serializers.ValidationError(_('User without assigned tenant'))
+
+            # Imponer límite de clientes del plan solo al CREAR un cliente nuevo
+            if self.instance is None:
+                from apps.subscriptions_api.validators import SubscriptionLimitValidator
+                SubscriptionLimitValidator.validate_client_limit(request.user, tenant=tenant)
             
             preferred_stylist = attrs.get('preferred_stylist')
             if preferred_stylist and hasattr(preferred_stylist, 'tenant_id'):

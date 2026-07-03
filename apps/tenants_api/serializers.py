@@ -23,9 +23,9 @@ class TenantSerializer(serializers.ModelSerializer):
             "id", "name", "subdomain", "owner", "owner_name",
             "country", "locale", "currency", "date_format", "time_zone",
             "plan_type", "subscription_plan", "subscription_plan_details",
-            "subscription_status", "trial_end_date", "access_until",
+            "subscription_status", "trial_end_date",
             "max_employees", "max_users",
-            "is_active", "created_at", "updated_at", "deleted_at",
+            "is_active", "created_at", "updated_at",
         ]
         read_only_fields = ("id", "created_at", "updated_at", "owner", "locale", "currency", "date_format", "time_zone")
     

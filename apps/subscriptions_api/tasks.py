@@ -333,10 +333,16 @@ def send_trial_expired_email(tenant):
     """Enviar email cuando el trial expira"""
     from apps.auth_api.tasks import send_email_async
 
-    # FIX: branding corregido a "Auron Suite"
+    owner = tenant.owner
+    recipient = getattr(owner, 'email', None) or getattr(tenant, 'contact_email', None)
+    if not recipient:
+        logger.warning("send_trial_expired_email: tenant %s has no recipient email", tenant.id)
+        return
+
+    owner_name = getattr(owner, 'full_name', None) or recipient
     subject = f"Tu prueba gratuita ha expirado - {tenant.name}"
     message = f"""
-    Hola {tenant.owner.full_name},
+    Hola {owner_name},
     
     Tu prueba gratuita de 7 días para {tenant.name} ha expirado.
     
@@ -352,7 +358,7 @@ def send_trial_expired_email(tenant):
     
     try:
         html_message = _build_html_email(tenant, subject, [
-            f"Hola {tenant.owner.full_name},",
+            f"Hola {owner_name},",
             f"Tu prueba gratuita de 7 días para {tenant.name} ha expirado.",
             "Para continuar usando Auron Suite inicia sesión y selecciona un plan de pago.",
             '<a href="https://auronsuite.com/client/payment" style="display:inline-block;padding:12px 24px;background-color:#3B82F6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Ver planes</a>',
@@ -362,11 +368,11 @@ def send_trial_expired_email(tenant):
             subject=subject,
             message=message,
             from_email='',
-            recipient_list=[tenant.contact_email],
+            recipient_list=[recipient],
             html_message=html_message,
         )
     except Exception as e:
-        logger.error(f"Error sending trial expired email to {tenant.contact_email}: {str(e)}")
+        logger.error(f"Error sending trial expired email to {recipient}: {str(e)}")
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
 def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_left=None):

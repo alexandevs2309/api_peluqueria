@@ -583,10 +583,9 @@ class SaleViewSet(TenantScopedViewSet):
             # CRÍTICO: Crear movimientos de stock (productos ya actualizados)
             for product, quantity in locked_products:
                 from apps.inventory_api.models import StockMovement
-                
-                # Crear movimiento de stock
                 StockMovement.objects.create(
                     product=product,
+                    tenant=tenant_to_assign,
                     quantity=-quantity,
                     reason=f"Venta #{sale.id}"
                 )
@@ -875,6 +874,7 @@ class SaleViewSet(TenantScopedViewSet):
                         
                         StockMovement.objects.create(
                             product=product,
+                            tenant=product.tenant,
                             quantity=detail.quantity,
                             reason=f"Reembolso venta #{sale.id}"
                         )
