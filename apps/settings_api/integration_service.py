@@ -273,7 +273,7 @@ class IntegrationService:
                     },
                     method='POST',
                 )
-                with urllib.request.urlopen(req, timeout=10) as resp:
+                with urllib.request.urlopen(req, timeout=15) as resp:
                     raw = resp.read()
                     status = resp.status
                     result = _json.loads(raw)
@@ -285,44 +285,44 @@ class IntegrationService:
                 logger.warning("[EMAIL][Path1] Resend API HTTP error status=%s detail=%s — falling through to SMTP", e.code, detail)
             except Exception as e:
                 logger.warning("[EMAIL][Path1] Resend API error sending to=%s: %s — falling through to SMTP", to_email, str(e))
-
-        # --- 2. SMTP (Resend SMTP o cualquier otro) ---
+ 
+        # --- 2. SMTP (intenta primero STARTTLS puerto por defecto, luego SSL 465) ---
         logger.info("[EMAIL][Path2] SMTP check: host=%s port=%s user=%s has_pwd=%s tls=%s",
                     smtp_host or 'NOT SET', smtp_port, smtp_user or 'NOT SET', bool(smtp_password), use_tls)
         if smtp_host and smtp_user and smtp_password:
-            try:
-                msg = MIMEMultipart('alternative')
-                msg['Subject'] = subject
-                msg['From'] = from_email or smtp_user
-                msg['To'] = to_email
+            _smtp_errors = []
+            for _port, _use_tls in [(smtp_port, use_tls), (465, False)]:
+                try:
+                    msg = MIMEMultipart('alternative')
+                    msg['Subject'] = subject
+                    msg['From'] = from_email or smtp_user
+                    msg['To'] = to_email
 
-                if text_message:
-                    msg.attach(MIMEText(text_message, 'plain', 'utf-8'))
-                msg.attach(MIMEText(html_message, 'html', 'utf-8'))
+                    if text_message:
+                        msg.attach(MIMEText(text_message, 'plain', 'utf-8'))
+                    msg.attach(MIMEText(html_message, 'html', 'utf-8'))
 
-                if use_tls:
-                    server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
-                    server.set_debuglevel(1)
-                    server.starttls()
-                else:
-                    server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
-                    server.set_debuglevel(1)
+                    if _use_tls:
+                        server = smtplib.SMTP(smtp_host, _port, timeout=10)
+                        server.set_debuglevel(1)
+                        server.starttls()
+                    else:
+                        server = smtplib.SMTP_SSL(smtp_host, _port, timeout=10)
+                        server.set_debuglevel(1)
 
-                server.login(smtp_user, smtp_password)
-                failed = server.sendmail(msg['From'], [to_email], msg.as_string())
-                logger.info("[EMAIL][Path2] SMTP sendmail failed_recipients=%s (empty=success) to=%s", failed, to_email)
-                server.quit()
-                logger.info("[EMAIL][Path2] Email sent via SMTP to=%s from=%s", to_email, from_email or smtp_user)
-                return True
-            except smtplib.SMTPAuthenticationError:
-                logger.error("[EMAIL][Path2] SMTP AUTH FAILED user=%s host=%s", smtp_user, smtp_host)
-                raise Exception("Error enviando email via SMTP: SMTPAuthenticationError. Check EMAIL_HOST_USER/EMAIL_HOST_PASSWORD.")
-            except smtplib.SMTPException as e:
-                logger.error("[EMAIL][Path2] SMTP protocol error to=%s: %s", to_email, str(e), exc_info=True)
-                raise Exception(f"Error enviando email via SMTP: {str(e)}")
-            except Exception as e:
-                logger.error("[EMAIL][Path2] SMTP error sending to=%s: %s", to_email, str(e), exc_info=True)
-                raise Exception(f"Error enviando email via SMTP: {str(e)}")
+                    server.login(smtp_user, smtp_password)
+                    failed = server.sendmail(msg['From'], [to_email], msg.as_string())
+                    logger.info("[EMAIL][Path2] SMTP sendmail failed_recipients=%s (empty=success) to=%s port=%d", failed, to_email, _port)
+                    server.quit()
+                    logger.info("[EMAIL][Path2] Email sent via SMTP to=%s from=%s port=%d", to_email, from_email or smtp_user, _port)
+                    return True
+                except Exception as _e:
+                    _smtp_errors.append(f"port {_port}: {_e}")
+                    logger.warning("[EMAIL][Path2] SMTP failed on port %d: %s — trying next", _port, str(_e))
+
+            last_err = _smtp_errors[-1] if _smtp_errors else 'unknown'
+            logger.error("[EMAIL][Path2] All SMTP ports failed: %s", '; '.join(_smtp_errors))
+            raise Exception(f"Error enviando email via SMTP: {last_err}")
 
         # --- 3. Fallback consola en desarrollo ---
         if is_debug:
