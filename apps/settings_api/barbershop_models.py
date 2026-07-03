@@ -7,7 +7,7 @@ class BarbershopSettings(models.Model):
     primary_color = models.CharField(max_length=7, default='#2563EB', help_text='Color primario (hex)')
     secondary_color = models.CharField(max_length=7, default='#4F46E5', help_text='Color secundario (hex)')
     accent_color = models.CharField(max_length=7, default='#059669', help_text='Color de acento (hex)')
-    currency = models.CharField(max_length=3, default='COP')
+    currency = models.CharField(max_length=3, default='DOP')
     currency_symbol = models.CharField(max_length=5, default='$')
     business_hours = models.JSONField(default=dict, blank=True)
     contact = models.JSONField(default=dict, blank=True)

@@ -154,7 +154,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'secondary': '#4F46E5',
                     'accent': '#059669',
                 },
-                'currency': 'COP',
+                'currency': 'DOP',
                 'currency_symbol': '$',
                 'business_hours': {
                     'monday': {'open': '08:00', 'close': '18:00', 'closed': False},
@@ -206,7 +206,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                     'secondary': '#4F46E5',
                     'accent': '#059669',
                 },
-                'currency': 'COP',
+                'currency': 'DOP',
                 'currency_symbol': '$',
                 'business_hours': {
                     'monday': {'open': '08:00', 'close': '18:00', 'closed': False},
