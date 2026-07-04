@@ -24,15 +24,6 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        # Always scope queries to the current tenant to avoid cross‑tenant data leaks
-        if not self.request.user.is_superuser:
-            tenant = getattr(self.request, 'tenant', None)
-            if tenant:
-                qs = qs.filter(tenant=tenant)
-        # Apply optional branch filter supplied via querystring (e.g. ?branch=2)
-        branch_id = self.request.query_params.get('branch')
-        if branch_id:
-            qs = qs.filter(branch_id=branch_id)
         # Date range filter: default last 90 days for list, overridable via ?from=&to=
         if self.action == 'list':
             date_from = self.request.query_params.get('from')
@@ -51,11 +42,11 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 except (ValueError, TypeError):
                     pass
         if self.action in ('list', 'retrieve', 'today'):
-            qs = qs.select_related('client', 'stylist', 'service', 'role', 'branch')
+            qs = qs.select_related('client', 'stylist', 'service')
             qs = qs.prefetch_related(
                 Prefetch(
                     'stylist__employee_profile',
-                    queryset=Employee.objects.select_related('user').prefetch_related('services')
+                    queryset=Employee.objects.select_related('user')
                 )
             )
         return qs
@@ -165,11 +156,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
         serializer.save(**save_kwargs)
 
-<<<<<<< Updated upstream
-    @action(detail=False, methods=['get'])
-=======
     @action(detail=False, methods=['get'], url_path='available-slots')
->>>>>>> Stashed changes
     def available_slots(self, request):
         stylist_id = request.query_params.get('stylist_id')
         date = request.query_params.get('date')
