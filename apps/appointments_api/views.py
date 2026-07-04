@@ -161,12 +161,12 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 raise serializers.ValidationError(
                     f"El estilista no trabaja en ese horario el {day_of_week}"
                 )
-
         SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
 
         serializer.save(**save_kwargs)
 
-    @action(detail=False, methods=['get'])(self, request):
+    @action(detail=False, methods=['get'])
+    def available_slots(self, request):
         stylist_id = request.query_params.get('stylist_id')
         date = request.query_params.get('date')
         exclude_id = request.query_params.get('exclude_id') or request.query_params.get('exclude_appointment_id')
