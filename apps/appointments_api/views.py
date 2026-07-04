@@ -165,7 +165,11 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
         serializer.save(**save_kwargs)
 
+<<<<<<< Updated upstream
     @action(detail=False, methods=['get'])
+=======
+    @action(detail=False, methods=['get'], url_path='available-slots')
+>>>>>>> Stashed changes
     def available_slots(self, request):
         stylist_id = request.query_params.get('stylist_id')
         date = request.query_params.get('date')
