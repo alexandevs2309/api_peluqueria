@@ -3,6 +3,34 @@
 from django.db import migrations, models
 
 
+def resolve_duplicate_emails(apps, schema_editor):
+    User = apps.get_model('auth_api', 'User')
+    from django.db.models import Count
+    
+    # Buscar registros duplicados por (email, tenant)
+    duplicates = User.objects.values('email', 'tenant').annotate(
+        email_count=Count('id')
+    ).filter(email_count__gt=1)
+    
+    for dup in duplicates:
+        email = dup['email']
+        tenant_id = dup['tenant']
+        
+        # Obtener los usuarios duplicados ordenados por ID
+        users = User.objects.filter(email=email, tenant=tenant_id).order_by('id')
+        
+        # Conservar el primero (ID más bajo) y renombrar los demás para evitar colisiones
+        for user in users[1:]:
+            if '@' in user.email:
+                parts = user.email.split('@')
+                new_email = f"{parts[0]}+dup{user.id}@{parts[1]}"
+            else:
+                new_email = f"{user.email}_dup{user.id}"
+                
+            user.email = new_email
+            user.save(update_fields=['email'])
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -13,6 +41,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        migrations.RunPython(resolve_duplicate_emails, reverse_code=migrations.RunPython.noop),
         migrations.AddConstraint(
             model_name='user',
             constraint=models.UniqueConstraint(fields=('email', 'tenant'), name='unique_email_per_tenant', violation_error_message='Ya existe un usuario con este email en este negocio.'),
