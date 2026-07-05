@@ -112,6 +112,11 @@ class User(AbstractBaseUser, PermissionsMixin):
                 name='unique_email_for_global_users',
                 violation_error_message='Ya existe un superusuario con este email.'
             ),
+            models.UniqueConstraint(
+                fields=['email', 'tenant'],
+                name='unique_email_per_tenant',
+                violation_error_message='Ya existe un usuario con este email en este negocio.'
+            ),
         ]
         # La unicidad de email se maneja via UniqueConstraint arriba
 

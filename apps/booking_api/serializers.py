@@ -28,13 +28,18 @@ class PublicServiceSerializer(serializers.ModelSerializer):
 class PublicStylistSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     full_name = serializers.SerializerMethodField()
-    specialty = serializers.CharField()
+    profession = serializers.CharField()
+    profession_display = serializers.SerializerMethodField()
     avatar = serializers.ImageField(allow_null=True)
 
     def get_full_name(self, obj):
         if obj.user and obj.user.full_name:
             return obj.user.full_name
         return obj.user.email if obj.user else 'Sin nombre'
+
+    def get_profession_display(self, obj):
+        profession_map = dict(Employee.PROFESSION_CHOICES)
+        return profession_map.get(obj.profession, obj.profession or '')
 
 
 class PublicBookingSerializer(serializers.Serializer):

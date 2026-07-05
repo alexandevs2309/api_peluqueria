@@ -125,7 +125,7 @@ def stylist(stylist_role, test_tenant):
         tenant=test_tenant,
     )
     UserRole.objects.get_or_create(user=user, role=stylist_role, tenant=test_tenant)
-    employee = Employee.objects.create(user=user, specialty='stylist', tenant=test_tenant)
+    employee = Employee.objects.create(user=user, profession='stylist', tenant=test_tenant)
     return user, employee
 
 

@@ -15,10 +15,16 @@ User = get_user_model()
 class MinimalStylistInfoSerializer(serializers.Serializer):
     """Versión ligera de EmployeeSerializer sin queries adicionales de roles/services."""
     id = serializers.IntegerField()
-    specialty = serializers.CharField()
+    profession = serializers.CharField()
+    profession_display = serializers.SerializerMethodField()
     phone = serializers.CharField()
     is_active = serializers.BooleanField()
     user = serializers.SerializerMethodField()
+
+    def get_profession_display(self, obj):
+        from apps.employees_api.models import Employee
+        profession_map = dict(Employee.PROFESSION_CHOICES)
+        return profession_map.get(obj.profession, obj.profession or '')
 
     def get_user(self, obj):
         if not obj.user:
@@ -30,6 +36,7 @@ class MinimalStylistInfoSerializer(serializers.Serializer):
             'first_name': (obj.user.full_name.split(' ', 1)[0] if obj.user.full_name else ''),
             'last_name': (obj.user.full_name.split(' ', 1)[1] if obj.user.full_name and ' ' in obj.user.full_name else ''),
         }
+
 
 
 class AppointmentSerializer(serializers.ModelSerializer):

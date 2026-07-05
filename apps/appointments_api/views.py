@@ -156,6 +156,10 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
         serializer.save(**save_kwargs)
 
+    @action(detail=False, methods=['get'], url_path='availability')
+    def availability(self, request):
+        return self.available_slots(request)
+
     @action(detail=False, methods=['get'], url_path='available-slots')
     def available_slots(self, request):
         stylist_id = request.query_params.get('stylist_id')
@@ -169,11 +173,21 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             )
         
         try:
-            stylist = User.objects.get(id=stylist_id, tenant=self.request.tenant)
+            stylist = User.objects.filter(id=stylist_id, tenant=self.request.tenant).first()
+            if not stylist:
+                employee = Employee.objects.filter(id=stylist_id, tenant=self.request.tenant).select_related('user').first()
+                if employee:
+                    stylist = employee.user
+            
+            if not stylist:
+                return Response(
+                    {'error': 'Estilista no encontrado'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             target_date = datetime.fromisoformat(date).date()
-        except (User.DoesNotExist, ValueError):
+        except ValueError:
             return Response(
-                {'error': 'Estilista o fecha inválida'}, 
+                {'error': 'Fecha inválida'}, 
                 status=status.HTTP_400_BAD_REQUEST
             )
         
@@ -444,17 +458,26 @@ def stylist_schedule(request, stylist_id):
         # ✅ FIX: Definir user correctamente
         user = request.user
         
-        # ✅ VALIDAR TENANT del stylist
+        # ✅ VALIDAR TENANT del stylist (tolerando tanto User.id como Employee.id)
+        stylist = None
         if not user.is_superuser:
             if not hasattr(request, 'tenant') or not request.tenant:
                 return Response({'error': 'Usuario sin tenant'}, status=404)
             
-            stylist = User.objects.get(
-                id=stylist_id,
-                tenant=request.tenant
-            )
+            stylist = User.objects.filter(id=stylist_id, tenant=request.tenant).first()
+            if not stylist:
+                employee = Employee.objects.filter(id=stylist_id, tenant=request.tenant).select_related('user').first()
+                if employee:
+                    stylist = employee.user
         else:
-            stylist = User.objects.get(id=stylist_id)
+            stylist = User.objects.filter(id=stylist_id).first()
+            if not stylist:
+                employee = Employee.objects.filter(id=stylist_id).select_related('user').first()
+                if employee:
+                    stylist = employee.user
+                    
+        if not stylist:
+            return Response({'error': 'Estilista no encontrado'}, status=404)
         
         # Obtener horarios de trabajo
         from apps.employees_api.models import WorkSchedule

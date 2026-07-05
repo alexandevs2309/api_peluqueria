@@ -149,7 +149,7 @@ class TestFunctionalVerification(APITestCase):
         print(f"  - Respuesta JSON: {r_appt.content.decode()}")
 
         target_user = User.objects.create_user(email='new_emp_mora@example.com', password='pass', tenant=t1)
-        emp_data = {"user_id": target_user.id, "specialty": "stylist", "phone": "1234567890", "is_active": True}
+        emp_data = {"user_id": target_user.id, "profession": "stylist", "phone": "1234567890", "is_active": True}
         r_emp = client.post('/api/employees/employees/', emp_data, format='json')
         print("\nOperación: CREAR EMPLEADO (POST /api/employees/employees/)")
         print(f"Resultado ESPERADO: HTTP 402 Payment Required")
@@ -345,7 +345,7 @@ class TestFunctionalVerification(APITestCase):
         client = APIClient()
         self._authenticate_client(client, u4a)
 
-        emp_data_4a = {'user_id': target_u4a.id, 'specialty': 'stylist', 'phone': '1234567890', 'is_active': True}
+        emp_data_4a = {'user_id': target_u4a.id, 'profession': 'stylist', 'phone': '1234567890', 'is_active': True}
 
         with unittest.mock.patch('stripe.Subscription.modify') as mock_modify_4a:
             r_4a = client.post('/api/employees/employees/', emp_data_4a, format='json')
@@ -402,7 +402,7 @@ class TestFunctionalVerification(APITestCase):
             Employee.objects.create(tenant=t4b, user=eu, is_active=True)
 
         target_u4b = User.objects.create_user(email='target_con_str@example.com', password='pass', tenant=t4b)
-        emp_data_4b = {'user_id': target_u4b.id, 'specialty': 'stylist', 'phone': '1234567890', 'is_active': True}
+        emp_data_4b = {'user_id': target_u4b.id, 'profession': 'stylist', 'phone': '1234567890', 'is_active': True}
 
         client = APIClient()
         self._authenticate_client(client, u4b)
@@ -613,7 +613,7 @@ class TestFunctionalVerification(APITestCase):
         try:
             r_emp3 = client.post('/api/employees/employees/', {
                 'user_id': target_u7.id,
-                'specialty': 'stylist',
+                'profession': 'stylist',
                 'phone': '1234567890',
                 'is_active': True
             }, format='json')

@@ -54,6 +54,11 @@ class PayrollViewSet(viewsets.ViewSet):
         if status_filter:
             periods = periods.filter(status=status_filter)
         
+        # Ocultar períodos abiertos que aún no han comenzado (futuros cronológicamente)
+        # para evitar confusiones en la interfaz de administración.
+        today = timezone.localdate()
+        periods = periods.exclude(status='open', period_start__gt=today)
+        
         # Recalcular períodos abiertos si el desglose no coincide con el bruto
         for period in periods:
             if period.status == 'open' and not period.is_finalized:
@@ -342,6 +347,8 @@ class PayrollViewSet(viewsets.ViewSet):
 Tu pago del período {period.period_display} ha sido procesado exitosamente.
 
 Detalles:
+- Sueldo Base: ${period.base_salary:,.2f}
+- Comisiones de Ventas: ${period.commission_earnings:,.2f}
 - Monto Bruto: ${period.gross_amount:,.2f}
 - Deducciones: ${period.deductions_total:,.2f}
 - Monto Neto: ${period.net_amount:,.2f}
@@ -357,6 +364,8 @@ Equipo de Nómina'''
                 'user_full_name': employee_name,
                 'message': f'Tu pago del período <strong>{period.period_display}</strong> ha sido procesado exitosamente.',
                 'details': [
+                    ('Sueldo Base', f'${period.base_salary:,.2f}'),
+                    ('Comisiones de Ventas', f'${period.commission_earnings:,.2f}'),
                     ('Monto Bruto', f'${period.gross_amount:,.2f}'),
                     ('Deducciones', f'${period.deductions_total:,.2f}'),
                     ('Monto Neto', f'${period.net_amount:,.2f}'),

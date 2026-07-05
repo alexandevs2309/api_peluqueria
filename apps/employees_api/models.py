@@ -12,8 +12,6 @@ y evitar archivo monolítico de >1000 líneas.
 from django.db import models
 from django.conf import settings
 from apps.services_api.models import Service
-
-# Importar modelos de otros archivos para que Django los reconozca
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .adjustment_models import CommissionAdjustment
 from .compensation_models import EmployeeCompensationHistory
@@ -25,7 +23,7 @@ class Employee(models.Model):
         ('mixed', 'Mixto (Sueldo + Comisión)')
     ]
 
-    SPECIALTY_CHOICES = [
+    PROFESSION_CHOICES = [
         ('barber', 'Barbero (Corte caballero)'),
         ('stylist', 'Estilista (Corte dama)'),
         ('manicurist', 'Manicurista'),
@@ -36,6 +34,9 @@ class Employee(models.Model):
         ('makeup', 'Maquilladora'),
         ('massage', 'Masajista'),
         ('barber_stylist', 'Barbero / Estilista'),
+        ('receptionist', 'Recepcionista'),
+        ('cashier', 'Cajero / Cajera'),
+        ('manager', 'Administrador / Gerente'),
         ('general', 'General / Multipropósito'),
         ('other', 'Otro'),
     ]
@@ -43,7 +44,8 @@ class Employee(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='employee_profile')
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='employees')
     branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_employees')
-    specialty = models.CharField(max_length=100, choices=SPECIALTY_CHOICES, blank=True)
+    profession = models.CharField(max_length=100, choices=PROFESSION_CHOICES, blank=True, help_text='Profesión principal del empleado (ej.: barbero, estilista, manicurista, etc.)')
+    
     phone = models.CharField(max_length=20, blank=True)
     hire_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
@@ -70,6 +72,7 @@ class Employee(models.Model):
             models.Index(fields=['tenant']),
             models.Index(fields=['is_active']),
             models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['profession']),
         ]
         permissions = [
             ('view_employee_payroll', 'Can view employee payroll'),
@@ -100,7 +103,6 @@ class WorkSchedule(models.Model):
     class Meta:
         unique_together = ('employee', 'day_of_week', 'start_time')
 
-
 class AttendanceRecord(models.Model):
     STATUS_CHOICES = [
         ('present', 'Present'),
@@ -123,6 +125,10 @@ class AttendanceRecord(models.Model):
         related_name='justified_attendances'
     )
     notes = models.CharField(max_length=255, blank=True)
+    late_minutes = models.PositiveIntegerField(
+        default=0,
+        help_text='Minutos de tardanza registrados al marcar asistencia'
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -133,3 +139,15 @@ class AttendanceRecord(models.Model):
             models.Index(fields=['employee', 'work_date']),
             models.Index(fields=['status']),
         ]
+
+
+class Loan(models.Model):
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='loans')
+    loan_type = models.CharField(max_length=20, default='personal_loan')
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    installments = models.PositiveIntegerField(default=1)
+    remaining_balance = models.DecimalField(max_digits=10, decimal_places=2)
+    status = models.CharField(max_length=20, choices=[('active', 'Activo'), ('paid', 'Pagado')], default='active')
+    description = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+

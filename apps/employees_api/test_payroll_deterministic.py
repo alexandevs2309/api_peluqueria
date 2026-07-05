@@ -317,3 +317,125 @@ class TestPayrollDeterministic:
         assert 'calculated_at' in period.calculation_snapshot
         assert 'employee' in period.calculation_snapshot
         assert period.is_finalized is True
+
+    def test_late_minutes_attendance_deduction(self, setup_data):
+        """Verifica deducciones de asistencia por tardanzas y fallback a notes"""
+        employee = setup_data['employee']
+        period = setup_data['period']
+        from apps.employees_api.models import AttendanceRecord
+
+        # Crear récord de asistencia con late_minutes
+        AttendanceRecord.objects.create(
+            employee=employee,
+            work_date=period.period_start,
+            status='late',
+            late_minutes=45,
+            notes='Tardanza'
+        )
+
+        # Crear récord legacy que use fallback a notas
+        AttendanceRecord.objects.create(
+            employee=employee,
+            work_date=period.period_start + timedelta(days=1),
+            status='late',
+            late_minutes=0,
+            notes='Retraso de 15 minutos'
+        )
+
+        period.calculate_amounts()
+        period.save()
+
+        # Deducción total esperada para (45 + 15) = 60 minutos
+        # Salario fijo: 2000.00
+        # Salario diario = 2000 / 23.83 = 83.9278
+        # Valor minuto = 83.9278 / 480 = 0.1748
+        # Deducción por 60 min = 0.1748 * 60 = 10.49
+        deductions = period.deductions.filter(is_automatic=True)
+        assert deductions.exists()
+        deduction_tardanza = deductions.filter(description__contains="tardanza").first()
+        assert deduction_tardanza is not None
+        assert abs(deduction_tardanza.amount - Decimal('10.49')) < Decimal('0.05')
+
+    def test_auto_loan_deduction_and_payment_reconciliation(self, setup_data):
+        """Verifica que el préstamo se descuenta del periodo y rebaja balance al pagar"""
+        employee = setup_data['employee']
+        period = setup_data['period']
+        user = setup_data['user']
+        from apps.employees_api.models import Loan
+
+        loan = Loan.objects.create(
+            employee=employee,
+            amount=Decimal('1000.00'),
+            installments=2,
+            remaining_balance=Decimal('1000.00'),
+            status='active',
+            description='Prestamo test'
+        )
+
+        period.calculate_amounts()
+        period.save()
+
+        # Verificar que se creó cuota de deducción por 500
+        deductions = period.deductions.filter(is_automatic=True, deduction_type='loan')
+        assert deductions.count() == 1
+        assert deductions.first().amount == Decimal('500.00')
+
+        # Registrar pago para disparar conciliación de préstamo
+        period.status = 'pending_approval'
+        period.save()
+        period.approve(approved_by=user)
+        
+        period.mark_as_paid(payment_method='cash', payment_reference='REF-1', paid_by=user)
+        
+        loan.refresh_from_db()
+        assert loan.remaining_balance == Decimal('500.00')
+        assert loan.status == 'active'
+
+        # Siguiente periodo paga lo restante
+        period2 = PayrollPeriod.objects.create(
+            employee=employee,
+            period_type='biweekly',
+            period_start=period.period_end + timedelta(days=1),
+            period_end=period.period_end + timedelta(days=15),
+            status='open'
+        )
+        period2.calculate_amounts()
+        period2.save()
+
+        period2.status = 'pending_approval'
+        period2.save()
+        period2.approve(approved_by=user)
+        period2.mark_as_paid(payment_method='cash', payment_reference='REF-2', paid_by=user)
+
+        loan.refresh_from_db()
+        assert loan.remaining_balance == Decimal('0.00')
+        assert loan.status == 'paid'
+
+    def test_payroll_configuration_auto_deduction(self, setup_data):
+        """Verifica deducciones automáticas de impuestos basadas en la configuración del tenant"""
+        employee = setup_data['employee']
+        period = setup_data['period']
+        from apps.employees_api.earnings_models import PayrollConfiguration
+
+        # Configurar tasas para el tenant
+        PayrollConfiguration.objects.update_or_create(
+            tenant=setup_data['tenant'],
+            defaults={
+                'tax_rate': Decimal('1.50'),
+                'social_security_rate': Decimal('2.00'),
+                'health_insurance_rate': Decimal('1.00')
+            }
+        )
+
+        period.calculate_amounts()
+        period.save()
+
+        # Salario base es 1000.00
+        # ISR = 1000 * 1.5% = 15.00
+        # TSS = 1000 * 2.0% = 20.00
+        # SFS = 1000 * 1.0% = 10.00
+        assert period.deductions.filter(deduction_type='tax', amount=Decimal('15.00')).exists()
+        assert period.deductions.filter(deduction_type='social_security', amount=Decimal('20.00')).exists()
+        assert period.deductions.filter(deduction_type='health_insurance', amount=Decimal('10.00')).exists()
+        assert period.deductions_total >= Decimal('45.00')
+

@@ -40,10 +40,18 @@ class EmployeeSerializer(serializers.ModelSerializer):
     service_ids = serializers.SerializerMethodField()
     services_count = serializers.SerializerMethodField()
     branch = serializers.PrimaryKeyRelatedField(queryset=Branch.objects.all(), required=False, allow_null=True)
+    profession = serializers.CharField(required=False, allow_blank=True)
+    profession_display = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
-        fields = ['id', 'branch', 'user', 'user_id', 'user_id_read', 'specialty', 'phone', 'hire_date', 'is_active', 'service_ids', 'services_count', 'created_at', 'updated_at']
+        fields = [
+            'id', 'branch', 'user', 'user_id', 'user_id_read',
+            'profession', 'profession_display',
+            'phone', 'hire_date', 'is_active',
+            'service_ids', 'services_count',
+            'created_at', 'updated_at',
+        ]
         read_only_fields = ['created_at', 'updated_at']
 
     def __init__(self, *args, **kwargs):
@@ -75,9 +83,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError("La sucursal seleccionada no pertenece a este negocio")
         return value
 
+    def get_profession_display(self, obj):
+        """Devuelve la etiqueta legible de la profesión para mostrar en UI."""
+        if not obj.profession:
+            return ''
+        profession_map = dict(Employee.PROFESSION_CHOICES)
+        return profession_map.get(obj.profession, obj.profession)
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Asegurar que el usuario tenga la información completa
         if instance.user:
             full_name_parts = instance.user.full_name.split(' ', 1) if instance.user.full_name else ['', '']
             first_name = full_name_parts[0] if full_name_parts else ''
@@ -94,15 +108,27 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return data
 
     def create(self, validated_data):
-        user = validated_data.pop('user')
-        employee = Employee.objects.create(user=user, **validated_data)
-        return employee
+        profession = validated_data.pop('profession', None)
+        if not profession:
+            profession = 'general'
+        validated_data['profession'] = profession
+        return Employee.objects.create(**validated_data)
+
+    def update(self, instance, validated_data):
+        if 'profession' in validated_data:
+            instance.profession = validated_data['profession']
+        for field in ['phone', 'hire_date', 'is_active', 'branch']:
+            if field in validated_data:
+                setattr(instance, field, validated_data[field])
+        instance.save()
+        return instance
 
     def get_service_ids(self, obj):
         return [employee_service.service_id for employee_service in obj.services.all()]
 
     def get_services_count(self, obj):
         return len(obj.services.all())
+
 
 class EmployeeServiceSerializer(serializers.ModelSerializer):
     service = ServiceSerializer(read_only=True)

@@ -25,10 +25,23 @@ class PayrollCalculationService:
         
         # 1. Sumar comisiones desde snapshots de ventas
         import datetime
+        from zoneinfo import ZoneInfo
         from django.utils.timezone import make_aware
+        try:
+            tenant_tz = ZoneInfo(
+                getattr(period.employee.tenant, 'timezone', None) or 'America/Santo_Domingo'
+            )
+        except Exception:
+            tenant_tz = ZoneInfo('America/Santo_Domingo')
         
-        start_dt = make_aware(datetime.datetime.combine(period.period_start, datetime.time.min))
-        end_dt = make_aware(datetime.datetime.combine(period.period_end, datetime.time.max))
+        start_dt = make_aware(
+            datetime.datetime.combine(period.period_start, datetime.time.min),
+            timezone=tenant_tz
+        )
+        end_dt = make_aware(
+            datetime.datetime.combine(period.period_end, datetime.time.max),
+            timezone=tenant_tz
+        )
         logger.debug("start_dt=%s, end_dt=%s", start_dt, end_dt)
         
         sales_commission = Sale.objects.filter(
@@ -59,7 +72,9 @@ class PayrollCalculationService:
             total_commission = adjustments_total  # fixed solo recibe ajustes manuales
 
         # 5. Salario base (si aplica)
-        fixed_salary = period.employee.fixed_salary
+        fixed_salary = period.fixed_salary_snapshot \
+            if period.fixed_salary_snapshot is not None \
+            else period.employee.fixed_salary
         
         base_salary = Decimal('0.00')
         if payment_type in ['fixed', 'mixed']:

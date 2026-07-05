@@ -50,17 +50,17 @@ def employee_report(request):
     total_employees = Employee.objects.filter(**employee_filter).count()
     active_employees = Employee.objects.filter(**employee_filter, is_active=True).count()
     
-    # Empleados por especialidad
-    employees_by_specialty = Employee.objects.filter(
+    # Empleados por profesión
+    employees_by_profession = Employee.objects.filter(
         **employee_filter, is_active=True
-    ).values('specialty').annotate(count=Count('id'))
+    ).values('profession').annotate(count=Count('id'))
     
     # Top performers REALES desde ventas
     top_performers = Sale.objects.filter(
         **sale_filter
     ).values(
         'employee__user__full_name',
-        'employee__specialty'
+        'employee__profession'
     ).annotate(
         total_sales=Sum('total'),
         sales_count=Count('id')
@@ -70,13 +70,13 @@ def employee_report(request):
         'employee_name': p['employee__user__full_name'],
         'sales': float(p['total_sales']),
         'sales_count': p['sales_count'],
-        'specialty': p['employee__specialty'] or 'General'
+        'profession': p['employee__profession'] or 'General'
     } for p in top_performers]
     
     return Response({
         'total_employees': total_employees,
         'active_employees': active_employees,
-        'employees_by_specialty': list(employees_by_specialty),
+        'employees_by_profession': list(employees_by_profession),
         'top_performers': top_performers_list
     })
 
@@ -722,7 +722,7 @@ def export_report(request):
 
     elif report_type == 'employees':
         from apps.employees_api.models import Employee
-        headers = ['ID', 'Nombre', 'Email', 'Teléfono', 'Rol', 'Especialidad', 'Estado', 'Sucursal']
+        headers = ['ID', 'Nombre', 'Email', 'Teléfono', 'Rol', 'Profesión', 'Estado', 'Sucursal']
         style_header(ws, headers)
 
         base_filter = {'tenant': tenant}
@@ -735,7 +735,7 @@ def export_report(request):
             ws.cell(row=row_idx, column=3, value=emp.user.email if emp.user else '—').border = thin_border
             ws.cell(row=row_idx, column=4, value=emp.phone or '—').border = thin_border
             ws.cell(row=row_idx, column=5, value=emp.user.business_role if emp.user else '—').border = thin_border
-            ws.cell(row=row_idx, column=6, value=emp.specialty or '—').border = thin_border
+            ws.cell(row=row_idx, column=6, value=emp.profession or '—').border = thin_border
             ws.cell(row=row_idx, column=7, value='Activo' if emp.is_active else 'Inactivo').border = thin_border
             ws.cell(row=row_idx, column=8, value=emp.branch.name if emp.branch else '—').border = thin_border
         ws.column_dimensions['B'].width = 25

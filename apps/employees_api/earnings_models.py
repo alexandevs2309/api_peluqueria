@@ -45,6 +45,13 @@ class PayrollPeriod(models.Model):
     # Snapshots de compensación (determinismo)
     payment_type_snapshot = models.CharField(max_length=10, null=True, blank=True, help_text='Tipo de pago vigente al crear período')
     fixed_salary_snapshot = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text='Salario fijo vigente al crear período')
+    commission_rate_snapshot = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Porcentaje de comisión vigente al crear período'
+    )
     
     base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     commission_earnings = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
@@ -110,6 +117,8 @@ class PayrollPeriod(models.Model):
                 self.payment_type_snapshot = self.employee.payment_type
             if not self.fixed_salary_snapshot:
                 self.fixed_salary_snapshot = self.employee.fixed_salary
+            if not self.commission_rate_snapshot:
+                self.commission_rate_snapshot = self.employee.commission_rate
             return super().save(*args, **kwargs)
         
         # Verificar si existe instancia anterior
@@ -123,6 +132,8 @@ class PayrollPeriod(models.Model):
             raise ValidationError("No se puede modificar payment_type_snapshot")
         if old_instance.fixed_salary_snapshot != self.fixed_salary_snapshot:
             raise ValidationError("No se puede modificar fixed_salary_snapshot")
+        if old_instance.commission_rate_snapshot != self.commission_rate_snapshot:
+            raise ValidationError("No se puede modificar commission_rate_snapshot")
         # Permitir establecer snapshot por primera vez durante aprobación.
         # Tratar snapshot vacío ({}) como no inicializado.
         old_snapshot = old_instance.calculation_snapshot
@@ -254,9 +265,11 @@ class PayrollPeriod(models.Model):
             days_absent = 0
             for att in attendances:
                 if att.status == 'late':
-                    if att.notes and "Retraso de" in att.notes:
+                    if att.late_minutes > 0:
+                        minutes_late += att.late_minutes
+                    elif att.notes and "Retraso de" in att.notes:
+                        # Legacy fallback: read from notes for old records without late_minutes
                         try:
-                            # Parsear "Retraso de X minutos"
                             minutes_late += int(att.notes.split("Retraso de ")[1].split(" minutos")[0])
                         except Exception:
                             minutes_late += 30
@@ -291,8 +304,36 @@ class PayrollPeriod(models.Model):
                             description=f"[Asistencia] Deducción por inasistencia ({days_absent} días)",
                             is_automatic=True
                         )
+
+        # Auto-deduct active loan installments (Bug 3)
+        self.deductions.filter(
+            is_automatic=True,
+            description__startswith="[Préstamo]"
+        ).delete()
+
+        from apps.employees_api.models import Loan
+        active_loans = Loan.objects.filter(
+            employee=employee,
+            status='active',
+            remaining_balance__gt=Decimal('0.00')
+        )
+
+        for loan in active_loans:
+            if loan.installments > 0 and loan.amount > 0:
+                installment_amount = (loan.amount / loan.installments).quantize(
+                    Decimal('0.01')
+                )
+                installment_amount = min(installment_amount, loan.remaining_balance)
+
+                if installment_amount > 0:
+                    PayrollDeduction.objects.create(
+                        period=self,
+                        deduction_type='loan',
+                        amount=installment_amount,
+                        description=f"[Préstamo] Cuota automática — {loan.description or 'Préstamo #' + str(loan.id)}",
+                        is_automatic=True
+                    )
         
-        # NUEVO: Usar servicio de cálculo desde snapshots
         try:
             from apps.employees_api.payroll_services import PayrollCalculationService
             
@@ -302,11 +343,6 @@ class PayrollPeriod(models.Model):
             self.base_salary = calculation['base_salary']
             self.commission_earnings = calculation['commission_earnings']
             self.gross_amount = calculation['gross_amount']
-            
-            # Calcular deducciones y neto
-            deductions = self.deductions.all()
-            self.deductions_total = sum(d.amount for d in deductions)
-            self.net_amount = self.gross_amount - self.deductions_total
             
         except ImportError:
             # Fallback a lógica antigua si el servicio no existe aún
@@ -333,16 +369,74 @@ class PayrollPeriod(models.Model):
                     date_time__date__lte=self.period_end
                 )
                 total_sales = sum(sale.total for sale in sales)
-                commission_rate = employee.commission_rate / 100
+                commission_rate_value = self.commission_rate_snapshot \
+                    if self.commission_rate_snapshot is not None \
+                    else employee.commission_rate
+                commission_rate = commission_rate_value / 100
                 self.commission_earnings = Decimal(str(total_sales)) * Decimal(str(commission_rate))
             else:
                 self.commission_earnings = Decimal('0.00')
             
             # Calcular totales
             self.gross_amount = self.base_salary + self.commission_earnings
-            deductions = self.deductions.all()
-            self.deductions_total = sum(d.amount for d in deductions)
-            self.net_amount = self.gross_amount - self.deductions_total
+
+        # Auto-apply configured rates from PayrollConfiguration (Bug 5)
+        self.deductions.filter(
+            is_automatic=True,
+            description__startswith="[Config]"
+        ).delete()
+
+        try:
+            payroll_config = employee.tenant.payroll_config
+        except Exception:
+            payroll_config = None
+
+        if payroll_config and self.gross_amount > 0:
+            base_for_rates = self.base_salary  # rates apply to base salary only
+
+            if payroll_config.tax_rate > 0:
+                tax_amount = (base_for_rates * payroll_config.tax_rate / 100).quantize(
+                    Decimal('0.01')
+                )
+                if tax_amount > 0:
+                    PayrollDeduction.objects.create(
+                        period=self,
+                        deduction_type='tax',
+                        amount=tax_amount,
+                        description=f"[Config] ISR ({payroll_config.tax_rate}%)",
+                        is_automatic=True
+                    )
+
+            if payroll_config.social_security_rate > 0:
+                ss_amount = (base_for_rates * payroll_config.social_security_rate / 100).quantize(
+                    Decimal('0.01')
+                )
+                if ss_amount > 0:
+                    PayrollDeduction.objects.create(
+                        period=self,
+                        deduction_type='social_security',
+                        amount=ss_amount,
+                        description=f"[Config] TSS ({payroll_config.social_security_rate}%)",
+                        is_automatic=True
+                    )
+
+            if payroll_config.health_insurance_rate > 0:
+                hi_amount = (base_for_rates * payroll_config.health_insurance_rate / 100).quantize(
+                    Decimal('0.01')
+                )
+                if hi_amount > 0:
+                    PayrollDeduction.objects.create(
+                        period=self,
+                        deduction_type='health_insurance',
+                        amount=hi_amount,
+                        description=f"[Config] SFS ({payroll_config.health_insurance_rate}%)",
+                        is_automatic=True
+                    )
+
+        # Calcular deducciones y neto finales
+        deductions = self.deductions.all()
+        self.deductions_total = sum(d.amount for d in deductions)
+        self.net_amount = self.gross_amount - self.deductions_total
         
         # Validar si se puede pagar
         if self.status == 'open':
@@ -361,13 +455,31 @@ class PayrollPeriod(models.Model):
     def _create_calculation_snapshot(self):
         """Crea snapshot inmutable del cálculo al aprobar"""
         from apps.pos_api.models import Sale
+        import datetime
+        from zoneinfo import ZoneInfo
+        from django.utils.timezone import make_aware
+        try:
+            tenant_tz = ZoneInfo(
+                getattr(self.employee.tenant, 'timezone', None) or 'America/Santo_Domingo'
+            )
+        except Exception:
+            tenant_tz = ZoneInfo('America/Santo_Domingo')
+        
+        start_dt = make_aware(
+            datetime.datetime.combine(self.period_start, datetime.time.min),
+            timezone=tenant_tz
+        )
+        end_dt = make_aware(
+            datetime.datetime.combine(self.period_end, datetime.time.max),
+            timezone=tenant_tz
+        )
         
         # Obtener ventas del período
         sales = Sale.objects.filter(
             tenant=self.employee.tenant,
             employee=self.employee,
-            date_time__date__gte=self.period_start,
-            date_time__date__lte=self.period_end
+            date_time__gte=start_dt,
+            date_time__lte=end_dt
         ).values('id', 'total', 'date_time')
         
         self.calculation_snapshot = {
@@ -375,8 +487,8 @@ class PayrollPeriod(models.Model):
             'employee': {
                 'id': self.employee.id,
                 'payment_type': self.employee.payment_type,
-                'fixed_salary': float(self.employee.fixed_salary),
-                'commission_rate': float(self.employee.commission_rate)
+                'fixed_salary': float(self.fixed_salary_snapshot or self.employee.fixed_salary),
+                'commission_rate': float(self.commission_rate_snapshot or self.employee.commission_rate)
             },
             'period': {
                 'type': self.period_type,
@@ -456,6 +568,30 @@ class PayrollPeriod(models.Model):
         self.paid_by = paid_by
         self.is_finalized = True  # NUEVO: Asegurar finalización
         self.save()
+
+        # Update loan remaining balances for auto-deducted installments (Bug 3)
+        from apps.employees_api.models import Loan
+        loan_deductions = self.deductions.filter(
+            is_automatic=True,
+            description__startswith="[Préstamo]"
+        )
+        for deduction in loan_deductions:
+            # Safe approach: match active loans and reduce balance
+            active_loans = Loan.objects.filter(
+                employee=self.employee,
+                status='active',
+                remaining_balance__gt=Decimal('0.00')
+            ).order_by('created_at')
+            for loan in active_loans:
+                installment = (loan.amount / max(loan.installments, 1)).quantize(Decimal('0.01'))
+                installment = min(installment, loan.remaining_balance)
+                if abs(installment - deduction.amount) < Decimal('0.02'):  # fuzzy match
+                    loan.remaining_balance -= deduction.amount
+                    if loan.remaining_balance <= Decimal('0.00'):
+                        loan.remaining_balance = Decimal('0.00')
+                        loan.status = 'paid'
+                    loan.save(update_fields=['remaining_balance', 'status'])
+                    break
     
     @property
     def period_display(self):

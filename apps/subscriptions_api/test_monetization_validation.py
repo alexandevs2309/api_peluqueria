@@ -193,7 +193,7 @@ class TestMonetizationValidation:
 
         emp_data = {
             'user_id': target_user.id,
-            'specialty': 'stylist',
+            'profession': 'stylist',
             'phone': '1234567890',
             'is_active': True
         }
@@ -374,7 +374,7 @@ class TestMonetizationValidation:
 
         emp_data = {
             'user_id': target_user.id,
-            'specialty': 'stylist',
+            'profession': 'stylist',
             'phone': '1234567890',
             'is_active': True
         }

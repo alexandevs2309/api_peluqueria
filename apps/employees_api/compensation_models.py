@@ -88,7 +88,7 @@ class EmployeeCompensationHistory(models.Model):
                 'employee_id': self.employee.id,
                 'user_email': self.employee.user.email,
                 'user_full_name': self.employee.user.full_name,
-                'specialty': self.employee.specialty,
+                'profession': self.employee.profession,
                 'hire_date': self.employee.hire_date.isoformat() if self.employee.hire_date else None,
                 'is_active': self.employee.is_active,
                 'tenant_id': self.employee.tenant_id,
