@@ -77,6 +77,8 @@ def _frontend_origin_defaults():
 LOCAL_DEV_ORIGIN_DEFAULTS = [
     'http://localhost:4200',
     'http://127.0.0.1:4200',
+    'http://localhost:4201',
+    'http://127.0.0.1:4201',
 ]
 
 PUBLIC_FRONTEND_ORIGIN_DEFAULTS = [
@@ -86,6 +88,8 @@ PUBLIC_FRONTEND_ORIGIN_DEFAULTS = [
     'https://auron-suite.com',
     'https://www.auron-suite.com',
     'https://frontend-app.auron-suites.workers.dev',
+    'https://app.auronsuite.com',
+    'https://www.app.auronsuite.com',
 ]
 
 
