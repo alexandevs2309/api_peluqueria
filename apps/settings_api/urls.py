@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .integration_views import IntegrationStatusView, IntegrationTestView
 from .admin_views import SaasMetricsView, SystemMonitorView, test_integration_service, sync_role_permissions
-from .contact_views import demo_request, newsletter_signup
+from .contact_views import presentation_request, newsletter_signup
 from .barbershop_views import BarbershopSettingsViewSet
 from .views import BranchViewSet, PublicBrandingSettingsView
 
@@ -23,6 +23,6 @@ urlpatterns = [
     path('admin/sync-permissions/', sync_role_permissions, name='admin-sync-permissions'),
     
     # Contact endpoints
-    path('contact/demo/', demo_request, name='demo-request'),
+    path('contact/presentation/', presentation_request, name='presentation-request'),
     path('contact/newsletter/', newsletter_signup, name='newsletter-signup'),
 ]

@@ -10,8 +10,8 @@ logger = logging.getLogger(__name__)
 
 @api_view(['POST'])
 @permission_classes([AllowAny])  # Público para el landing
-def demo_request(request):
-    """Endpoint para solicitudes de demo desde el landing"""
+def presentation_request(request):
+    """Endpoint para solicitudes de presentación (Video Tour) desde el landing"""
     try:
         data = request.data
         
@@ -29,8 +29,8 @@ def demo_request(request):
             from apps.auth_api.tasks import send_email_async
             support_email = getattr(settings, 'SUPPORT_EMAIL', None)
             if support_email:
-                inquiry_html = EmailRenderer.render('demo_inquiry.html', {
-                    'title': 'Nueva solicitud de video demo',
+                inquiry_html = EmailRenderer.render('presentation_inquiry.html', {
+                    'title': 'Nueva solicitud de presentación personalizada',
                     'contact_name': name,
                     'email': email,
                     'phone': data.get('phone', 'No proporcionado'),
@@ -38,38 +38,38 @@ def demo_request(request):
                     'demo_message': data.get('message', 'Sin mensaje adicional'),
                 })
                 send_email_async.delay(
-                    subject=f'Nueva solicitud de video demo - {name}',
-                    message=f'Nueva solicitud de demo de {name} ({email})',
+                    subject=f'Nueva solicitud de presentación personalizada - {name}',
+                    message=f'Nueva solicitud de presentación de {name} ({email})',
                     from_email='',
                     recipient_list=[support_email] if isinstance(support_email, str) else support_email,
                     html_message=inquiry_html,
                 )
         except Exception as e:
-            logger.error(f"Error notifying support about demo request: {str(e)}")
+            logger.error(f"Error notifying support about presentation request: {str(e)}")
         
         # Acuse al usuario
         try:
-            ack_html = EmailRenderer.render('demo_ack.html', {
+            ack_html = EmailRenderer.render('presentation_ack.html', {
                 'title': 'Recibimos tu solicitud',
                 'contact_name': name if name != 'Lead sin nombre' else '',
             })
             send_email_async.delay(
-                subject='Recibimos tu solicitud de video demo - Auron Suite',
-                message='Gracias por tu interés en Auron Suite. Hemos recibido tu solicitud de video demo personalizado.',
+                subject='Recibimos tu solicitud de presentación - Auron Suite',
+                message='Gracias por tu interés en Auron Suite. Hemos recibido tu solicitud de presentación personalizada (Video Tour) de la plataforma.',
                 from_email='',
                 recipient_list=[email],
                 html_message=ack_html,
             )
         except Exception as e:
-            logger.error(f"Error sending demo confirmation to user: {str(e)}")
+            logger.error(f"Error sending presentation confirmation to user: {str(e)}")
         
         return Response({
-            'message': 'Solicitud de demo enviada correctamente',
+            'message': 'Solicitud de presentación enviada correctamente',
             'status': 'success'
         }, status=status.HTTP_200_OK)
         
     except Exception as e:
-        logger.error(f"Error processing demo request: {str(e)}")
+        logger.error(f"Error processing presentation request: {str(e)}")
         return Response({
             'error': 'Error interno del servidor'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

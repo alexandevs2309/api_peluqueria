@@ -35,6 +35,9 @@ class CSRFProtectionMiddleware(MiddlewareMixin):
             return None
         if request.path.startswith('/api/subscriptions/check-email/'):
             return None
+        # Skip para formulario de contacto y newsletter público (POST sin cookies/sesión)
+        if request.path.startswith('/api/settings/contact/'):
+            return None
 
         x_requested_with = request.META.get('HTTP_X_REQUESTED_WITH')
         if x_requested_with != 'XMLHttpRequest':

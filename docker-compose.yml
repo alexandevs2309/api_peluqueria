@@ -9,7 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5435:5432"
     # Puerto expuesto temporalmente para backup desde host
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-barbershop_db}"]
@@ -66,8 +66,6 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
-      CORS_ALLOWED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200,http://localhost:4201,http://127.0.0.1:4201
-      CSRF_TRUSTED_ORIGINS: http://localhost:4200,http://127.0.0.1:4200,http://localhost:4201,http://127.0.0.1:4201
       FRONTEND_URL: http://localhost:4200
     ports:
       - "8000:8000"
@@ -226,7 +224,7 @@ services:
   evolution:
     image: evoapicloud/evolution-api:latest
     ports:
-      - "8080:8080"
+      - "8085:8080"
     environment:
       - AUTHENTICATION_TYPE=apikey
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_TOKEN:-dev_evolution_token_secret}
