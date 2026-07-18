@@ -1,0 +1,7 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 12px;">Hola <strong>{{ user_name }}</strong>,</p>
+<p style="margin:0 0 12px;">Se ha procesado un reembolso o chargeback en tu cuenta de PayPal por <strong>{{ amount }} {{ currency }}</strong> (Factura #{{ invoice_id }}).</p>
+<p style="margin:0 0 12px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px;color:#991b1b;">Como resultado, tu suscripción ha sido <strong>suspendida</strong>.</p>
+<p style="margin:0;">Por favor, contacta a <a href="mailto:soporte@auronsuite.com" style="color:#2563eb;">soporte@auronsuite.com</a> para regularizar tu situación.</p>
+{% endblock %}

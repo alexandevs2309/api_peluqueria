@@ -1,0 +1,151 @@
+"""
+Base ViewSet para filtrado automático por tenant
+"""
+from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied
+
+
+class TenantQuerySetMixin:
+    """Mixin con lógica de filtrado por tenant compartida entre ViewSets."""
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+
+        if self.request.user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                queryset = queryset.filter(tenant=tenant)
+            else:
+                # SuperAdmin sin tenant en request: requiere filtro explícito por ?tenant=<id>
+                tenant_id = self.request.query_params.get('tenant')
+                if tenant_id:
+                    queryset = queryset.filter(tenant_id=tenant_id)
+                else:
+                    return queryset.none()
+        elif not hasattr(self.request, 'tenant') or not self.request.tenant:
+            return queryset.none()
+        else:
+            queryset = queryset.filter(tenant=self.request.tenant)
+
+        # Filtrado opcional por sucursal si el modelo la soporta
+        branch_id = self.request.query_params.get('branch_id') or self.request.query_params.get('branch')
+        
+        # Restricción estricta de sucursal para empleados no administradores
+        user = self.request.user
+        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+            user_role = getattr(self.request, '_role_cache', None)
+            if user_role is None:
+                from apps.auth_api.role_utils import get_effective_role_api
+                user_role = get_effective_role_api(user, tenant=self.request.tenant)
+                setattr(self.request, '_role_cache', user_role)
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user.employee_profile.branch_id:
+                    branch_id = user.employee_profile.branch_id
+
+        if branch_id:
+            from django.core.exceptions import FieldDoesNotExist
+            try:
+                queryset.model._meta.get_field('branch')
+                if queryset.model.__name__ in ('Employee', 'Service'):
+                    from django.db.models import Q
+                    queryset = queryset.filter(Q(branch_id=branch_id) | Q(branch__isnull=True))
+                else:
+                    queryset = queryset.filter(branch_id=branch_id)
+            except FieldDoesNotExist:
+                pass
+
+        return queryset
+
+
+class TenantScopedViewSet(TenantQuerySetMixin, viewsets.ModelViewSet):
+    """
+    ViewSet base que filtra automáticamente por tenant.
+    
+    Comportamiento:
+    - SuperAdmin: Ve todos los registros
+    - Usuario con tenant: Ve solo registros de su tenant
+    - Usuario sin tenant: No ve nada
+    
+    Uso:
+        class MyViewSet(TenantScopedViewSet):
+            queryset = MyModel.objects.all()
+            serializer_class = MySerializer
+            
+            # get_queryset() ya está implementado
+    
+    Requisitos:
+    - El modelo debe tener campo 'tenant' (ForeignKey a Tenant)
+    - request.tenant debe estar seteado por middleware
+    """
+
+    def perform_create(self, serializer):
+        user = self.request.user
+
+        if user.is_superuser:
+            tenant = getattr(self.request, 'tenant', None)
+            if tenant:
+                serializer.save(tenant=tenant)
+            else:
+                serializer.save()
+            return
+
+        if not hasattr(self.request, 'tenant') or not self.request.tenant:
+            raise PermissionDenied("Usuario sin tenant asignado")
+
+        save_kwargs = {'tenant': self.request.tenant}
+
+        # Restricción/Autoset de sucursal para empleados no administradores
+        if user and getattr(user, 'is_authenticated', False):
+            user_role = getattr(self.request, '_role_cache', None)
+            if user_role is None:
+                from apps.auth_api.role_utils import get_effective_role_api
+                user_role = get_effective_role_api(user, tenant=self.request.tenant)
+                setattr(self.request, '_role_cache', user_role)
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user.employee_profile.branch_id:
+                    if hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
+                        from django.core.exceptions import FieldDoesNotExist
+                        try:
+                            serializer.Meta.model._meta.get_field('branch')
+                            branch_val = serializer.validated_data.get('branch')
+                            if branch_val and branch_val.id != user.employee_profile.branch_id:
+                                raise PermissionDenied("No tienes permisos para operar en una sucursal distinta a la tuya")
+                            save_kwargs['branch_id'] = user.employee_profile.branch_id
+                        except FieldDoesNotExist:
+                            pass
+
+        serializer.save(**save_kwargs)
+
+    def perform_update(self, serializer):
+        user = self.request.user
+
+        # Restricción de sucursal para empleados no administradores en actualizaciones
+        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+            from apps.auth_api.role_utils import get_effective_role_api
+            tenant = getattr(self.request, 'tenant', None) or getattr(user, 'tenant', None)
+            if tenant:
+                user_role = get_effective_role_api(user, tenant=tenant)
+                if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
+                    if user.employee_profile.branch_id:
+                        if hasattr(serializer, 'Meta') and hasattr(serializer.Meta, 'model'):
+                            from django.core.exceptions import FieldDoesNotExist
+                            try:
+                                serializer.Meta.model._meta.get_field('branch')
+                                branch_val = serializer.validated_data.get('branch')
+                                if branch_val and branch_val.id != user.employee_profile.branch_id:
+                                    raise PermissionDenied("No tienes permisos para operar en una sucursal distinta a la tuya")
+                            except FieldDoesNotExist:
+                                pass
+
+        serializer.save()
+
+
+class TenantScopedReadOnlyViewSet(TenantQuerySetMixin, viewsets.ReadOnlyModelViewSet):
+    """
+    Versión ReadOnly de TenantScopedViewSet.
+    
+    Uso:
+        class MyViewSet(TenantScopedReadOnlyViewSet):
+            queryset = MyModel.objects.all()
+            serializer_class = MySerializer
+    """

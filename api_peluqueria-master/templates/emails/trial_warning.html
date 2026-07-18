@@ -1,0 +1,23 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 12px;">Hola <strong>{{ user_full_name }}</strong>,</p>
+<p style="margin:0 0 12px;">Tu prueba gratuita de <strong>{{ tenant_name }}</strong> expira en <strong>{{ days_remaining }} días</strong>.</p>
+<p style="margin:0 0 12px;">Para evitar la suspensión de tu cuenta:</p>
+<ol style="margin:0 0 16px;padding-left:20px;color:#374151;font-size:14px;line-height:1.7;">
+  <li>Inicia sesión en tu cuenta</li>
+  <li>Ve a Configuración &gt; Suscripción</li>
+  <li>Selecciona un plan de pago</li>
+</ol>
+<p style="margin:0;color:#d97706;font-weight:600;">¡No esperes hasta el último momento!</p>
+{% endblock %}
+{% block cta %}
+{% if cta_url %}
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+<tr>
+  <td align="center">
+  <a href="{{ cta_url }}" class="btn" style="background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;display:inline-block;border:1px solid #2563eb;">Elegir un plan</a>
+  </td>
+</tr>
+</table>
+{% endif %}
+{% endblock %}

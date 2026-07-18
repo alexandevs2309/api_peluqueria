@@ -1,0 +1,94 @@
+from django.db import models
+
+
+class ProductCategory(models.Model):
+    name = models.CharField(max_length=100)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='product_categories')
+    description = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Categoría de Producto'
+        verbose_name_plural = 'Categorías de Productos'
+        unique_together = ('name', 'tenant')
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['tenant']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class Supplier(models.Model):
+    name = models.CharField(max_length=255)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='suppliers', db_index=True)
+    phone = models.CharField(max_length=20, blank=True)
+    email = models.EmailField(blank=True)
+
+    def __str__(self):
+        return self.name
+
+class Product(models.Model):
+    name = models.CharField(max_length=255)
+    tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='products')
+    branch = models.ForeignKey('settings_api.Branch', null=True, blank=True, on_delete=models.SET_NULL, related_name='branch_products')
+    sku = models.CharField(max_length=100)
+    barcode = models.CharField(max_length=100, blank=True, null=True)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    stock = models.PositiveIntegerField(default=0)
+    min_stock = models.PositiveIntegerField(default=1)
+    unit = models.CharField(max_length=50, default='unidad')
+    is_active = models.BooleanField(default=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True, blank=True, db_index=True)
+    description = models.TextField(blank=True, default='')
+    category = models.ForeignKey(ProductCategory, on_delete=models.SET_NULL, null=True, blank=True, related_name='products', db_index=True)
+    image = models.ImageField(upload_to='products/', blank=True, null=True, max_length=500)
+
+    class Meta:
+        permissions = [
+            ('adjust_stock', 'Can adjust product stock'),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['sku', 'tenant'],
+                condition=models.Q(branch__isnull=True),
+                name='unique_sku_per_tenant_global'
+            ),
+            models.UniqueConstraint(
+                fields=['sku', 'tenant', 'branch'],
+                condition=models.Q(branch__isnull=False),
+                name='unique_sku_per_tenant_branch'
+            ),
+            models.UniqueConstraint(
+                fields=['barcode', 'tenant'],
+                condition=models.Q(barcode__isnull=False) & models.Q(branch__isnull=True),
+                name='unique_barcode_per_tenant_global'
+            ),
+            models.UniqueConstraint(
+                fields=['barcode', 'tenant', 'branch'],
+                condition=models.Q(barcode__isnull=False) & models.Q(branch__isnull=False),
+                name='unique_barcode_per_tenant_branch'
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['tenant', 'sku']),
+            models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['tenant', 'branch', 'is_active']),
+        ]
+
+    @property
+    def is_below_min_stock(self):
+        return self.stock <= self.min_stock
+
+    def __str__(self):
+        return self.name
+
+class StockMovement(models.Model):
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name='movements', db_index=True)
+    quantity = models.IntegerField()  # negativo si es salida
+    reason = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)

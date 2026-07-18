@@ -1,0 +1,320 @@
+from django.http import JsonResponse
+from django.utils.deprecation import MiddlewareMixin
+from django.utils import timezone
+from datetime import datetime
+from apps.subscriptions_api.models import UserSubscription
+from django.core.cache import cache
+import logging
+from apps.tenants_api.subscription_lifecycle import sync_subscription_state
+from apps.auth_api.role_utils import get_effective_role_name
+
+logger = logging.getLogger(__name__)
+
+BILLING_WEBHOOK_PATHS = [
+    '/api/billing/webhooks/stripe/',
+    '/api/payments/stripe/webhook/',
+]
+
+BILLING_ACCESS_PATHS = [
+    '/api/payments/payments/create_subscription_payment/',
+    '/api/subscriptions/renew/',
+]
+
+PAYWALL_SAFE_PREFIXES = [
+    '/api/subscriptions/me/entitlements/',
+    '/api/subscriptions/renew/',
+    '/api/tenants/current/',
+    '/api/tenants/locale/',
+    '/api/tenants/subscription-status/',
+]
+
+PAYWALL_SAFE_READONLY_PREFIXES = [
+    '/api/notifications/',
+]
+
+class SubscriptionValidationMiddleware(MiddlewareMixin):
+    """
+    Middleware para validar estado de suscripción y expiración de planes
+    """
+    
+    def process_request(self, request):
+        if any(request.path.startswith(prefix) for prefix in PAYWALL_SAFE_PREFIXES):
+            return None
+
+        if request.method in ('GET', 'HEAD', 'OPTIONS'):
+            for prefix in PAYWALL_SAFE_READONLY_PREFIXES:
+                if request.path.startswith(prefix):
+                    return None
+
+        for exempt_path in BILLING_WEBHOOK_PATHS:
+            if request.path.startswith(exempt_path):
+                return None
+
+        # Excluir rutas que no requieren validación
+        exempt_paths = [
+            '/api/auth/',
+            '/api/schema/',
+            '/api/docs/',
+            '/api/healthz/',
+            '/admin/',
+            '/api/subscriptions/plans/',  # Permitir ver planes
+            '/api/subscriptions/register/',  # Permitir registro
+            '/api/subscriptions/register-with-plan/',  # Permitir registro con plan
+            '/api/settings/contact/',
+            '/api/booking/',  # Auto-agendamiento público
+        ]
+        
+        for exempt_path in exempt_paths:
+            if request.path.startswith(exempt_path):
+                return None
+        
+        # Solo aplicar a usuarios autenticados
+        if not hasattr(request, 'user') or not request.user.is_authenticated:
+            return None
+            
+        # SuperAdmin siempre tiene acceso
+        if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
+            return None
+            
+        # Validar tenant y plan
+        if not hasattr(request.user, 'tenant') or not request.user.tenant:
+            return JsonResponse({
+                'error': 'No tenant assigned',
+                'code': 'NO_TENANT',
+                'action_required': 'contact_admin'
+            }, status=403)
+            
+        tenant = getattr(request, 'tenant', request.user.tenant)
+
+        # Cache sync: solo sincronizar cada 5 minutos para evitar query + save en cada request
+        _sync_cache_key = f'sub_sync:{tenant.id}'
+        if cache.get(_sync_cache_key) is None:
+            sync_subscription_state(tenant, save=True)
+            cache.set(_sync_cache_key, True, 300)  # 5 min TTL
+        
+        if tenant.subscription_status in {'archived', 'cancelled'}:
+            return JsonResponse({
+                'error': 'Tenant archived',
+                'code': 'TENANT_ARCHIVED',
+                'action_required': 'contact_support'
+            }, status=403)
+
+        # Validar si tenant está activo
+        if not tenant.is_active and tenant.subscription_status not in {'past_due'}:
+            return JsonResponse({
+                'error': 'Tenant suspended',
+                'code': 'TENANT_SUSPENDED',
+                'action_required': 'contact_admin'
+            }, status=403)
+            
+        # Validar expiración de trial — el grace period lo maneja TenantMiddleware
+        if (tenant.subscription_status == 'trial' and
+            tenant.trial_end_date and
+            tenant.trial_end_date < timezone.now().date()):
+            days_expired = (timezone.now().date() - tenant.trial_end_date).days
+            if days_expired > 3:
+                return JsonResponse({
+                    'error': 'Trial expired',
+                    'code': 'TRIAL_EXPIRED',
+                    'expired_date': tenant.trial_end_date.isoformat(),
+                    'days_expired': days_expired,
+                    'action_required': 'upgrade_plan',
+                    'upgrade_url': '/subscriptions/plans/'
+                }, status=402)
+            # Dentro del grace period: TenantMiddleware ya seteó request.grace_period
+            return None
+
+        if tenant.subscription_status == 'past_due':
+            request.subscription_limited = True
+            request.subscription_status = 'past_due'
+            return None
+
+        # Validar expiración de acceso pago / estados bloqueados
+        if tenant.subscription_status == 'suspended':
+            return JsonResponse({
+                'error': 'Subscription expired',
+                'code': 'SUBSCRIPTION_SUSPENDED',
+                'expired_date': tenant.access_until.isoformat() if tenant.access_until else None,
+                'action_required': 'renew_subscription',
+                'renewal_url': '/client/payment'
+            }, status=402)
+            
+        # Validar suscripciones de usuario expiradas (con cache 5 min)
+        _usub_cache_key = f'usub:{request.user.id}'
+        user_subscription = cache.get(_usub_cache_key)
+        if user_subscription is None:
+            user_subscription = UserSubscription.objects.filter(
+                user=request.user,
+                is_active=True
+            ).first()
+            cache.set(_usub_cache_key, user_subscription or False, 300)
+        
+        if user_subscription is False:
+            user_subscription = None
+
+        if user_subscription:
+            # Si está cancelada (cancelled_at set) pero end_date no ha pasado, aún tiene acceso
+            if user_subscription.cancelled_at and user_subscription.end_date and user_subscription.end_date > timezone.now():
+                request.subscription_cancelled = True
+                request.subscription_access_until = user_subscription.end_date
+                return None
+
+            if user_subscription.end_date and user_subscription.end_date < timezone.now():
+                user_subscription.is_active = False
+                user_subscription.save()
+                cache.delete(f'usub:{request.user.id}')
+                
+                return JsonResponse({
+                    'error': 'Subscription expired',
+                    'code': 'SUBSCRIPTION_EXPIRED',
+                    'expired_date': user_subscription.end_date.isoformat(),
+                    'action_required': 'renew_subscription',
+                    'renewal_url': '/client/payment'
+                }, status=402)
+        
+        # Validar plan activo
+        if not tenant.subscription_plan:
+            return JsonResponse({
+                'error': 'No subscription plan',
+                'code': 'NO_PLAN',
+                'action_required': 'select_plan'
+            }, status=402)
+            
+        return None
+
+
+class APIRateLimitMiddleware(MiddlewareMixin):
+    """
+    Middleware para rate limiting diferenciado por plan de suscripción.
+    Diseño:
+    - Límites separados para lectura y escritura.
+    - Exclusión de endpoints de polling/estado frecuentes.
+    - Contadores por hora, por usuario y por scope.
+    """
+    
+    # Límites por plan (requests por hora)
+    RATE_LIMITS = {
+        'basic': {'read': 10000, 'write': 500},
+        'standard': {'read': 50000, 'write': 5000},
+        'premium': {'read': 150000, 'write': 30000},
+        'enterprise': None,  # Ilimitado
+    }
+
+    # Endpoints públicos (sin throttling de este middleware)
+    EXEMPT_PREFIXES = [
+        '/api/auth/',
+        '/api/healthz/',
+        '/api/schema/',
+        '/api/docs/',
+    ]
+
+    # Endpoints de alta frecuencia de lectura que no deben penalizar UX.
+    EXEMPT_READ_PREFIXES = [
+        '/api/notifications/',
+        '/api/subscriptions/me/entitlements/',
+        '/api/subscriptions/renew/',
+        '/api/settings/barbershop/',
+        '/api/tenants/locale/',
+        '/api/tenants/current/',
+        '/api/auth/verify/',
+    ]
+    
+    def process_request(self, request):
+        # Solo aplicar a rutas /api/
+        if not request.path.startswith('/api/'):
+            return None
+        
+        # Excluir rutas públicas
+        for exempt_path in self.EXEMPT_PREFIXES:
+            if request.path.startswith(exempt_path):
+                return None
+        
+        # Solo aplicar a usuarios autenticados
+        if not hasattr(request, 'user') or not request.user.is_authenticated:
+            return None
+
+        for exempt_path in BILLING_ACCESS_PATHS:
+            if request.path.startswith(exempt_path):
+                return None
+        
+        # SuperAdmin sin límite
+        if request.user.is_superuser:
+            return None
+        
+        # Obtener plan del usuario
+        tenant = getattr(request.user, 'tenant', None)
+        if not tenant:
+            return None
+        
+        subscription_plan = getattr(tenant, 'subscription_plan', None)
+        if not subscription_plan:
+            return None
+        
+        plan_name = subscription_plan.name
+        plan_limits = self.RATE_LIMITS.get(plan_name)
+        
+        # Plan enterprise sin límite
+        if plan_limits is None:
+            return None
+
+        is_read = request.method in ('GET', 'HEAD', 'OPTIONS')
+        if is_read:
+            for prefix in self.EXEMPT_READ_PREFIXES:
+                if request.path.startswith(prefix):
+                    return None
+
+        scope = 'read' if is_read else 'write'
+        rate_limit = plan_limits.get(scope)
+        if rate_limit is None:
+            return None
+
+        # Clave de cache por usuario/scope y por hora para evitar crecimiento infinito
+        current_hour_bucket = timezone.now().strftime('%Y%m%d%H')
+        cache_key = f'api_rate_limit:{request.user.id}:{scope}:{current_hour_bucket}'
+
+        # Obtener contador actual (fail-open controlado si Redis/cache falla)
+        try:
+            current_count = cache.get(cache_key, 0)
+        except Exception as exc:
+            logger.error("RateLimit cache get failed: %s", str(exc))
+            return None
+
+        # Verificar límite
+        if current_count >= rate_limit:
+            logger.warning(
+                "RATE_LIMIT_EXCEEDED user=%s path=%s plan=%s scope=%s count=%d limit=%d",
+                request.user.id, request.path, plan_name, scope, current_count, rate_limit,
+            )
+            return JsonResponse({
+                'error': 'Rate limit exceeded',
+                'code': 'RATE_LIMIT_EXCEEDED',
+                'limit': rate_limit,
+                'period': '1 hour',
+                'plan': plan_name,
+                'scope': scope,
+                'action_required': 'upgrade_plan' if plan_name != 'enterprise' else 'wait'
+            }, status=429)
+        
+        # Incrementar contador (expira en 1 hora)
+        try:
+            cache.set(cache_key, current_count + 1, 3600)
+        except Exception as exc:
+            logger.error("RateLimit cache set failed: %s", str(exc))
+            return None
+        
+        # Agregar headers de rate limit
+        request.rate_limit_remaining = rate_limit - current_count - 1
+        request.rate_limit_limit = rate_limit
+        request.rate_limit_scope = scope
+        
+        return None
+    
+    def process_response(self, request, response):
+        # Agregar headers de rate limit a la respuesta
+        if hasattr(request, 'rate_limit_remaining'):
+            response['X-RateLimit-Limit'] = str(request.rate_limit_limit)
+            response['X-RateLimit-Remaining'] = str(request.rate_limit_remaining)
+            response['X-RateLimit-Reset'] = str(3600)  # 1 hora en segundos
+            response['X-RateLimit-Scope'] = str(getattr(request, 'rate_limit_scope', 'read'))
+        
+        return response

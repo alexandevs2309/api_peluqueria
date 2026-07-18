@@ -1,0 +1,9 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 12px;">El estado de tu ticket ha cambiado.</p>
+<div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;font-size:14px;">
+  <p style="margin:4px 0;"><strong>Asunto:</strong> {{ subject }}</p>
+  <p style="margin:4px 0;"><strong>Estado:</strong> {{ status }}</p>
+</div>
+<p style="margin:0;">Ver ticket en el panel de soporte.</p>
+{% endblock %}

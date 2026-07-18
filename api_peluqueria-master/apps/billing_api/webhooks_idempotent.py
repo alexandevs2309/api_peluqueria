@@ -1,0 +1,360 @@
+import stripe
+from django.http import HttpResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_POST
+from django.conf import settings
+from django.utils import timezone
+from django.db import transaction
+from django.core.exceptions import FieldError
+from apps.auth_api.models import User
+from apps.subscriptions_api.models import UserSubscription
+from apps.tenants_api.utils import get_active_tenant
+from apps.billing_api.models import Invoice, PaymentAttempt
+from apps.billing_api.reconciliation_models import ProcessedStripeEvent
+from django.apps import apps
+from datetime import datetime, timezone as dt_timezone
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_user_id_from_invoice(invoice_data):
+    metadata = invoice_data.get('metadata') or {}
+    user_id = metadata.get('user_id')
+    if user_id:
+        return user_id
+
+    customer_id = invoice_data.get('customer')
+    if not customer_id:
+        return None
+
+    try:
+        user = User.objects.filter(stripe_customer_id=customer_id).only('id').first()
+        return user.id if user else None
+    except FieldError:
+        logger.warning(
+            "Stripe webhook fallback skipped: User.stripe_customer_id not available yet. customer=%s",
+            customer_id,
+        )
+        return None
+
+
+def _extract_cycle_end(invoice_data):
+    """Extraer fin de ciclo desde invoice lines.period.end (Stripe)."""
+    try:
+        lines = (invoice_data.get('lines') or {}).get('data') or []
+        if not lines:
+            return None
+        period_end = (lines[0].get('period') or {}).get('end')
+        if not period_end:
+            return None
+        return datetime.fromtimestamp(period_end, tz=dt_timezone.utc)
+    except Exception:
+        return None
+
+
+@csrf_exempt
+@require_POST
+def stripe_webhook(request):
+    """Webhook idempotente con anti-replay para eventos de Stripe"""
+    payload = request.body
+    sig_header = request.META.get('HTTP_STRIPE_SIGNATURE')
+    endpoint_secret = settings.STRIPE_WEBHOOK_SECRET
+
+    # Validar firma de Stripe
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, endpoint_secret)
+    except ValueError:
+        logger.warning("Webhook rejected: Invalid payload")
+        return HttpResponse(status=400)
+    except stripe.error.SignatureVerificationError:
+        logger.warning("Webhook rejected: Invalid signature")
+        return HttpResponse(status=400)
+
+    event_id = event['id']
+    event_type = event['type']
+
+    # Procesar evento dentro de transacción atómica
+    try:
+        with transaction.atomic():
+            # ✅ IDEMPOTENCIA: Crear o verificar dentro del lock
+            event_obj, created = ProcessedStripeEvent.objects.get_or_create(
+                stripe_event_id=event_id,
+                defaults={
+                    'event_type': event_type,
+                    'payload': event['data']['object']
+                }
+            )
+            
+            # Si ya existía, skip
+            if not created:
+                logger.info(f"Event {event_id} already processed (race condition avoided)")
+                return HttpResponse(status=200)
+
+            # Despachar a handler específico
+            if event_type == 'invoice.payment_succeeded':
+                handle_payment_succeeded(event['data']['object'])
+            elif event_type == 'invoice.payment_failed':
+                handle_payment_failed(event['data']['object'])
+            elif event_type == 'customer.subscription.deleted':
+                handle_subscription_cancelled(event['data']['object'])
+            elif event_type == 'invoice.created':
+                handle_invoice_created(event['data']['object'])
+
+        logger.info(f"Event {event_id} processed successfully")
+        return HttpResponse(status=200)
+
+    except Exception as e:
+        logger.error(f"Error processing event {event_id}: {str(e)}")
+        # Rollback automático por transaction.atomic()
+        return HttpResponse(status=500)
+
+
+def handle_payment_succeeded(invoice_data):
+    """Manejar pago exitoso con protección contra duplicados"""
+    try:
+        user_id = _resolve_user_id_from_invoice(invoice_data)
+        payment_intent_id = invoice_data.get('payment_intent')
+        cycle_end = _extract_cycle_end(invoice_data)
+        
+        if not user_id:
+            logger.warning("Payment succeeded: missing user_id in metadata")
+            return
+        
+        user = User.objects.get(id=user_id)
+        
+        # Validar tenant activo
+        if hasattr(user, 'tenant') and user.tenant:
+            try:
+                get_active_tenant(user.tenant.id)
+            except Exception as e:
+                logger.warning(f"Payment succeeded for inactive tenant {user.tenant.id}: {str(e)}")
+                return
+        
+        # Usar select_for_update para evitar race conditions
+        with transaction.atomic():
+            # Verificar si ya existe factura con este payment_intent
+            existing = Invoice.objects.filter(
+                stripe_payment_intent_id=payment_intent_id
+            ).select_for_update().first()
+            
+            if existing:
+                if existing.is_paid:
+                    logger.info(f"Invoice for payment_intent {payment_intent_id} already marked as paid")
+                    return
+                # Actualizar factura existente
+                existing.is_paid = True
+                existing.paid_at = timezone.now()
+                existing.payment_method = 'stripe'
+                existing.status = 'paid'
+                existing.save()
+                invoice = existing
+            else:
+                # Crear nueva factura
+                invoice = Invoice.objects.create(
+                    user=user,
+                    tenant=user.tenant if hasattr(user, 'tenant') else None,
+                    amount=invoice_data['amount_paid'] / 100,
+                    due_date=timezone.now(),
+                    is_paid=True,
+                    paid_at=timezone.now(),
+                    payment_method='stripe',
+                    status='paid',
+                    stripe_payment_intent_id=payment_intent_id,
+                    description=f"Stripe Invoice {invoice_data.get('id', '')}"
+                )
+        
+        # Reactivar tenant si estaba suspendido
+        if hasattr(user, 'tenant') and user.tenant:
+            tenant = user.tenant
+
+            # Validar que el monto pagado corresponde al plan activo del tenant
+            amount_paid = invoice_data.get('amount_paid', 0) / 100
+            if tenant.subscription_plan:
+                expected_price = float(tenant.subscription_plan.price)
+                if amount_paid > 0 and amount_paid < expected_price * 0.5:
+                    logger.warning(
+                        "Webhook amount mismatch tenant=%s amount_paid=%.2f expected=%.2f — skipping activation",
+                        tenant.id, amount_paid, expected_price
+                    )
+                    return
+
+            update_fields = []
+            if tenant.subscription_status != 'active':
+                tenant.subscription_status = 'active'
+                update_fields.append('subscription_status')
+            if not tenant.is_active:
+                tenant.is_active = True
+                update_fields.append('is_active')
+            if cycle_end:
+                tenant.access_until = cycle_end
+                update_fields.append('access_until')
+            if update_fields:
+                update_fields.append('updated_at')
+                tenant.save(update_fields=update_fields)
+            logger.info(
+                "Tenant %s payment succeeded. access_until=%s",
+                tenant.id,
+                tenant.access_until.isoformat() if tenant.access_until else None
+            )
+
+        # Enviar confirmación de pago
+        try:
+            from apps.subscriptions_api.views import send_purchase_confirmation
+            from apps.subscriptions_api.models import SubscriptionPlan
+            metadata = invoice_data.get('metadata', {})
+            plan_id = metadata.get('plan_id')
+            months = int(metadata.get('months', 1))
+            plan = SubscriptionPlan.objects.get(id=plan_id) if plan_id else None
+            if plan and hasattr(user, 'tenant'):
+                send_purchase_confirmation(
+                    user, user.tenant, plan,
+                    invoice_data['amount_paid'] / 100,
+                    months,
+                    payment_method='stripe'
+                )
+        except Exception:
+            logger.exception("Error sending payment confirmation from webhook")
+                
+    except User.DoesNotExist:
+        logger.warning(f"Payment succeeded: user {user_id} not found")
+    except Exception as e:
+        logger.error(f"Error handling payment succeeded: {str(e)}")
+        raise  # Re-raise para rollback
+
+
+def handle_payment_failed(invoice_data):
+    """Manejar pago fallido"""
+    try:
+        metadata = invoice_data.get('metadata') or {}
+        user_id = metadata.get('user_id')
+        if not user_id:
+            logger.warning("Payment failed: missing user_id in metadata")
+            return
+        
+        user = User.objects.get(id=user_id)
+        
+        # Validar tenant activo
+        if hasattr(user, 'tenant') and user.tenant:
+            try:
+                get_active_tenant(user.tenant.id)
+            except Exception as e:
+                logger.warning(f"Payment failed for inactive tenant {user.tenant.id}: {str(e)}")
+                return
+        
+        # Registrar intento fallido
+        # Buscar la factura local por stripe_payment_intent_id o por user
+        local_invoice = Invoice.objects.filter(
+            user=user,
+            is_paid=False,
+        ).order_by('-id').first()
+
+        PaymentAttempt.objects.create(
+            invoice=local_invoice,
+            success=False,
+            status='failed',
+            message=f"Payment failed: {invoice_data.get('failure_reason', 'Unknown')}"
+        )
+        
+        # Suspender tenant después de 3 intentos fallidos en los últimos 30 días
+        from django.utils import timezone as tz
+        cutoff = tz.now() - __import__('datetime').timedelta(days=30)
+        failed_attempts = PaymentAttempt.objects.filter(
+            invoice__user=user,
+            invoice__tenant=user.tenant if hasattr(user, 'tenant') else None,
+            success=False,
+            created_at__gte=cutoff,
+        ).count()
+        
+        if failed_attempts >= 3 and hasattr(user, 'tenant'):
+            tenant = user.tenant
+            tenant.subscription_status = 'suspended'
+            tenant.is_active = False
+            tenant.save()
+            logger.warning(f"Tenant {tenant.id} suspended after {failed_attempts} failed payments")
+            
+    except User.DoesNotExist:
+        logger.warning(f"Payment failed: user {user_id} not found")
+    except Exception as e:
+        logger.error(f"Error handling payment failed: {str(e)}")
+        raise
+
+
+def handle_subscription_cancelled(subscription_data):
+    """Manejar cancelación de suscripción"""
+    try:
+        metadata = subscription_data.get('metadata') or {}
+        user_id = metadata.get('user_id')
+        if not user_id:
+            logger.warning("Subscription cancelled: missing user_id in metadata")
+            return
+        
+        user = User.objects.get(id=user_id)
+        
+        # Validar tenant activo
+        if hasattr(user, 'tenant') and user.tenant:
+            try:
+                get_active_tenant(user.tenant.id)
+            except Exception as e:
+                logger.warning(f"Subscription cancelled for inactive tenant {user.tenant.id}: {str(e)}")
+                return
+        
+        # Actualizar suscripción local
+        UserSubscription.objects.filter(user=user, is_active=True).update(
+            is_active=False,
+            end_date=timezone.now()
+        )
+        
+        # Actualizar tenant
+        if hasattr(user, 'tenant'):
+            tenant = user.tenant
+            tenant.subscription_status = 'cancelled'
+            tenant.is_active = False
+            tenant.save(update_fields=['subscription_status', 'is_active', 'updated_at'])
+            logger.info(f"Tenant {tenant.id} cancelled subscription")
+            
+    except User.DoesNotExist:
+        logger.warning(f"Subscription cancelled: user {user_id} not found")
+    except Exception as e:
+        logger.error(f"Error handling subscription cancelled: {str(e)}")
+        raise
+
+
+def handle_invoice_created(invoice_data):
+    """Manejar creación de factura"""
+    try:
+        metadata = invoice_data.get('metadata') or {}
+        user_id = metadata.get('user_id')
+        if not user_id:
+            logger.warning("Invoice created: missing user_id in metadata")
+            return
+        
+        user = User.objects.get(id=user_id)
+        
+        # Validar tenant activo
+        if hasattr(user, 'tenant') and user.tenant:
+            try:
+                get_active_tenant(user.tenant.id)
+            except Exception as e:
+                logger.warning(f"Invoice created for inactive tenant {user.tenant.id}: {str(e)}")
+                return
+        
+        stripe_invoice_id = invoice_data.get('id', '')
+        Invoice.objects.get_or_create(
+            description=f"Subscription - {stripe_invoice_id}",
+            defaults={
+                'user': user,
+                'tenant': user.tenant if hasattr(user, 'tenant') else None,
+                'amount': invoice_data['amount_due'] / 100,
+                'due_date': timezone.datetime.fromtimestamp(
+                    invoice_data['due_date'], tz=timezone.utc
+                ),
+                'status': 'pending'
+            }
+        )
+        
+    except User.DoesNotExist:
+        logger.warning(f"Invoice created: user {user_id} not found")
+    except Exception as e:
+        logger.error(f"Error handling invoice created: {str(e)}")
+        raise

@@ -1,0 +1,24 @@
+{% extends "emails/base.html" %}
+{% block content %}
+<p style="margin:0 0 12px;">Hola <strong>{{ user_full_name }}</strong>,</p>
+<p style="margin:0 0 12px;">Tu pago ha sido procesado exitosamente.</p>
+<div style="background:#f3f4f6;border-radius:8px;padding:16px;margin:16px 0;font-size:14px;">
+  <p style="margin:4px 0;"><strong>Plan:</strong> {{ plan_name }}</p>
+  <p style="margin:4px 0;"><strong>Duración:</strong> {{ plan_duration }}</p>
+  <p style="margin:4px 0;"><strong>Monto:</strong> {{ plan_amount }}</p>
+  <p style="margin:4px 0;"><strong>Barbería:</strong> {{ tenant_name }}</p>
+  <p style="margin:4px 0;"><strong>Método de pago:</strong> {{ payment_method }}</p>
+</div>
+<p style="margin:0;">Ya puedes disfrutar de todas las funcionalidades de tu plan.</p>
+{% endblock %}
+{% block cta %}
+{% if cta_url %}
+<table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0;">
+<tr>
+  <td align="center">
+  <a href="{{ cta_url }}" class="btn" style="background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 28px;border-radius:8px;font-size:15px;font-weight:600;display:inline-block;border:1px solid #2563eb;">{{ cta_label }}</a>
+  </td>
+</tr>
+</table>
+{% endif %}
+{% endblock %}
