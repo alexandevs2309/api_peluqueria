@@ -1,0 +1,23 @@
+src/app/pages/client/appointments-management/appointments-management.ts:71:                        <input pInputText [(ngModel)]="textoBusqueda" (ngModelChange)="aplicarFiltros()" [placeholder]="t('appointments.buscar_placeholder')" />
+src/app/pages/client/appointments-management/appointments-management.ts:338:    textoBusqueda = '';
+src/app/pages/client/appointments-management/appointments-management.ts:575:        this.textoBusqueda = '';
+src/app/pages/client/appointments-management/appointments-management.ts:630:        const termino = this.textoBusqueda.trim().toLowerCase();
+src/app/pages/legal/cookies.component.ts:55:                            <p>La plataforma depende de cookies e identificadores de sesión para autenticar usuarios, mantener seguridad y operar el contexto del negocio autenticado.</p>
+src/app/pages/legal/cookies.component.ts:112:                                    <td class="px-4 py-3">Soportar el contexto operativo del negocio autenticado.</td>
+src/app/pages/legal/cookies.component.ts:146:                            <li>Contexto operativo del tenant o negocio autenticado.</li>
+src/app/pages/legal/privacy.component.ts:76:                        operativo de Auron-Suite y las comunicaciones de soporte o preventa. En el contexto del servicio pueden
+src/app/pages/legal/privacy.component.ts:215:                        e idealmente deberán identificar el negocio, la cuenta o el contexto del tratamiento para facilitar la
+src/app/pages/admin/system-monitor.ts:421:            email: 'Correo Electrónico',
+src/app/pages/admin/tenants-management.ts:519:        return this.tenant?.id ? 'Editar Tenant' : 'Nuevo Tenant';
+src/app/pages/admin/tenants-management.ts:630:            rejectLabel: 'Cancelar',
+src/app/pages/admin/tenants-management.ts:653:                rejectLabel: 'Cancelar',
+src/app/pages/admin/tenants-management.ts:676:            rejectLabel: 'Cancelar',
+src/app/pages/admin/users-management.ts:638:        return this.user?.id ? 'Editar Usuario' : 'Nuevo Usuario';
+src/app/pages/admin/admin-support.ts:43:                        <div class="text-xs font-semibold uppercase tracking-[0.24em] text-surface-500 dark:text-surface-400">Contexto</div>
+src/app/pages/admin/system-settings.ts:783:                    detail: response.message || (response.success ? 'Correo de prueba enviado correctamente' : 'No se pudo enviar el correo de prueba'),
+src/app/pages/admin/tenant-detail.ts:325:                    Indica el motivo de la suspensión. Este texto puede usarse para soporte y auditoría.
+src/app/pages/admin/tenant-detail.ts:593:        return 'Cancelar';
+src/app/pages/admin/tutorials-management.ts:100:    <p-dialog [(visible)]="dialogVisible" [style]="{ width: '550px' }" [header]="editing() ? 'Editar Tutorial' : 'Nuevo Tutorial'" [modal]="true" [draggable]="false" [resizable]="false">
+src/app/pages/auth/login.component.ts:355:                summary: 'Correo requerido',
+src/app/pages/auth/login.component.ts:368:                    summary: 'Correo enviado',
+src/app/pages/auth/verify-email.ts:47:                <h1 class="text-2xl font-black tracking-tight text-slate-900 dark:text-white mb-2">{{ t('auth.verify.success_title') || 'Correo verificado' }}</h1>

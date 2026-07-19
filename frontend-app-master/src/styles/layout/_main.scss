@@ -1,0 +1,63 @@
+.layout-main-container {
+    --shell-main-bg: var(--surface-ground);
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    justify-content: space-between;
+    padding: 7rem 1.5rem 0 1.5rem;
+    transition: margin-left var(--layout-section-transition-duration);
+    background: var(--shell-main-bg);
+    position: relative;
+    overflow: hidden;
+}
+
+.layout-main-container::before {
+    content: '';
+    position: absolute;
+    top: -40%;
+    left: -20%;
+    width: 70%;
+    height: 80%;
+    background: radial-gradient(ellipse at 30% 20%, color-mix(in srgb, var(--brand) 6%, transparent) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.layout-main-container::after {
+    content: '';
+    position: absolute;
+    bottom: -30%;
+    right: -10%;
+    width: 60%;
+    height: 70%;
+    background: radial-gradient(ellipse at 70% 80%, color-mix(in srgb, var(--brand) 4%, transparent) 0%, transparent 65%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.layout-main {
+    position: relative;
+    z-index: 1;
+}
+
+.layout-main {
+    flex: 1 1 auto;
+    padding-bottom: 2rem;
+    background-color: transparent;
+}
+
+img {
+    max-width: none !important;
+}
+
+.app-dark {
+    .layout-main-container {
+        --shell-main-bg: var(--surface-ground);
+    }
+    .layout-main-container::before {
+        background: radial-gradient(ellipse at 30% 20%, color-mix(in srgb, var(--brand) 8%, transparent) 0%, transparent 70%);
+    }
+    .layout-main-container::after {
+        background: radial-gradient(ellipse at 70% 80%, color-mix(in srgb, var(--brand) 5%, transparent) 0%, transparent 65%);
+    }
+}

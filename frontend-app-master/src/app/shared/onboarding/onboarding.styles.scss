@@ -1,0 +1,782 @@
+.onboarding-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(2, 6, 23, 0.45);
+    z-index: 2140;
+    animation: onboardingFadeIn 240ms cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: auto;
+}
+
+.onboarding-backdrop.with-spotlight {
+    background: rgba(2, 6, 23, 0.45);
+}
+
+.onboarding-spotlight {
+    position: fixed;
+    border-radius: 18px;
+    z-index: 2145;
+    border: 1px solid rgba(255, 255, 255, 0.82);
+    box-shadow:
+        0 0 0 9999px rgba(2, 6, 23, 0.52),
+        0 0 0 10px rgba(124, 58, 237, 0.14),
+        0 0 34px rgba(139, 92, 246, 0.24);
+    transition: 
+        top 280ms cubic-bezier(0.4, 0, 0.2, 1),
+        left 280ms cubic-bezier(0.4, 0, 0.2, 1),
+        width 280ms cubic-bezier(0.4, 0, 0.2, 1),
+        height 280ms cubic-bezier(0.4, 0, 0.2, 1);
+    pointer-events: none;
+    will-change: top, left, width, height;
+}
+
+.onboarding-spotlight::after {
+    content: '';
+    position: absolute;
+    inset: -7px;
+    border-radius: inherit;
+    border: 1px solid rgba(139, 92, 246, 0.22);
+    box-shadow: 0 0 18px rgba(124, 58, 237, 0.22);
+    animation: onboardingHaloPulse 2200ms ease-in-out infinite;
+    pointer-events: none;
+}
+
+.onboarding-spotlight.spotlight-circle {
+    border-radius: 999px;
+}
+
+.onboarding-tooltip {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: min(420px, calc(100vw - 32px));
+    z-index: 2150;
+    border-radius: 1.5rem;
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--surface-card) 96%, #fff 4%), color-mix(in srgb, var(--surface-card) 100%, transparent));
+    border: 1px solid color-mix(in srgb, var(--surface-border) 72%, #fff 28%);
+    box-shadow: 0 24px 70px rgba(2, 6, 23, 0.34);
+    padding: 1.15rem 1.15rem 1.05rem;
+    transform-origin: center;
+    animation: onboardingCardIn 260ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition:
+        box-shadow 220ms cubic-bezier(0.4, 0, 0.2, 1),
+        transform 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    overflow: hidden;
+    pointer-events: auto;
+    -webkit-backdrop-filter: blur(18px);
+    backdrop-filter: blur(18px);
+}
+
+.onboarding-tooltip.tour-main {
+    --onboarding-accent: var(--brand, #1A56DB);
+    --onboarding-accent-soft: rgba(26, 86, 219, 0.12);
+}
+
+.onboarding-tooltip.tour-ops {
+    --onboarding-accent: var(--brand, #1A56DB);
+    --onboarding-accent-soft: rgba(26, 86, 219, 0.12);
+}
+
+.onboarding-tooltip.tour-pos {
+    --onboarding-accent: var(--success-color);
+    --onboarding-accent-soft: rgba(16, 185, 129, 0.12);
+}
+
+.onboarding-tooltip.tour-earnings {
+    --onboarding-accent: var(--warning-color);
+    --onboarding-accent-soft: rgba(245, 158, 11, 0.12);
+}
+
+.onboarding-tooltip::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.14), transparent 35%),
+        linear-gradient(180deg, transparent 0%, rgba(255, 255, 255, 0.02) 100%);
+}
+
+.onboarding-progress-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 1rem;
+}
+
+.onboarding-progress-track {
+    flex: 1;
+    height: 5px;
+    background: color-mix(in srgb, var(--surface-border) 72%, transparent);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.onboarding-progress-fill {
+    height: 100%;
+    border-radius: inherit;
+    background: linear-gradient(90deg, var(--onboarding-accent, var(--primary-color)), color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 70%, #fff 30%));
+    transition: width 260ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.onboarding-progress-label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--text-color-secondary);
+    min-width: 2.8rem;
+    text-align: right;
+}
+
+.onboarding-tooltip.mobile {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+}
+
+.onboarding-tooltip-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.onboarding-tooltip-kicker {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 78%, #fff 22%);
+    margin-bottom: 0.22rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.onboarding-tooltip-tour-name {
+    font-size: 0.94rem;
+    font-weight: 700;
+    color: var(--text-color);
+    margin-bottom: 0.18rem;
+}
+
+.onboarding-tooltip-step-meta {
+    font-size: 0.78rem;
+    color: var(--text-color-secondary);
+}
+
+.onboarding-tooltip-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.onboarding-step-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.25rem 0.58rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 16%, transparent);
+    border: 1px solid color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 42%, transparent);
+    color: var(--text-color);
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+.onboarding-close {
+    width: 2rem;
+    height: 2rem;
+    border-radius: 999px;
+    border: 1px solid color-mix(in srgb, var(--surface-border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface-100) 72%, transparent);
+    color: var(--text-color-secondary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 180ms ease;
+}
+
+.onboarding-close:hover {
+    color: var(--text-color);
+    transform: translateY(-1px);
+    background: color-mix(in srgb, var(--surface-200) 74%, transparent);
+}
+
+.onboarding-tooltip-title {
+    margin: 0 0 0.5rem;
+    font-size: 1.22rem;
+    line-height: 1.18;
+    color: var(--text-color);
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.onboarding-tooltip-description {
+    margin: 0 0 0.88rem;
+    font-size: 0.98rem;
+    line-height: 1.65;
+    color: var(--text-color);
+    opacity: 0.92;
+}
+
+.onboarding-tour-hint {
+    margin: 0 0 0.95rem;
+    padding: 0.8rem 0.9rem;
+    border-radius: 1rem;
+    background: var(--onboarding-accent-soft, color-mix(in srgb, var(--primary-color) 12%, transparent));
+    border: 1px solid color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 18%, transparent);
+    color: var(--text-color-secondary);
+    font-size: 0.86rem;
+    line-height: 1.5;
+}
+
+.onboarding-tooltip-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    padding-top: 0.2rem;
+}
+
+.onboarding-btn {
+    border-radius: 0.9rem;
+    font-size: 0.9rem;
+    font-weight: 650;
+    padding: 0.62rem 1rem;
+    cursor: pointer;
+    transition: all 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 7rem;
+}
+
+.onboarding-btn.ghost {
+    background: transparent;
+    border: 1px solid var(--surface-border);
+    color: var(--text-color);
+}
+
+.onboarding-btn.ghost:hover {
+    background: color-mix(in srgb, var(--surface-100) 80%, transparent);
+}
+
+.onboarding-btn.primary {
+    border: 1px solid var(--onboarding-accent, var(--primary-color));
+    background: linear-gradient(135deg, var(--onboarding-accent, var(--primary-color)), color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 70%, #8B5CF6 30%));
+    color: var(--primary-color-text);
+    box-shadow: 0 12px 30px color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 22%, transparent);
+}
+
+.onboarding-btn.primary:hover {
+    filter: brightness(0.96);
+    transform: translateY(-1px);
+}
+
+.onboarding-btn.skip-link {
+    border: none;
+    background: transparent;
+    color: var(--text-color-secondary);
+    min-width: auto;
+    padding: 0.58rem 0.4rem;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.onboarding-btn.skip-link:hover {
+    color: var(--text-color);
+    background: transparent;
+    transform: none;
+}
+
+.onboarding-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.onboarding-shortcuts {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+    margin-top: 0.85rem;
+    padding-top: 0.8rem;
+    border-top: 1px solid color-mix(in srgb, var(--surface-border) 72%, transparent);
+    color: var(--text-color-secondary);
+    font-size: 0.74rem;
+}
+
+.onboarding-shortcuts span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.onboarding-shortcuts kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.35rem;
+    height: 1.35rem;
+    padding: 0 0.34rem;
+    border-radius: 0.45rem;
+    border: 1px solid color-mix(in srgb, var(--surface-border) 72%, transparent);
+    background: color-mix(in srgb, var(--surface-100) 82%, transparent);
+    color: var(--text-color);
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+@media (max-width: 900px) {
+    .onboarding-tooltip {
+        border-radius: 1.15rem;
+        padding: 0.95rem;
+    }
+
+    .onboarding-tooltip-title {
+        font-size: 1rem;
+    }
+
+    .onboarding-tooltip-description {
+        font-size: 0.91rem;
+    }
+
+    .onboarding-btn {
+        min-width: 5.4rem;
+        font-size: 0.82rem;
+        padding: 0.48rem 0.72rem;
+    }
+
+    .onboarding-tooltip::before {
+        display: none;
+    }
+}
+
+@keyframes onboardingFadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes onboardingCardIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px) scale(0.97);
+        box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.28);
+    }
+}
+
+@keyframes onboardingHaloPulse {
+    0% {
+        opacity: 0.4;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.9;
+        transform: scale(1.02);
+    }
+    100% {
+        opacity: 0.4;
+        transform: scale(1);
+    }
+}
+
+.onboarding-spotlight-step {
+    position: absolute;
+    top: -1.25rem;
+    left: -1.25rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 50%;
+    background: var(--onboarding-accent, var(--primary-color));
+    color: var(--primary-color-text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    font-weight: 800;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+    z-index: 2160;
+    animation: onboardingStepPop 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.onboarding-spotlight.spotlight-circle .onboarding-spotlight-step {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.onboarding-spotlight-arrow {
+    position: absolute;
+    width: 0;
+    height: 0;
+    z-index: 2155;
+    pointer-events: none;
+}
+
+.onboarding-spotlight-arrow::before,
+.onboarding-spotlight-arrow::after {
+    content: '';
+    position: absolute;
+    width: 0;
+    height: 0;
+    border: 10px solid transparent;
+}
+
+.onboarding-spotlight-arrow[dir="top"] {
+    bottom: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.onboarding-spotlight-arrow[dir="top"]::before {
+    border-top-color: var(--onboarding-accent, var(--primary-color));
+    top: 0;
+}
+.onboarding-spotlight-arrow[dir="top"]::after {
+    border-top-color: rgba(2, 6, 23, 0.52);
+    top: 1px;
+}
+
+.onboarding-spotlight-arrow[dir="bottom"] {
+    top: -20px;
+    left: 50%;
+    transform: translateX(-50%);
+}
+.onboarding-spotlight-arrow[dir="bottom"]::before {
+    border-bottom-color: var(--onboarding-accent, var(--primary-color));
+    bottom: 0;
+}
+.onboarding-spotlight-arrow[dir="bottom"]::after {
+    border-bottom-color: rgba(2, 6, 23, 0.52);
+    bottom: 1px;
+}
+
+.onboarding-spotlight-arrow[dir="left"] {
+    right: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+.onboarding-spotlight-arrow[dir="left"]::before {
+    border-left-color: var(--onboarding-accent, var(--primary-color));
+    left: 0;
+}
+.onboarding-spotlight-arrow[dir="left"]::after {
+    border-left-color: rgba(2, 6, 23, 0.52);
+    left: 1px;
+}
+
+.onboarding-spotlight-arrow[dir="right"] {
+    left: -20px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+.onboarding-spotlight-arrow[dir="right"]::before {
+    border-right-color: var(--onboarding-accent, var(--primary-color));
+    right: 0;
+}
+.onboarding-spotlight-arrow[dir="right"]::after {
+    border-right-color: rgba(2, 6, 23, 0.52);
+    right: 1px;
+}
+
+.onboarding-step-indicators {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+    padding: 0.25rem;
+}
+
+.onboarding-step-dot {
+    width: 0.7rem;
+    height: 0.7rem;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--surface-border) 60%, transparent);
+    border: 2px solid transparent;
+    transition: all 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+}
+
+.onboarding-step-dot.active {
+    background: var(--onboarding-accent, var(--primary-color));
+    border-color: var(--onboarding-accent, var(--primary-color));
+    transform: scale(1.25);
+    box-shadow: 0 0 12px color-mix(in srgb, var(--onboarding-accent, var(--primary-color)) 40%, transparent);
+}
+
+.onboarding-step-dot.completed {
+    background: transparent;
+    border-color: var(--onboarding-accent, var(--primary-color));
+}
+
+.onboarding-step-dot.completed::after {
+    content: '✓';
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+    color: var(--onboarding-accent, var(--primary-color));
+    font-size: 0.55rem;
+    font-weight: 800;
+}
+
+.onboarding-tooltip-enter-left {
+    animation: onboardingSlideFromLeft 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.onboarding-tooltip-enter-right {
+    animation: onboardingSlideFromRight 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.onboarding-tooltip-enter-top {
+    animation: onboardingSlideFromTop 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.onboarding-tooltip-enter-bottom {
+    animation: onboardingSlideFromBottom 380ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes onboardingStepPop {
+    from {
+        opacity: 0;
+        transform: scale(0.3);
+    }
+    50% {
+        transform: scale(1.15);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
+}
+
+@keyframes onboardingSlideFromLeft {
+    from {
+        opacity: 0;
+        transform: translateX(-32px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+@keyframes onboardingSlideFromRight {
+    from {
+        opacity: 0;
+        transform: translateX(32px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0) scale(1);
+    }
+}
+
+@keyframes onboardingSlideFromTop {
+    from {
+        opacity: 0;
+        transform: translateY(-32px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@keyframes onboardingSlideFromBottom {
+    from {
+        opacity: 0;
+        transform: translateY(32px) scale(0.96);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.onboarding-welcome-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(2, 6, 23, 0.68);
+    backdrop-filter: blur(6px);
+    animation: onboardingFadeIn 240ms ease;
+    padding: 1.5rem;
+}
+
+.onboarding-welcome-card {
+    width: min(520px, 100%);
+    border-radius: 1.75rem;
+    background: var(--surface-card);
+    border: 1px solid var(--surface-border);
+    box-shadow: 0 32px 80px rgba(2, 6, 23, 0.42);
+    padding: 2.5rem 2rem;
+    text-align: center;
+    animation: onboardingWelcomeIn 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    overflow: hidden;
+}
+
+.onboarding-welcome-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 5px;
+    background: linear-gradient(90deg, var(--brand, #1A56DB), #1544AD, var(--success-color), var(--warning-color));
+    background-size: 300% 100%;
+    animation: onboardingGradientShift 4s ease infinite;
+}
+
+.onboarding-welcome-icon {
+    width: 5rem;
+    height: 5rem;
+    margin: 0 auto 1.25rem;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary-color), color-mix(in srgb, var(--primary-color) 60%, #8B5CF6));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    color: var(--primary-color-text);
+    box-shadow: 0 16px 40px color-mix(in srgb, var(--primary-color) 35%, transparent);
+}
+
+.onboarding-welcome-title {
+    font-size: 1.65rem;
+    font-weight: 850;
+    color: var(--text-color);
+    margin: 0 0 0.5rem;
+    letter-spacing: -0.03em;
+}
+
+.onboarding-welcome-subtitle {
+    font-size: 1.05rem;
+    color: var(--text-color-secondary);
+    margin: 0 0 1.75rem;
+    line-height: 1.65;
+}
+
+.onboarding-welcome-features {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 2rem;
+    text-align: left;
+}
+
+.onboarding-welcome-feature {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.75rem;
+    border-radius: 1rem;
+    background: var(--surface-ground);
+    border: 1px solid var(--surface-border);
+    transition: all 180ms ease;
+}
+
+.onboarding-welcome-feature:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+    border-color: color-mix(in srgb, var(--primary-color) 30%, transparent);
+}
+
+.onboarding-welcome-feature-icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    flex-shrink: 0;
+    color: var(--primary-color-text);
+}
+
+.onboarding-welcome-feature-icon.pos { background: linear-gradient(135deg, var(--success-500), var(--success-600)); }
+.onboarding-welcome-feature-icon.ops { background: linear-gradient(135deg, var(--brand, #1A56DB), #1544AD); }
+.onboarding-welcome-feature-icon.main { background: linear-gradient(135deg, var(--brand, #1A56DB), #103585); }
+
+.onboarding-welcome-feature-text strong {
+    display: block;
+    font-size: 0.85rem;
+    color: var(--text-color);
+    margin-bottom: 0.15rem;
+}
+
+.onboarding-welcome-feature-text span {
+    font-size: 0.75rem;
+    color: var(--text-color-secondary);
+}
+
+.onboarding-welcome-actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.onboarding-welcome-btn {
+    padding: 0.85rem 1.75rem;
+    border-radius: 1rem;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 220ms cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 11rem;
+    border: none;
+}
+
+.onboarding-welcome-btn.primary {
+    background: linear-gradient(135deg, var(--primary-color), color-mix(in srgb, var(--primary-color) 70%, #8B5CF6));
+    color: var(--primary-color-text);
+    box-shadow: 0 14px 36px color-mix(in srgb, var(--primary-color) 30%, transparent);
+}
+
+.onboarding-welcome-btn.primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 48px color-mix(in srgb, var(--primary-color) 40%, transparent);
+}
+
+.onboarding-welcome-btn.secondary {
+    background: var(--surface-ground);
+    border: 1px solid var(--surface-border);
+    color: var(--text-color);
+}
+
+.onboarding-welcome-btn.secondary:hover {
+    background: var(--surface-100);
+    border-color: color-mix(in srgb, var(--primary-color) 30%, transparent);
+}
+
+@keyframes onboardingWelcomeIn {
+    from {
+        opacity: 0;
+        transform: scale(0.92) translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: scale(1) translateY(0);
+    }
+}
+
+@keyframes onboardingGradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}

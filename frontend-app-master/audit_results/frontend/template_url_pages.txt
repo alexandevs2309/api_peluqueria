@@ -1,0 +1,7 @@
+src/app/pages/auth/forgot-password.ts
+src/app/pages/auth/login.component.ts
+src/app/pages/auth/register.ts
+src/app/pages/auth/reset-password.ts
+src/app/pages/client/checkout/checkout.ts
+src/app/pages/client/pos/pos-system.ts
+src/app/pages/client/settings/barbershop-settings.ts

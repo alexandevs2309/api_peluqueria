@@ -1,0 +1,1499 @@
+<!-- ============================================
+     AURON LANDING PAGE — World-Class Template
+     ============================================ -->
+<div [class.au-light]="!isDark()" class="relative min-h-screen">
+
+  <!-- ===== AMBIENT BACKGROUND ===== -->
+  <div aria-hidden="true" class="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+    <!-- Grid -->
+    <div class="absolute inset-0 opacity-[0.04]"
+         style="background-image: linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px);
+                background-size: 72px 72px;">
+    </div>
+    <!-- Ambient blobs -->
+    <div class="au-ambient-blob absolute rounded-full"
+         style="width: 700px; height: 700px; top: -15%; left: -10%;
+                background: rgba(26, 86, 219, 0.08); filter: blur(120px);
+                animation: au-ambient-float 25s ease-in-out infinite;">
+    </div>
+    <div class="au-ambient-blob absolute rounded-full"
+         style="width: 550px; height: 550px; top: 25%; right: -15%;
+                background: rgba(99, 102, 241, 0.06); filter: blur(110px);
+                animation: au-ambient-float 30s ease-in-out infinite -8s;">
+    </div>
+    <div class="au-ambient-blob absolute rounded-full"
+         style="width: 650px; height: 650px; bottom: -20%; left: 25%;
+                background: rgba(139, 92, 246, 0.05); filter: blur(130px);
+                animation: au-ambient-float 35s ease-in-out infinite -15s;">
+    </div>
+  </div>
+
+  <!-- ===== NAVBAR ===== -->
+  <nav class="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-3 sm:pt-4 au-nav-enter" id="navbar">
+    <div class="flex w-full items-center justify-between gap-4 rounded-full px-4 py-2 sm:px-6 sm:py-2.5 transition-all duration-500"
+         [class]="navScrolled()
+           ? 'max-w-6xl bg-[rgba(9,9,11,0.75)] backdrop-blur-xl border border-white/[0.06] shadow-lg shadow-black/20'
+           : 'max-w-6xl bg-transparent border border-transparent'"
+         [class.au-light-nav]="!isDark()">
+
+      <!-- Logo -->
+      <a routerLink="/" class="flex items-center gap-1 text-base font-bold tracking-tight shrink-0"
+         [class.text-white]="isDark()"
+         [class.text-zinc-900]="!isDark()">
+        AURON<span class="au-text-gradient text-2xl"> SUITE </span>
+      </a>
+
+      <!-- Desktop Nav -->
+      <div class="hidden md:flex items-center gap-1">
+        @for (item of navItems; track item.label) {
+          <button (click)="scrollTo(item.fragment)"
+                  class="rounded-full px-4 py-1.5 text-sm font-medium transition-colors duration-200 text-zinc-400 hover:text-white hover:bg-white/[0.06]"
+                  [class.text-zinc-500]="!isDark()"
+                  [class.hover:text-zinc-900]="!isDark()"
+                  [class.hover:bg-zinc-900/5]="!isDark()">
+            {{ item.label }}
+          </button>
+        }
+      </div>
+
+      <!-- Desktop CTA Group -->
+      <div class="hidden md:flex items-center gap-2">
+        <!-- Theme toggle -->
+        <button (click)="toggleTheme()" [attr.aria-label]="isDark() ? 'Cambiar a modo claro' : 'Cambiar a modo oscuro'"
+                class="flex items-center justify-center w-8 h-8 rounded-full border transition-colors duration-200"
+                [class]="isDark()
+                  ? 'border-white/10 text-zinc-400 hover:text-white hover:border-white/20 hover:bg-white/[0.06]'
+                  : 'border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:border-zinc-300 hover:bg-zinc-100'">
+          @if (isDark()) {
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          } @else {
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          }
+        </button>
+
+        <a routerLink="/auth/login"
+           class="text-sm font-medium transition-colors px-3 py-1.5 rounded-full"
+           [class]="isDark() ? 'text-zinc-400 hover:text-white' : 'text-zinc-600 hover:text-zinc-900'">
+          Iniciar sesión
+        </a>
+
+        <a routerLink="/auth/register"
+           class="inline-flex items-center justify-center h-8 px-4 text-sm font-semibold rounded-full transition-all duration-200 bg-[#1A56DB] text-white hover:bg-[#1548BD] shadow-sm shadow-blue-500/20 hover:shadow-md hover:shadow-blue-500/30 active:scale-[0.97]">
+          Comenzar gratis
+        </a>
+      </div>
+
+      <!-- Mobile menu button -->
+      <div class="md:hidden flex items-center gap-1.5">
+        <button (click)="toggleTheme()" [attr.aria-label]="isDark() ? 'Modo claro' : 'Modo oscuro'"
+                class="flex items-center justify-center w-8 h-8 rounded-full border transition-colors"
+                [class]="isDark() ? 'border-white/10 text-zinc-400' : 'border-zinc-200 text-zinc-500'">
+          @if (isDark()) {
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+          } @else {
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          }
+        </button>
+        <button (click)="toggleMobileMenu()" aria-label="Menú" class="p-2"
+                [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'">
+          @if (mobileMenuOpen()) {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          } @else {
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
+          }
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile menu dropdown -->
+    @if (mobileMenuOpen()) {
+      <div class="md:hidden absolute top-full left-4 right-4 mt-2 rounded-2xl p-4 border au-glass-strong"
+           [class]="isDark() ? 'bg-zinc-900/90 border-white/[0.08]' : 'bg-white/95 border-zinc-200'">
+        <div class="flex flex-col gap-1">
+          @for (item of navItems; track item.label) {
+            <button (click)="scrollTo(item.fragment); mobileMenuOpen.set(false)"
+                    class="text-left rounded-xl px-4 py-3 text-sm font-medium transition-colors"
+                    [class]="isDark() ? 'text-zinc-300 hover:bg-white/[0.06]' : 'text-zinc-700 hover:bg-zinc-100'">
+              {{ item.label }}
+            </button>
+          }
+          <hr class="my-2" [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-200'"/>
+          <a routerLink="/auth/login" (click)="mobileMenuOpen.set(false)"
+             class="rounded-xl px-4 py-3 text-sm font-medium"
+             [class]="isDark() ? 'text-zinc-400' : 'text-zinc-500'">
+            Iniciar sesión
+          </a>
+          <a routerLink="/auth/register" (click)="mobileMenuOpen.set(false)"
+             class="mt-1 flex justify-center rounded-xl py-3 text-sm font-semibold bg-[#1A56DB] text-white">
+            Comenzar gratis
+          </a>
+        </div>
+      </div>
+    }
+  </nav>
+
+  <!-- ===== SECTION 1: HERO ===== -->
+  <section class="relative min-h-screen flex flex-col overflow-hidden">
+    <div class="section-bg section-bg--hero" aria-hidden="true"></div>
+
+    <!-- Hero background mesh -->
+    <div class="hero-bg" aria-hidden="true">
+      <svg class="hero-bg__mesh" viewBox="0 0 1200 600"
+           xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <radialGradient id="rg1" cx="50%" cy="30%" r="55%">
+            <stop offset="0%"   stop-color="#1A56DB" stop-opacity="0.12"/>
+            <stop offset="100%" stop-color="#1A56DB" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="rg2" cx="85%" cy="80%" r="40%">
+            <stop offset="0%"   stop-color="#D97706" stop-opacity="0.07"/>
+            <stop offset="100%" stop-color="#D97706" stop-opacity="0"/>
+          </radialGradient>
+          <radialGradient id="rg3" cx="5%" cy="50%" r="35%">
+            <stop offset="0%"   stop-color="#1A56DB" stop-opacity="0.06"/>
+            <stop offset="100%" stop-color="#1A56DB" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#rg1)"/>
+        <rect width="100%" height="100%" fill="url(#rg2)"/>
+        <rect width="100%" height="100%" fill="url(#rg3)"/>
+      </svg>
+      <svg class="hero-bg__dots" viewBox="0 0 100 100"
+           xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice"
+           aria-hidden="true">
+        <defs>
+          <pattern id="dot-grid" x="0" y="0" width="4" height="4"
+                   patternUnits="userSpaceOnUse">
+            <circle cx="0.5" cy="0.5" r="0.4" fill="currentColor" opacity="0.3"/>
+          </pattern>
+          <radialGradient id="dot-fade" cx="50%" cy="50%" r="50%">
+            <stop offset="20%"  stop-color="white" stop-opacity="1"/>
+            <stop offset="100%" stop-color="white" stop-opacity="0"/>
+          </radialGradient>
+          <mask id="dot-mask">
+            <rect width="100%" height="100%" fill="url(#dot-fade)"/>
+          </mask>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#dot-grid)" mask="url(#dot-mask)"/>
+      </svg>
+    </div>
+
+    <!-- ── Text block ── -->
+    <div class="relative z-10 mx-auto w-full max-w-7xl px-5 sm:px-8 lg:px-12 text-center pt-28 sm:pt-36 lg:pt-44 pb-6 sm:pb-8">
+      <!-- Badge chip -->
+      <div class="mb-8 sm:mb-10"
+           style="animation: au-hero-reveal 0.8s var(--au-ease-out) forwards; animation-delay: 0ms; opacity: 0;">
+        <div class="inline-flex items-center gap-2 rounded-full px-5 py-2 text-sm font-medium border au-glass-strong"
+             [class]="isDark() ? 'text-zinc-300 border-white/[0.08]' : 'text-zinc-700 border-zinc-200'">
+          <svg class="w-4 h-4" [class]="isDark() ? 'text-blue-400' : 'text-blue-600'" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12M9 3v18M15 3v18M3 9h18M3 15h18"/></svg>
+          <span>Potenciando negocios de belleza en LATAM</span>
+        </div>
+      </div>
+
+      <!-- Headline -->
+      <h1 class="mb-6 sm:mb-8 font-extrabold tracking-tight leading-[1.03]"
+          [class]="isDark() ? 'text-white' : 'text-zinc-900'"
+          style="animation: au-hero-reveal 0.8s var(--au-ease-out) forwards; animation-delay: 100ms; opacity: 0;">
+        <span class="text-5xl sm:text-6xl md:text-7xl lg:text-8xl xl:text-[3.5rem] 2xl:text-[6.5rem]"
+              style="text-wrap: balance;">Gestiona tu barbería o salón sin complicaciones</span>
+      </h1>
+
+      <!-- Subtitle -->
+      <p class="mx-auto max-w-1xl au-text-pretty text-lg sm:text-xl md:text-2xl leading-relaxed"
+         [class]="isDark() ? 'text-zinc-100' : 'text-zinc-600'"
+         style="animation: au-hero-reveal 0.8s var(--au-ease-out) forwards; animation-delay: 200ms; opacity: 0;">
+        Agenda citas, cobra en segundos, controla inventario y conoce tus números reales. Todo en una sola plataforma, hecha para Latinoamérica.
+      </p>
+
+      <!-- CTAs -->
+      <div class="flex flex-col items-center justify-center gap-4 sm:flex-row sm:gap-5 mt-10 sm:mt-12"
+           style="animation: au-hero-reveal 0.8s var(--au-ease-out) forwards; animation-delay: 300ms; opacity: 0;">
+        <a routerLink="/auth/register"
+           class="inline-flex items-center justify-center gap-2 h-14 px-10 text-lg font-semibold rounded-full transition-all duration-200 bg-[#1A56DB] text-white hover:bg-[#1548BD] shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30 active:scale-[0.97] w-full sm:w-auto">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+          Probar gratis 7 días
+        </a>
+        <button (click)="showDemoModal.set(true)"
+                class="inline-flex items-center justify-center gap-2 h-14 px-10 text-lg font-medium rounded-full transition-all duration-200 au-glass w-full sm:w-auto hover:border-white/[0.12]"
+                [class]="isDark() ? 'text-zinc-300 hover:text-white' : 'text-zinc-700 hover:text-zinc-900 border-zinc-200 hover:border-zinc-300 bg-white/60'">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 9.003a1 1 0 0 1 1.517-.859l4.997 2.997a1 1 0 0 1 0 1.718l-4.997 2.997A1 1 0 0 1 9 14.996z"/><circle cx="12" cy="12" r="10"/></svg>
+          Ver demo en vivo
+        </button>
+      </div>
+    </div>
+
+    <!-- ── Dashboard — full-width, commanding ── -->
+    <div class="relative z-10 mx-auto w-full max-w-5xl lg:max-w-6xl xl:max-w-3xl 2xl:max-w-[90rem] px-5 sm:px-8 lg:px-12 pb-16 sm:pb-20 lg:pb-28"
+         style="animation: au-hero-reveal 0.9s var(--au-ease-out) forwards; animation-delay: 500ms; opacity: 0;">
+      <!-- Glow behind -->
+      <div class="absolute inset-0 -inset-x-12 -inset-y-12 rounded-3xl blur-3xl opacity-30 pointer-events-none"
+           style="background: radial-gradient(ellipse at center, rgba(26, 86, 219, 0.4) 0%, transparent 70%);">
+      </div>
+      <!-- Dashboard image -->
+      <div class="relative rounded-2xl overflow-hidden border au-glass-strong"
+           [class]="isDark() ? 'border-white/[0.08]' : 'border-zinc-200 shadow-2xl'">
+        @if (isDark()) {
+          <img src="assets/images/landing/bg-dark.png"
+               alt="AURON Suite - Panel de control"
+               class="w-full h-auto object-cover"
+               loading="eager" />
+        } @else {
+          <img src="assets/images/landing/bg-light.png"
+               alt="AURON Suite - Panel de control"
+               class="w-full h-auto object-cover"
+               loading="eager" />
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 2: SOCIAL PROOF ===== -->
+  <section id="social-proof" class="relative px-4 sm:px-6 lg:px-8 -mt-8">
+    <div class="section-bg section-bg--social-proof" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl" auReveal>
+      <div class="rounded-2xl border p-6 sm:p-8 au-glass-strong"
+           [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-200 bg-white/80'">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8">
+          @for (counter of counters; track counter.label) {
+            <div class="text-center">
+              <div class="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight"
+                   [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                {{ counter.decimal ? counter.current().toFixed(1) : counter.current() }}{{ counter.suffix }}
+              </div>
+              <div class="mt-1 text-xs sm:text-sm font-medium"
+                   [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                {{ counter.label }}
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== PROBLEM SECTION ===== -->
+  <section class="relative px-4 py-20 sm:px-6 sm:py-28 lg:px-8 overflow-hidden">
+    <div class="section-bg section-bg--problem" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-14 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold text-rose-500">
+          El problema real
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Si tu operación depende de WhatsApp, papel y cierres manuales, no estás perdiendo orden: estás <span class="text-rose-500">perdiendo dinero</span>.
+        </h2>
+        <p class="mx-auto max-w-3xl text-base sm:text-lg"
+           [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+          Cada cita que se pierde, cada servicio que no se cobra bien, cada comisión que calculas a mano y cada cliente que no vuelve porque no le diste seguimiento. Eso no es "desorden". Son ingresos que se van por la falta de un sistema que conecte todo.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-5 sm:gap-6 au-stagger">
+        <div auReveal
+             class="group relative flex flex-col gap-4 rounded-[2rem] border p-8 transition-all duration-500 au-card-lift"
+             [class]="isDark() ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]' : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+          <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/><path d="m10 14 2 2 4-4"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold tracking-tight" [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            Agenda dispersa = clientes perdidos
+          </h3>
+          <p class="text-sm leading-relaxed" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+            Citas en WhatsApp, llamadas y notas sueltas. Sin recordatorios automáticos, las ausencias se acumulan y el cliente se va a la competencia.
+          </p>
+        </div>
+
+        <div auReveal
+             class="group relative flex flex-col gap-4 rounded-[2rem] border p-8 transition-all duration-500 au-card-lift"
+             [class]="isDark() ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]' : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+          <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold tracking-tight" [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            Caja sin control = dinero que se pierde
+          </h3>
+          <p class="text-sm leading-relaxed" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+            Ventas, comisiones y gastos por separado. Al final del mes no sabes realmente cuánto ganó el negocio ni qué servicio deja más margen.
+          </p>
+        </div>
+
+        <div auReveal
+             class="group relative flex flex-col gap-4 rounded-[2rem] border p-8 transition-all duration-500 au-card-lift"
+             [class]="isDark() ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]' : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+          <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M3 3v18h18"/><path d="m18.7 8-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold tracking-tight" [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            Sin datos = decisiones a ciegas
+          </h3>
+          <p class="text-sm leading-relaxed" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+            No saber qué empleado rinde más, qué producto se vende o qué horario llena más. Así es imposible mejorar sin suponer.
+          </p>
+        </div>
+
+        <div auReveal
+             class="group relative flex flex-col gap-4 rounded-[2rem] border p-8 transition-all duration-500 au-card-lift"
+             [class]="isDark() ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]' : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+          <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center text-rose-500">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <h3 class="text-lg font-semibold tracking-tight" [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            Crecimiento = más desorden
+          </h3>
+          <p class="text-sm leading-relaxed" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+            Contratar más personal o abrir otra sucursal sin un sistema solo multiplica el caos. Lo que funcionaba con 3 empleados no funciona con 10.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 3: CÓMO FUNCIONA (Bento Asymmetric) ===== -->
+  <section class="relative px-4 py-20 sm:px-6 sm:py-28 lg:px-8 overflow-hidden">
+    <div class="section-bg section-bg--como-funciona" aria-hidden="true"></div>
+    <!-- Section ambient blob -->
+    <div aria-hidden="true" class="absolute -top-40 right-0 w-[500px] h-[500px] rounded-full opacity-[0.04] pointer-events-none"
+         style="background: radial-gradient(ellipse, #1A56DB, transparent 70%); filter: blur(100px);">
+    </div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-14 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Cómo funciona
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          De cero a operando, hoy mismo
+        </h2>
+      </div>
+
+      <!-- Asymmetric bento layout: step 1 spans 2 cols, steps 2-3 side-by-side -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-5 sm:gap-6">
+        <!-- Step 1 — Registration (larger, featured) -->
+        <div auReveal
+             class="relative col-span-1 lg:col-span-2 flex flex-col gap-5 rounded-[2rem] border p-8 sm:p-10 transition-all duration-500 group"
+             [class]="isDark()
+               ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]'
+               : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-xl hover:shadow-zinc-200/40'">
+          <!-- Number badge -->
+          <div class="absolute top-5 right-5 sm:top-6 sm:right-6 flex items-center justify-center w-10 h-10 rounded-full border text-xs font-mono font-bold transition-all duration-500 group-hover:scale-110"
+               [class]="isDark()
+                 ? 'border-white/[0.1] bg-white/[0.04] text-zinc-500'
+                 : 'border-zinc-200 bg-zinc-50 text-zinc-400'">
+            01
+          </div>
+          <div class="flex items-center justify-center w-14 h-14 rounded-2xl border transition-all duration-500 group-hover:scale-110 group-hover:-translate-y-0.5"
+               style="border-color: rgba(26,86,219,0.25); background: rgba(26,86,219,0.06); color: #1A56DB;">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="mb-3 text-xl font-semibold tracking-tight"
+                [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+              {{ howItWorks[0].title }}
+            </h3>
+            <p class="text-sm leading-relaxed max-w-lg"
+               [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+              {{ howItWorks[0].description }}
+            </p>
+          </div>
+        </div>
+
+        <!-- Step 2 — Config (standard) -->
+        <div auReveal
+             class="relative col-span-1 flex flex-col gap-5 rounded-[2rem] border p-8 transition-all duration-500 group"
+             [class]="isDark()
+               ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]'
+               : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+          <div class="absolute top-5 right-5 flex items-center justify-center w-10 h-10 rounded-full border text-xs font-mono font-bold transition-all duration-500 group-hover:scale-110"
+               [class]="isDark()
+                 ? 'border-white/[0.1] bg-white/[0.04] text-zinc-500'
+                 : 'border-zinc-200 bg-zinc-50 text-zinc-400'">
+            02
+          </div>
+          <div class="flex items-center justify-center w-14 h-14 rounded-2xl border transition-all duration-500 group-hover:scale-110 group-hover:-translate-y-0.5"
+               [class]="isDark()
+                 ? 'border-white/[0.08] bg-white/[0.04] text-zinc-300'
+                 : 'border-zinc-200 bg-zinc-50 text-zinc-600'">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+              <line x1="3" y1="9" x2="21" y2="9"/>
+              <line x1="9" y1="21" x2="9" y2="9"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="mb-3 text-lg font-semibold tracking-tight"
+                [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+              {{ howItWorks[1].title }}
+            </h3>
+            <p class="text-sm leading-relaxed"
+               [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+              {{ howItWorks[1].description }}
+            </p>
+          </div>
+        </div>
+
+        <!-- Step 3 — Operar (standard) -->
+        <div auReveal
+             class="relative col-span-1 lg:col-span-1 flex flex-col gap-5 rounded-[2rem] border p-8 transition-all duration-500 group"
+             [class]="isDark()
+               ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]'
+               : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+          <div class="absolute top-5 right-5 flex items-center justify-center w-10 h-10 rounded-full border text-xs font-mono font-bold transition-all duration-500 group-hover:scale-110"
+               [class]="isDark()
+                 ? 'border-white/[0.1] bg-white/[0.04] text-zinc-500'
+                 : 'border-zinc-200 bg-zinc-50 text-zinc-400'">
+            03
+          </div>
+          <div class="flex items-center justify-center w-14 h-14 rounded-2xl border transition-all duration-500 group-hover:scale-110 group-hover:-translate-y-0.5"
+               [class]="isDark()
+                 ? 'border-white/[0.08] bg-white/[0.04] text-zinc-300'
+                 : 'border-zinc-200 bg-zinc-50 text-zinc-600'">
+            <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="mb-3 text-lg font-semibold tracking-tight"
+                [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+              {{ howItWorks[2].title }}
+            </h3>
+            <p class="text-sm leading-relaxed"
+               [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+              {{ howItWorks[2].description }}
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== COMPARISON SECTION ===== -->
+  <section class="relative px-4 py-20 sm:px-6 sm:py-28 lg:px-8 overflow-hidden">
+    <div class="section-bg section-bg--comparison" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold text-blue-500">
+          Antes y después
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-6"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          La diferencia entre <span class="text-zinc-400">sobrevivir</span> y <span class="text-blue-500">crecer</span>
+        </h2>
+        <p class="mx-auto max-w-2xl text-base sm:text-lg"
+           [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+          No es solo cambiar de herramienta. Es dejar de perder tiempo, dinero y clientes por no tener el control.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-5 gap-8 max-w-6xl mx-auto items-stretch">
+        <!-- Antes -->
+        <div auReveal class="lg:col-span-2 rounded-[2rem] border border-rose-500/20 bg-rose-500/[0.02] p-8 flex flex-col justify-between">
+          <div>
+            <div class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-rose-500/10 text-rose-500 text-xs font-bold uppercase tracking-wider mb-6">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+              Antes
+            </div>
+            <div class="space-y-6">
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center shrink-0 text-rose-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-sm" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Citas perdidas</h4>
+                  <p class="text-xs mt-1" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">WhatsApp y memoria. Las ausencias se acumulan.</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center shrink-0 text-rose-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-sm" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Dinero que se pierde</h4>
+                  <p class="text-xs mt-1" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">Ventas y gastos separados. Nunca sabes la ganancia real.</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center shrink-0 text-rose-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-sm" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Clientes que no vuelven</h4>
+                  <p class="text-xs mt-1" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">Sin seguimiento. Cada cliente que se va es ingreso perdido.</p>
+                </div>
+              </div>
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-rose-500/10 flex items-center justify-center shrink-0 text-rose-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M3 3v18h18"/><path d="m18.7 8-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-semibold text-sm" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Decisiones a ciegas</h4>
+                  <p class="text-xs mt-1" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">Todo se decide "porque siempre fue así".</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Ahora con Auron -->
+        <div auReveal class="lg:col-span-3 rounded-[2rem] border-2 border-blue-500/30 bg-blue-500/[0.03] p-8 flex flex-col justify-between">
+          <div>
+            <div class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-blue-500/10 text-blue-500 text-xs font-bold uppercase tracking-wider mb-6">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path d="M20 6 9 17 4 12"/></svg>
+              Ahora con Auron
+            </div>
+            <div class="space-y-6">
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0 text-blue-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-bold" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Agenda que trabaja sola</h4>
+                  <p class="text-sm mt-1" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">Citas centralizadas con recordatorios automáticos. <span class="font-semibold text-blue-500">Hasta 80% menos ausencias.</span></p>
+                </div>
+              </div>
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0 text-blue-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-bold" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Caja transparente</h4>
+                  <p class="text-sm mt-1" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">POS, comisiones y gastos en un solo lugar. <span class="font-semibold text-blue-500">Sabes cuánto ganaste al instante.</span></p>
+                </div>
+              </div>
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0 text-blue-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-bold" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Clientes que regresan</h4>
+                  <p class="text-sm mt-1" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">Historial completo y seguimiento automático. <span class="font-semibold text-blue-500">Fidelizas sin esfuerzo.</span></p>
+                </div>
+              </div>
+              <div class="flex items-start gap-4">
+                <div class="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center shrink-0 text-blue-500">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path d="M3 3v18h18"/><path d="m18.7 8-5.1 5.2-2.8-2.7L7 14.3"/></svg>
+                </div>
+                <div>
+                  <h4 class="font-bold" [class]="isDark() ? 'text-white' : 'text-zinc-900'">Datos que mandan</h4>
+                  <p class="text-sm mt-1" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">Reportes en vivo. <span class="font-semibold text-blue-500">Sabes qué funciona y qué duele.</span></p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 4: SOBRE NOSOTROS (Glass Card) ===== -->
+  <section class="px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
+    <div class="section-bg section-bg--sobre-nosotros" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl" auReveal>
+      <div class="au-glass-card overflow-hidden p-8 sm:p-12 md:p-16">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-16 items-center">
+          <!-- Left -->
+          <div>
+            <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+               [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+              Sobre AURON
+            </p>
+            <h2 class="au-text-balance text-2xl sm:text-3xl md:text-4xl font-bold tracking-tight mb-5"
+                [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+              Construido en República Dominicana para toda Latinoamérica
+            </h2>
+            <p class="au-text-pretty text-sm sm:text-base leading-relaxed mb-4"
+               [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+              AURON nació en Santo Domingo con una misión clara: llevar tecnología 
+              real a cada barbería, salón y spa de la región. No somos un software 
+              genérico adaptado — somos una plataforma construida desde y para 
+              América Latina.
+            </p>
+            <p class="au-text-pretty text-sm sm:text-base leading-relaxed"
+               [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+              Cada funcionalidad —del POS al inventario, de la agenda a la nómina— 
+              está diseñada para resolver los problemas reales del día a día 
+              en un negocio de belleza latinoamericano.
+            </p>
+          </div>
+          <!-- Right -->
+          <div class="flex flex-col gap-5">
+            <div class="flex items-start gap-4 rounded-2xl p-5 border transition-all duration-500 group hover:-translate-y-0.5"
+                 [class]="isDark()
+                   ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]'
+                   : 'border-zinc-200 bg-white/50 hover:border-zinc-300 hover:shadow-md'">
+              <div class="flex items-center justify-center w-10 h-10 rounded-xl shrink-0 border transition-all duration-400 group-hover:scale-110"
+                   [class]="isDark() ? 'border-white/[0.08] text-zinc-300 bg-white/[0.04]' : 'border-zinc-200 text-zinc-600 bg-zinc-50'">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              </div>
+              <div>
+                <h4 class="text-sm font-semibold mb-1"
+                    [class]="isDark() ? 'text-white' : 'text-zinc-900'">Seguro y confiable</h4>
+                <p class="text-xs leading-relaxed"
+                   [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                  Encriptación SSL, backups diarios, RBAC y cumplimiento RGPD.
+                </p>
+              </div>
+            </div>
+            <div class="flex items-start gap-4 rounded-2xl p-5 border transition-all duration-500 group hover:-translate-y-0.5"
+                 [class]="isDark()
+                   ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]'
+                   : 'border-zinc-200 bg-white/50 hover:border-zinc-300 hover:shadow-md'">
+              <div class="flex items-center justify-center w-10 h-10 rounded-xl shrink-0 border transition-all duration-400 group-hover:scale-110"
+                   [class]="isDark() ? 'border-white/[0.08] text-zinc-300 bg-white/[0.04]' : 'border-zinc-200 text-zinc-600 bg-zinc-50'">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+              </div>
+              <div>
+                <h4 class="text-sm font-semibold mb-1"
+                    [class]="isDark() ? 'text-white' : 'text-zinc-900'">Soporte en español real</h4>
+                <p class="text-xs leading-relaxed"
+                   [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                  Team local que responde en tu idioma, en tu horario.
+                </p>
+              </div>
+            </div>
+            <div class="flex items-start gap-4 rounded-2xl p-5 border transition-all duration-500 group hover:-translate-y-0.5"
+                 [class]="isDark()
+                   ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]'
+                   : 'border-zinc-200 bg-white/50 hover:border-zinc-300 hover:shadow-md'">
+              <div class="flex items-center justify-center w-10 h-10 rounded-xl shrink-0 border transition-all duration-400 group-hover:scale-110"
+                   [class]="isDark() ? 'border-white/[0.08] text-zinc-300 bg-white/[0.04]' : 'border-zinc-200 text-zinc-600 bg-zinc-50'">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              </div>
+              <div>
+                <h4 class="text-sm font-semibold mb-1"
+                    [class]="isDark() ? 'text-white' : 'text-zinc-900'">Preparado para escalar</h4>
+                <p class="text-xs leading-relaxed"
+                   [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                  De una silla a cien sucursales. Crece sin cambiar de plataforma.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 5: PRODUCTS (Bento Grid) ===== -->
+  <section id="productos" class="scroll-mt-24 px-4 py-24 sm:px-6 sm:py-32 lg:px-8">
+    <div class="section-bg section-bg--products" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <!-- Section header -->
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Productos
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Todo lo que tu negocio necesita
+        </h2>
+      </div>
+
+      <!-- Bento grid -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 au-stagger">
+        @for (product of products; track product.id) {
+          <div auReveal
+               class="group relative flex flex-col gap-5 overflow-hidden rounded-2xl p-6 sm:p-8 transition-all duration-500 border cursor-default au-card-lift"
+               [class.lg:col-span-2]="product.span === 2"
+               [class]="isDark()
+                 ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.04]'
+                 : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+
+            <!-- Header -->
+            <div class="flex items-center justify-between">
+              <div class="flex items-center justify-center w-11 h-11 rounded-xl border transition-all duration-500 group-hover:scale-110 au-icon-combo"
+                   [class]="isDark()
+                     ? 'border-white/[0.08] bg-white/[0.04] text-zinc-300 group-hover:border-white/[0.15] group-hover:bg-white/[0.06]'
+                     : 'border-zinc-200 bg-zinc-50 text-zinc-600 group-hover:border-zinc-300 group-hover:bg-zinc-100'">
+                @switch (product.icon) {
+                  @case ('shopping-cart') {
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+                  }
+                  @case ('calendar') {
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                  }
+                  @case ('users') {
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                  }
+                  @case ('bar-chart-2') {
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+                  }
+                }
+              </div>
+              <span class="font-mono text-xs" [class]="isDark() ? 'text-zinc-700' : 'text-zinc-300'">
+                {{ product.number }}
+              </span>
+            </div>
+
+            <!-- Content -->
+            <div>
+              <h3 class="mb-2 text-lg font-semibold tracking-tight"
+                  [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                {{ product.title }}
+              </h3>
+              <p class="text-sm leading-relaxed au-text-pretty" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+                {{ product.description }}
+              </p>
+            </div>
+
+            <!-- Bottom line reveal -->
+            <div class="mt-auto h-px w-full origin-left scale-x-0 transition-transform duration-500 group-hover:scale-x-100"
+                 style="background: linear-gradient(90deg, #1A56DB, #6366F1);">
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 5: WHY AURON ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--why-auron" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          ¿Por qué AURON?
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Diferente por diseño
+        </h2>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-5 au-stagger">
+        @for (card of whyCards; track card.title) {
+          <div auReveal
+               class="group rounded-2xl p-6 sm:p-8 border transition-all duration-500 au-card-lift"
+               [class]="isDark()
+                 ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.04]'
+                 : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+            <div class="mb-5 flex items-center justify-center w-11 h-11 rounded-xl border transition-all duration-300 group-hover:scale-110 au-icon-combo"
+                 [class]="isDark()
+                   ? 'border-white/[0.08] bg-white/[0.04] text-zinc-300'
+                   : 'border-zinc-200 bg-zinc-50 text-zinc-600'">
+              @switch (card.icon) {
+                @case ('layers') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 12"/><path d="M2 17a1 1 0 0 0 .58.91l8.6 3.91a2 2 0 0 0 1.65 0l8.58-3.9A1 1 0 0 0 22 17"/></svg>
+                }
+                @case ('globe') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
+                }
+                @case ('zap') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                }
+              }
+            </div>
+            <h3 class="mb-2 text-lg font-semibold tracking-tight"
+                [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+              {{ card.title }}
+            </h3>
+             <p class="text-sm leading-relaxed au-text-pretty" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+                {{ card.description }}
+              </p>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 6: ECOSYSTEM ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8 overflow-hidden">
+    <div class="section-bg section-bg--ecosystem" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl text-center" auReveal>
+      <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+         [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+        Ecosistema
+      </p>
+      <h2 class="mb-4 text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+          [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+        Un sistema, no herramientas sueltas
+      </h2>
+      <p class="mx-auto mb-16 max-w-xl text-base sm:text-lg au-text-pretty"
+          [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+        Cada módulo de AURON se conecta con los demás. Los datos fluyen automáticamente entre agenda, POS, inventario y reportes.
+      </p>
+    </div>
+
+    <!-- Ecosystem visual -->
+    <div class="mx-auto max-w-lg lg:max-w-xl aspect-square relative" auReveal [auRevealDelay]="200">
+      <!-- Center hub (breathing glow) -->
+      <div class="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 au-hub-breathe"
+           style="transform-origin: center;">
+        <div class="w-20 h-20 sm:w-24 sm:h-24 rounded-2xl flex items-center justify-center font-extrabold text-base sm:text-lg tracking-tight text-white"
+             style="background: linear-gradient(135deg, #1A56DB 0%, #6366F1 100%);">
+          AURON
+        </div>
+      </div>
+
+      <!-- Orbit ring (gradient + spin) -->
+      <div class="absolute inset-[15%] rounded-full border-2 border-dashed au-orbit-color"
+           style="animation: au-orbit-spin 60s linear infinite;">
+      </div>
+
+      <!-- Nodes (staggered entrance + color pulse) -->
+      @for (node of ecosystemNodes; track node.name; let i = $index) {
+        <div class="absolute au-node-entrance au-node-pulse"
+             [style.left.%]="getEcosystemPosition(node.angle, 35).x"
+             [style.top.%]="getEcosystemPosition(node.angle, 35).y"
+             [style.animation-delay]="(i * 0.12) + 's, ' + (i * 0.5) + 's'"
+             style="transform: translate(-50%, -50%); transform-origin: center;">
+          <div class="flex items-center justify-center w-14 h-14 sm:w-16 sm:h-16 rounded-xl border text-xs sm:text-sm font-semibold backdrop-blur-sm au-node-hover"
+               [class]="isDark()
+                 ? 'border-white/[0.08] bg-zinc-900/80 text-zinc-300'
+                 : 'border-zinc-200 bg-white text-zinc-700'">
+            {{ node.name }}
+          </div>
+        </div>
+      }
+    </div>
+  </section>
+
+  <!-- ===== SECTION 7: FEATURES (Bento Grid) ===== -->
+  <section id="caracteristicas" class="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--features" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Características
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Diseñado para cada detalle
+        </h2>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5 au-stagger">
+        @for (feature of features; track feature.title) {
+          <div auReveal
+               class="group relative flex flex-col gap-4 rounded-2xl p-6 sm:p-8 border transition-all duration-500 au-card-lift"
+               [class.lg:col-span-2]="feature.span === 2"
+               [class]="isDark()
+                 ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.04]'
+                 : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg'">
+            <div class="flex items-center justify-center w-10 h-10 rounded-xl border transition-all duration-300 group-hover:scale-110 au-icon-combo"
+                 [class]="isDark()
+                   ? 'border-white/[0.08] bg-white/[0.04] text-zinc-300'
+                   : 'border-zinc-200 bg-zinc-50 text-zinc-600'">
+              @switch (feature.icon) {
+                @case ('message-circle') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
+                }
+                @case ('monitor') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                }
+                @case ('activity') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                }
+                @case ('dollar-sign') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+                }
+                @case ('map-pin') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                }
+                @case ('package') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="16.5" y1="9.4" x2="7.5" y2="4.21"/><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+                }
+              }
+            </div>
+            <div>
+              <h3 class="mb-1.5 text-base font-semibold tracking-tight"
+                  [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                {{ feature.title }}
+              </h3>
+              <p class="text-sm leading-relaxed au-text-pretty" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+                {{ feature.description }}
+              </p>
+            </div>
+            <!-- Hover line -->
+            <div class="mt-auto h-px w-full origin-left scale-x-0 transition-transform duration-500 group-hover:scale-x-100"
+                 style="background: linear-gradient(90deg, #1A56DB, #6366F1);"></div>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 8: TESTIMONIALS ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--testimonials" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Clientes
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Lo que dicen nuestros clientes
+        </h2>
+      </div>
+
+      <!-- Testimonial card -->
+      <div auReveal class="relative">
+        <div class="rounded-2xl border p-8 sm:p-12 au-glass-strong transition-all duration-500"
+             [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-200 bg-white/80'">
+
+          <!-- Quote -->
+          <div class="relative">
+            <svg class="absolute -top-2 -left-2 w-8 h-8 opacity-10" [class]="isDark() ? 'text-blue-400' : 'text-blue-600'" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M14.017 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151c-2.432.917-3.995 3.638-3.995 5.849h4v10H14.017zM0 21v-7.391c0-5.704 3.731-9.57 8.983-10.609l.995 2.151C7.546 6.068 5.983 8.789 5.983 11h4v10H0z"/>
+            </svg>
+            <p class="text-lg sm:text-xl md:text-2xl font-medium leading-relaxed tracking-tight"
+               [class]="isDark() ? 'text-zinc-200' : 'text-zinc-800'">
+              "{{ testimonials[currentTestimonial()].quote }}"
+            </p>
+          </div>
+
+          <!-- Author -->
+          <div class="mt-8 flex items-center gap-4">
+            <div class="flex items-center justify-center w-12 h-12 rounded-full font-bold text-sm text-white"
+                 style="background: linear-gradient(135deg, #1A56DB, #6366F1);">
+              {{ testimonials[currentTestimonial()].avatar }}
+            </div>
+            <div>
+              <div class="font-semibold" [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                {{ testimonials[currentTestimonial()].name }}
+              </div>
+              <div class="text-sm" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                {{ testimonials[currentTestimonial()].role }} · {{ testimonials[currentTestimonial()].location }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Navigation -->
+          <div class="mt-8 flex items-center justify-between">
+            <div class="flex gap-2">
+              @for (t of testimonials; track $index) {
+                <button (click)="goToTestimonial($index)"
+                        class="w-2 h-2 rounded-full transition-all duration-300"
+                        [class]="$index === currentTestimonial()
+                          ? 'bg-[#1A56DB] w-6'
+                          : isDark() ? 'bg-zinc-700 hover:bg-zinc-600' : 'bg-zinc-300 hover:bg-zinc-400'"
+                        [attr.aria-label]="'Testimonio ' + ($index + 1)">
+                </button>
+              }
+            </div>
+            <div class="flex gap-2">
+              <button (click)="prevTestimonial()" aria-label="Anterior"
+                      class="w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 hover:scale-105"
+                      [class]="isDark() ? 'border-white/[0.08] text-zinc-400 hover:text-white hover:border-white/[0.15]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:border-zinc-300'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="m12 19-7-7 7-7"/></svg>
+              </button>
+              <button (click)="nextTestimonial()" aria-label="Siguiente"
+                      class="w-9 h-9 rounded-full border flex items-center justify-center transition-all duration-200 hover:scale-105"
+                      [class]="isDark() ? 'border-white/[0.08] text-zinc-400 hover:text-white hover:border-white/[0.15]' : 'border-zinc-200 text-zinc-500 hover:text-zinc-900 hover:border-zinc-300'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 9: PAGOS Y COMUNICACIÓN ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--pagos" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Pagos y comunicación
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Todo lo que necesitas para cobrar y conectar con tus clientes
+        </h2>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4 au-stagger">
+        @for (item of pagosComunicacion; track item.name) {
+          <div auReveal
+               class="group rounded-xl p-5 sm:p-6 border text-center transition-all duration-500 au-card-lift"
+               [class]="isDark()
+                 ? 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12] hover:bg-white/[0.04]'
+                 : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-md'">
+            <div class="mb-3 text-lg font-bold tracking-tight"
+                 [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+              {{ item.name }}
+            </div>
+            <div class="text-xs" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+              {{ item.desc }}
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 10: SECURITY / TRUST ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--security" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Seguridad
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Tus datos están protegidos
+        </h2>
+      </div>
+
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4 au-stagger" auReveal>
+        @for (badge of trustBadges; track badge.label) {
+          <div class="flex flex-col items-center gap-3 rounded-xl p-4 sm:p-5 border text-center transition-all duration-300"
+               [class]="isDark()
+                 ? 'border-white/[0.06] bg-white/[0.02]'
+                 : 'border-zinc-200 bg-white'">
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center"
+                 [class]="isDark() ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-600'">
+              @switch (badge.icon) {
+                @case ('lock') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                }
+                @case ('shield') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                }
+                @case ('activity') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                }
+                @case ('key') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+                }
+                @case ('database') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+                }
+                @case ('eye-off') {
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+                }
+              }
+            </div>
+            <div>
+              <div class="text-sm font-bold" [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                {{ badge.label }}
+              </div>
+              <div class="text-[11px] mt-0.5" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                {{ badge.desc }}
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== LEAD CAPTURE SECTION ===== -->
+  <section class="relative px-4 py-20 sm:px-6 sm:py-28 lg:px-8 overflow-hidden">
+    <div class="section-bg section-bg--lead-capture" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl" auReveal>
+      <div class="rounded-3xl border p-8 sm:p-12 md:p-16 text-center au-glass-strong"
+           [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-200 bg-white/80'">
+        <div class="max-w-2xl mx-auto">
+          <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold text-blue-500">
+            ¿Aún con dudas?
+          </p>
+          <h2 class="text-balance text-3xl sm:text-4xl font-bold tracking-tight mb-4"
+              [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            Déjanos mostrarte cómo funciona
+          </h2>
+          <p class="mb-8 text-sm sm:text-base" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+            Te enviamos un video personalizado mostrando cómo Auron Suite puede ayudar a tu negocio. Sin compromiso, sin spam.
+          </p>
+
+          @if (leadCaptureSent()) {
+            <div class="rounded-2xl bg-emerald-500/10 border border-emerald-500/20 p-6 max-w-md mx-auto" auReveal>
+              <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-emerald-500/20 flex items-center justify-center text-emerald-500">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg>
+              </div>
+              <h3 class="text-lg font-bold text-emerald-500 mb-1">¡Listo!</h3>
+              <p class="text-sm text-emerald-600 dark:text-emerald-400">Te hemos registrado. En las próximas horas recibirás un video en tu correo mostrando cómo Auron Suite se adapta a tu negocio.</p>
+            </div>
+          } @else {
+            <form (ngSubmit)="submitLeadCapture()" class="max-w-md mx-auto">
+              <div class="flex flex-col sm:flex-row gap-3 justify-center">
+                <input type="email" name="email" [(ngModel)]="leadEmail" required
+                       placeholder="tu@correo.com"
+                       class="flex-1 min-w-0 rounded-full px-5 py-3 text-sm border bg-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                       [class]="isDark() ? 'border-white/[0.08] text-white bg-zinc-900/50' : 'border-zinc-300 text-zinc-900 bg-white/80'" />
+                <button type="submit"
+                        class="inline-flex items-center justify-center h-12 px-6 text-sm font-semibold rounded-full transition-all duration-200 bg-[#1A56DB] text-white hover:bg-[#1548BD] shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30 active:scale-[0.97] shrink-0">
+                  Quiero ver el video
+                </button>
+              </div>
+              <p class="text-xs mt-3" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                Sin spam. Solo el video y un correo de seguimiento si quieres saber más.
+              </p>
+            </form>
+          }
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 11: PRICING ===== -->
+  <section id="precios" class="scroll-mt-24 px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--pricing" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-12 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          Precios
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight mb-4"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Planes simples, sin sorpresas
+        </h2>
+        <p class="text-base sm:text-lg max-w-xl mx-auto au-text-pretty"
+           [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+          7 días de prueba gratis. Sin tarjeta. Sin compromiso.
+        </p>
+        <!-- Toggle monthly/annual -->
+        <div class="mt-8 flex items-center justify-center gap-3">
+          <span class="text-sm font-medium" [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'"
+                [class.!text-blue-400]="!billingAnnual()">
+            Mensual
+          </span>
+          <button (click)="billingAnnual.set(!billingAnnual())"
+                  class="relative w-12 h-6 rounded-full transition-colors duration-300"
+                  [class]="billingAnnual() ? 'bg-[#1A56DB]' : (isDark() ? 'bg-zinc-700' : 'bg-zinc-300')"
+                  [attr.aria-label]="billingAnnual() ? 'Cambiar a mensual' : 'Cambiar a anual'">
+            <span class="absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform duration-300 shadow-sm"
+                  [class.translate-x-6]="billingAnnual()"></span>
+          </button>
+          <span class="text-sm font-medium" [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'"
+                [class.!text-blue-400]="billingAnnual()">
+            Anual
+          </span>
+          <span class="ml-1 text-xs font-semibold px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">
+            −20%
+          </span>
+        </div>
+      </div>
+
+      <!-- Pricing cards -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-5 au-stagger">
+        @for (plan of plans; track plan.name) {
+          <div auReveal
+               class="relative flex flex-col rounded-2xl border p-8 transition-all duration-500 au-card-lift"
+               [class]="isDark()
+                 ? (plan.popular ? 'border-blue-500/30 bg-blue-500/[0.03]' : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.12]')
+                 : (plan.popular ? 'border-blue-300 bg-blue-50/30' : 'border-zinc-200 bg-white hover:border-zinc-300 hover:shadow-lg')">
+
+            @if (plan.popular) {
+              <div class="absolute -top-3 left-1/2 -translate-x-1/2 px-4 py-1 rounded-full text-xs font-bold text-white tracking-wide"
+                   style="background: linear-gradient(135deg, #1A56DB, #6366F1);">
+                Más popular
+              </div>
+            }
+
+            <div class="mb-6">
+              <h3 class="text-lg font-bold tracking-tight mb-1"
+                  [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                {{ plan.name }}
+              </h3>
+              <p class="text-sm au-text-pretty" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+                {{ plan.description }}
+              </p>
+            </div>
+
+            <div class="mb-6">
+              <span class="text-4xl font-extrabold tracking-tight"
+                    [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+                ${{ billingAnnual() ? plan.annual.toFixed(2) : plan.monthly.toFixed(2) }}
+              </span>
+              <span class="text-sm ml-1" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">/mes</span>
+              @if (billingAnnual()) {
+                <div class="text-xs mt-1 line-through" [class]="isDark() ? 'text-zinc-600' : 'text-zinc-400'">
+                  ${{ (plan.monthly * 12).toFixed(2) }}/año
+                </div>
+              }
+            </div>
+
+            <ul class="space-y-3 mb-8 flex-1">
+              @for (feat of plan.features; track feat) {
+                <li class="flex items-start gap-3 text-sm">
+                  <svg class="w-4 h-4 mt-0.5 shrink-0 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"/>
+                  </svg>
+                  <span [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'">{{ feat }}</span>
+                </li>
+              }
+            </ul>
+
+            <a [routerLink]="plan.link"
+               class="inline-flex items-center justify-center h-11 px-6 text-sm font-semibold rounded-full transition-all duration-200 w-full text-center active:scale-[0.97]"
+               [class]="plan.popular
+                 ? 'bg-[#1A56DB] text-white hover:bg-[#1548BD] shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30'
+                 : (isDark() ? 'border border-white/[0.08] text-zinc-300 hover:bg-white/[0.04]' : 'border border-zinc-200 text-zinc-700 hover:bg-zinc-50')">
+              {{ plan.cta }}
+            </a>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 12: FAQ ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--faq" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <div class="mb-16 text-center" auReveal>
+        <p class="mb-3 text-xs sm:text-sm uppercase tracking-[0.15em] font-semibold"
+           [class]="isDark() ? 'text-blue-400' : 'text-blue-600'">
+          FAQ
+        </p>
+        <h2 class="text-balance text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight"
+            [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+          Preguntas frecuentes
+        </h2>
+      </div>
+
+      <div class="space-y-3" auReveal>
+        @for (faq of faqs; track faq.question) {
+          <div class="rounded-xl border overflow-hidden transition-colors duration-200"
+               [class]="isDark()
+                 ? 'border-white/[0.06] ' + (faq.open ? 'bg-white/[0.03]' : 'bg-transparent')
+                 : 'border-zinc-200 ' + (faq.open ? 'bg-zinc-50' : 'bg-white')">
+            <button (click)="toggleFaq(faq)"
+                    class="flex w-full items-center justify-between gap-4 px-5 py-4 sm:px-6 sm:py-5 text-left transition-colors"
+                    [attr.aria-expanded]="faq.open">
+              <span class="text-sm sm:text-base font-semibold" [class]="isDark() ? 'text-zinc-200' : 'text-zinc-800'">
+                {{ faq.question }}
+              </span>
+              <span class="shrink-0 w-6 h-6 flex items-center justify-center rounded-full transition-all duration-300"
+                    [class]="isDark() ? 'text-zinc-500' : 'text-zinc-400'"
+                    [style.transform]="faq.open ? 'rotate(45deg)' : 'rotate(0)'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </span>
+            </button>
+            <div class="grid transition-all duration-300 ease-out"
+                 [style.grid-template-rows]="faq.open ? '1fr' : '0fr'">
+              <div class="overflow-hidden">
+                <div class="px-5 pb-5 sm:px-6 sm:pb-6 text-sm leading-relaxed"
+                     [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+                  {{ faq.answer }}
+                </div>
+              </div>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 13: CTA FINAL ===== -->
+  <section class="px-4 py-20 sm:px-6 sm:py-28 lg:px-8">
+    <div class="section-bg section-bg--cta" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl" auReveal>
+      <div class="relative rounded-3xl border overflow-hidden p-8 sm:p-12 md:p-16 text-center"
+           [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-200'"
+           style="background: linear-gradient(135deg, rgba(26, 86, 219, 0.08) 0%, rgba(99, 102, 241, 0.04) 50%, rgba(139, 92, 246, 0.02) 100%);">
+        <!-- Ambient glow -->
+        <div class="absolute inset-0 pointer-events-none" aria-hidden="true">
+          <div class="absolute top-0 left-1/2 -translate-x-1/2 w-96 h-48 rounded-full blur-3xl opacity-20"
+               style="background: radial-gradient(ellipse, rgba(26, 86, 219, 0.5), transparent 70%);">
+          </div>
+        </div>
+
+        <div class="relative">
+          <h2 class="mb-4 text-balance text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight"
+              [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            Tu negocio merece herramientas<br class="hidden sm:block"/>
+            <span class="au-text-gradient">que trabajen tan duro como tú</span>
+          </h2>
+          <p class="mb-8 text-base sm:text-lg au-text-pretty"
+             [class]="isDark() ? 'text-zinc-400' : 'text-zinc-600'">
+            7 días de prueba gratis. Sin tarjeta. Sin compromiso.
+          </p>
+          <div class="flex flex-col sm:flex-row items-center justify-center gap-3">
+            <a routerLink="/auth/register"
+               class="inline-flex items-center justify-center gap-2 h-12 px-8 text-base font-semibold rounded-full transition-all duration-200 bg-[#1A56DB] text-white hover:bg-[#1548BD] shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30 active:scale-[0.97] w-full sm:w-auto">
+              Crear mi cuenta gratis
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+            </a>
+          </div>
+          <p class="mt-4 text-xs" [class]="isDark() ? 'text-zinc-600' : 'text-zinc-400'">
+            Sin tarjeta de crédito · Cancela cuando quieras · Soporte en español
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===== SECTION 14: FOOTER ===== -->
+  <footer class="px-4 py-12 sm:px-6 sm:py-16 lg:px-8 border-t"
+          [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-200'">
+    <div class="section-bg section-bg--footer" aria-hidden="true"></div>
+    <div class="mx-auto max-w-6xl">
+      <!-- Footer grid -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12 mb-12">
+        <!-- Brand col -->
+        <div class="col-span-2 md:col-span-1">
+          <div class="text-lg font-bold tracking-tight mb-3"
+               [class]="isDark() ? 'text-white' : 'text-zinc-900'">
+            AURON<span class="au-text-gradient">.</span>
+          </div>
+          <p class="text-sm mb-4" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-500'">
+            El sistema operativo para negocios de belleza en Latinoamérica.
+          </p>
+        </div>
+
+        <!-- Resources col -->
+        <div>
+          <h4 class="text-sm font-semibold mb-4"
+              [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'">
+            Recursos
+          </h4>
+          <ul class="space-y-2.5">
+            <li>
+              <a routerLink="/docs" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Documentación
+              </a>
+            </li>
+            <li>
+              <a routerLink="/status" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Estado del sistema
+              </a>
+            </li>
+            <li>
+              <a routerLink="/changelog" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Changelog
+              </a>
+            </li>
+            <li>
+              <a routerLink="/support" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Soporte
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        <!-- Legal col -->
+        <div>
+          <h4 class="text-sm font-semibold mb-4"
+              [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'">
+            Legal
+          </h4>
+          <ul class="space-y-2.5">
+            <li>
+              <a routerLink="/privacy" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Privacidad
+              </a>
+            </li>
+            <li>
+              <a routerLink="/terms" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Términos
+              </a>
+            </li>
+            <li>
+              <a routerLink="/cookies" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Cookies
+              </a>
+            </li>
+            <li>
+              <a routerLink="/acceptable-use" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Uso Aceptable
+              </a>
+            </li>
+            <li>
+              <a routerLink="/billing-policy" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                Facturación
+              </a>
+            </li>
+            <li>
+              <a routerLink="/dpa" class="text-sm transition-colors"
+                 [class]="isDark() ? 'text-zinc-500 hover:text-zinc-300' : 'text-zinc-500 hover:text-zinc-700'">
+                DPA
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Bottom bar (glass pill) -->
+      <div class="flex justify-center pt-8">
+        <div class="au-footer-pill inline-flex flex-col sm:flex-row items-center gap-3 sm:gap-6">
+          <p class="text-xs font-medium" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-500'">
+            © 2026 AURON Suite
+          </p>
+          <span class="hidden sm:block w-px h-3" [class]="isDark() ? 'bg-white/[0.08]' : 'bg-zinc-200'"></span>
+          <p class="text-xs" [class]="isDark() ? 'text-zinc-500' : 'text-zinc-400'">
+            Hecho en República Dominicana para toda Latinoamérica
+          </p>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <!-- ===== DEMO MODAL ===== -->
+  @if (showDemoModal()) {
+    <div class="fixed inset-0 z-[100] flex items-center justify-center p-4"
+         (click)="showDemoModal.set(false)">
+      <!-- Backdrop -->
+      <div class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+      <!-- Modal -->
+      <div class="relative w-full max-w-2xl rounded-[2rem] border p-8 sm:p-10 max-h-[90vh] overflow-y-auto"
+           [class]="isDark() ? 'bg-zinc-900 border-white/[0.08]' : 'bg-white border-zinc-200'"
+           (click)="$event.stopPropagation()">
+        <!-- Close -->
+        <button (click)="showDemoModal.set(false)"
+                class="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-full transition-colors"
+                [class]="isDark() ? 'text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-300' : 'text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600'">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+
+        <!-- Video placeholder -->
+        <div class="aspect-video rounded-2xl mb-8 flex items-center justify-center border overflow-hidden"
+             [class]="isDark() ? 'bg-zinc-800/50 border-white/[0.06]' : 'bg-zinc-50 border-zinc-200'">
+          <div class="text-center">
+            <div class="w-16 h-16 mx-auto mb-3 rounded-full flex items-center justify-center"
+                 [class]="isDark() ? 'bg-blue-500/10' : 'bg-blue-50'">
+              <svg class="w-7 h-7 text-[#1A56DB]" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </div>
+            <p class="text-sm font-medium mb-1" [class]="isDark() ? 'text-zinc-400' : 'text-zinc-500'">Video demostrativo</p>
+            <p class="text-xs" [class]="isDark() ? 'text-zinc-600' : 'text-zinc-400'">Mira cómo AURON transforma tu negocio</p>
+          </div>
+        </div>
+
+        <!-- Features preview -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-8">
+          @for (demo of demoFeatures; track demo) {
+            <div class="flex items-center gap-3 rounded-xl px-4 py-3 border"
+                 [class]="isDark() ? 'border-white/[0.06]' : 'border-zinc-100'">
+              <svg class="w-4 h-4 shrink-0 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <span class="text-sm" [class]="isDark() ? 'text-zinc-300' : 'text-zinc-700'">{{ demo }}</span>
+            </div>
+          }
+        </div>
+
+        <a routerLink="/auth/register"
+           class="inline-flex items-center justify-center gap-2 h-12 w-full text-base font-semibold rounded-full transition-all duration-200 bg-[#1A56DB] text-white hover:bg-[#1548BD] shadow-lg shadow-blue-500/20 hover:shadow-xl hover:shadow-blue-500/30 active:scale-[0.97]">
+          Probar AURON gratis 7 días
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+        </a>
+      </div>
+    </div>
+  }
+
+</div>

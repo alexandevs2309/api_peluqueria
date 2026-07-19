@@ -1,0 +1,5 @@
+src/app/core/guards/employee-management.guard.ts:26:      return of(true);
+src/app/core/guards/employee-management.guard.ts:89:        return of(true);
+src/app/core/guards/no-auth.guard.ts:24:    return of(true);
+src/app/core/guards/feature-access.guard.ts:23:    if (userRole === 'CLIENT_ADMIN' || userRole === 'MANAGER') return of(true);
+src/app/core/guards/feature-access.guard.ts:27:      return of(true);

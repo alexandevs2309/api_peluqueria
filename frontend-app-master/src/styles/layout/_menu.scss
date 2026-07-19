@@ -1,0 +1,216 @@
+@use 'mixins' as *;
+
+.layout-sidebar {
+    --shell-sidebar-bg: #FFFFFF;
+    --shell-sidebar-border: rgba(228, 231, 236, 0.95);
+    --shell-sidebar-shadow: 0 2px 8px rgba(16, 24, 40, 0.06),
+                            0 0 0 1px rgba(228, 231, 236, 0.5);
+    --shell-menu-root-text: #8C93A4;
+    --shell-menu-link-color: color-mix(in srgb, var(--text-color) 85%, #475569 15%);
+    --shell-menu-icon-bg: rgba(148, 163, 184, 0.08);
+    --shell-menu-icon-color: color-mix(in srgb, var(--text-color-secondary) 80%, #334155 20%);
+    --shell-menu-hover-bg:  rgba(26, 86, 219, 0.06);
+    --shell-menu-active-bg:         rgba(26, 86, 219, 0.10);
+    --shell-menu-active-color:      var(--brand);
+    --shell-menu-active-ring:       rgba(26, 86, 219, 0.15);
+    --shell-menu-active-icon-bg:    var(--brand);
+    --shell-menu-active-icon-color: #FFFFFF;
+    position: fixed;
+    width: 18.75rem;
+    height: calc(100vh - 8.75rem);
+    z-index: 999;
+    overflow-y: auto;
+    user-select: none;
+    top: 5.5rem;                   /* tighter gap from topbar */
+    left: 1rem;
+    transition:
+        transform var(--layout-section-transition-duration),
+        left var(--layout-section-transition-duration);
+    background: var(--shell-sidebar-bg);
+    border: 1px solid var(--shell-sidebar-border);
+    box-shadow: var(--shell-sidebar-shadow);
+    border-radius: 1rem;           /* was 1.5rem — less bubbly, more precise */
+    padding: 0.75rem 0.75rem 1rem;
+}
+
+.layout-menu {
+    margin: 0;
+    padding: 0;
+    list-style-type: none;
+
+    .layout-root-menuitem {
+        > .layout-menuitem-root-text {
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            color: var(--shell-menu-root-text);
+            margin: 1rem 0 0.55rem;
+            padding-left: 0.75rem;
+        }
+
+        > a {
+            display: none;
+        }
+    }
+
+    a {
+        user-select: none;
+
+        &.active-menuitem {
+            > .layout-submenu-toggler {
+                transform: rotate(-180deg);
+            }
+        }
+    }
+
+    li.active-menuitem {
+        > a {
+            .layout-submenu-toggler {
+                transform: rotate(-180deg);
+            }
+        }
+    }
+
+    ul {
+        margin: 0;
+        padding: 0;
+        list-style-type: none;
+
+        a {
+            display: flex;
+            align-items: center;
+            position: relative;
+            outline: 0 none;
+            color: var(--shell-menu-link-color);
+            cursor: pointer;
+            gap: 0.75rem;
+            padding: 0.8rem 0.9rem;
+            border-radius: 1rem;
+            transition:
+                background-color var(--element-transition-duration),
+                box-shadow var(--element-transition-duration),
+                transform var(--element-transition-duration),
+                color var(--element-transition-duration);
+
+            .layout-menuitem-icon {
+                width: 2rem;
+                height: 2rem;
+                margin-right: 0;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 0.8rem;
+                background: var(--shell-menu-icon-bg);
+                color: var(--shell-menu-icon-color);
+            }
+
+            .layout-submenu-toggler {
+                font-size: 75%;
+                margin-left: auto;
+                transition: transform var(--element-transition-duration);
+            }
+
+            &.active-route {
+                font-weight: 700;
+                color: var(--shell-menu-active-color);
+                background: var(--shell-menu-active-bg);
+                box-shadow: inset 0 0 0 1px var(--shell-menu-active-ring);
+
+                .layout-menuitem-icon {
+                    background: var(--shell-menu-active-icon-bg);
+                    color: var(--shell-menu-active-icon-color);
+                }
+            }
+
+            &:hover {
+                background-color: var(--shell-menu-hover-bg);
+                transform: translateX(2px);
+            }
+
+            &:focus {
+                @include focused-inset();
+            }
+        }
+
+        ul {
+            overflow: hidden;
+            border-radius: var(--content-border-radius);
+
+            li {
+                a {
+                    margin-left: 1rem;
+                }
+
+                li {
+                    a {
+                        margin-left: 2rem;
+                    }
+
+                    li {
+                        a {
+                            margin-left: 2.5rem;
+                        }
+
+                        li {
+                            a {
+                                margin-left: 3rem;
+                            }
+
+                            li {
+                                a {
+                                    margin-left: 3.5rem;
+                                }
+
+                                li {
+                                    a {
+                                        margin-left: 4rem;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+.app-dark {
+    .layout-sidebar {
+        --shell-sidebar-bg: #13161D;
+        --shell-sidebar-border: rgba(31, 35, 48, 1);
+        --shell-sidebar-shadow: 0 2px 16px rgba(30, 27, 24, 0.4),
+                                0 0 0 1px rgba(31, 35, 48, 0.8);
+        --shell-menu-root-text: color-mix(in srgb, var(--text-color-secondary) 84%, #cbd5e1 16%);
+        --shell-menu-link-color: color-mix(in srgb, var(--text-color) 90%, #cbd5e1 10%);
+        --shell-menu-icon-bg: rgba(148, 163, 184, 0.12);
+        --shell-menu-icon-color: color-mix(in srgb, var(--text-color-secondary) 78%, #e2e8f0 22%);
+        --shell-menu-hover-bg:  rgba(82, 123, 255, 0.08);
+        --shell-menu-active-bg:         rgba(82, 123, 255, 0.14);
+        --shell-menu-active-color:      var(--brand-400);
+        --shell-menu-active-ring: rgba(129, 140, 248, 0.18);
+        --shell-menu-active-icon-bg:    var(--brand);
+        --shell-menu-active-icon-color: #0f172a;
+    }
+}
+
+.layout-submenu-enter-from,
+.layout-submenu-leave-to {
+    max-height: 0;
+}
+
+.layout-submenu-enter-to,
+.layout-submenu-leave-from {
+    max-height: 1000px;
+}
+
+.layout-submenu-leave-active {
+    overflow: hidden;
+    transition: max-height 0.45s cubic-bezier(0, 1, 0, 1);
+}
+
+.layout-submenu-enter-active {
+    overflow: hidden;
+    transition: max-height 1s ease-in-out;
+}

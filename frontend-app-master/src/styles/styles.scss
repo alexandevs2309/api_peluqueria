@@ -1,0 +1,219 @@
+/* You can add global styles to this file, and also import other style files */
+@use './layout/layout.scss';
+@use 'primeicons/primeicons.css';
+@use './tailwind.css';
+@use './layout/platform';
+@use './layout/prime-overrides';
+@use '../app/shared/onboarding/onboarding.styles.scss';
+
+html {
+    scroll-behavior: smooth;
+}
+
+/* ── au-metric-card system ─────────────────────────────────────── */
+.au-metric-card {
+    background: var(--surface-card);
+    border: 1px solid var(--surface-border);
+    border-radius: 12px;
+    padding: var(--dash-card-pad, 20px);
+    box-shadow: var(--shadow-card);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.au-metric-card--featured { grid-column: span 2; }
+
+.au-metric-card--agenda   { border-left: 3px solid var(--module-agenda);   border-radius: 0 12px 12px 0; }
+.au-metric-card--pos      { border-left: 3px solid var(--module-pos);      border-radius: 0 12px 12px 0; }
+.au-metric-card--clients  { border-left: 3px solid var(--module-clients);  border-radius: 0 12px 12px 0; }
+.au-metric-card--services { border-left: 3px solid var(--module-services); border-radius: 0 12px 12px 0; }
+
+.au-metric-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.au-metric-value {
+    font-size: 2.25rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--text-color);
+    margin: 4px 0 2px;
+}
+.au-metric-value.positive { color: var(--metric-positive, #059669); }
+.au-metric-value.negative { color: var(--metric-negative, #dc2626); }
+.au-metric-value.neutral  { color: var(--metric-neutral,  #0284c7); }
+.au-metric-value.brand    { color: var(--metric-brand,    #1A56DB); }
+
+.au-metric-context {
+    font-size: 12px;
+    color: var(--text-color-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+}
+
+.au-delta {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+.au-delta.up      { background: #d1fae5; color: #065f46; }
+.au-delta.down    { background: #fee2e2; color: #991b1b; }
+.au-delta.neutral { background: rgba(26,86,219,0.08); color: #1A56DB; }
+
+.au-mini-bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 44px;
+    margin-top: 8px;
+}
+.au-mini-bar {
+    flex: 1;
+    background: rgba(26,86,219,0.10);
+    border-radius: 3px 3px 0 0;
+    min-height: 4px;
+    transition: background 0.2s;
+}
+.au-mini-bar.is-today { background: var(--metric-brand, #1A56DB); }
+
+.au-dash-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--dash-gap, 12px);
+}
+
+.au-dash-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-color-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 12px;
+}
+
+.au-dash-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding-bottom: 20px;
+    margin-bottom: var(--dash-section-gap, 24px);
+    border-bottom: 1px solid var(--surface-border);
+}
+.au-dash-title {
+    font-size: 1.375rem;
+    font-weight: 700;
+    color: var(--text-color);
+    letter-spacing: -0.02em;
+    margin: 0;
+}
+.au-dash-subtitle {
+    font-size: 13px;
+    color: var(--text-color-secondary);
+    margin: 2px 0 0;
+}
+
+.au-dash-divider {
+    border: none;
+    border-top: 1px solid var(--surface-border);
+    margin: var(--dash-section-gap, 24px) 0;
+}
+
+.au-row-list { display: flex; flex-direction: column; }
+.au-row-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--surface-border);
+}
+.au-row-item:last-child { border-bottom: none; }
+
+.au-row-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+}
+.au-row-avatar.agenda   { background: rgba(2,132,199,0.10);  color: #0284c7; }
+.au-row-avatar.pos      { background: rgba(5,150,105,0.10);  color: #059669; }
+.au-row-avatar.clients  { background: rgba(8,145,178,0.10);  color: #0891b2; }
+.au-row-avatar.services { background: rgba(217,119,6,0.10);  color: #d97706; }
+.au-row-avatar.brand    { background: rgba(26,86,219,0.10);  color: #1A56DB; }
+
+.au-row-name { font-size: 13px; font-weight: 600; color: var(--text-color); margin: 0; }
+.au-row-sub  { font-size: 11px; color: var(--text-color-secondary); margin: 1px 0 0; }
+.au-row-val  { margin-left: auto; font-size: 14px; font-weight: 700; color: var(--text-color); }
+.au-row-val.positive { color: var(--metric-positive, #059669); }
+.au-row-val.neutral  { color: var(--metric-neutral,  #0284c7); }
+
+.app-dark {
+    .au-delta.up   { background: rgba(5,150,105,0.15); color: #34d399; }
+    .au-delta.down { background: rgba(220,38,38,0.15); color: #f87171; }
+}
+
+@media (max-width: 768px) {
+    .au-dash-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .au-metric-card--featured { grid-column: span 2; }
+}
+
+@property --border-angle {
+    inherits: true;
+    initial-value: 0deg;
+    syntax: '<angle>';
+}
+
+@keyframes spin-border {
+    to { --border-angle: 360deg; }
+}
+
+.animated-gradient-border {
+    position: relative;
+    z-index: 0;
+    border: 2px solid transparent !important;
+}
+
+.animated-gradient-border::before {
+    content: '';
+    position: absolute;
+    inset: -2px;
+    border-radius: inherit;
+    z-index: -2;
+    background: conic-gradient(
+        from var(--border-angle),
+        #C8674A, /* Terracota */
+        #D4A84B, /* Oro */
+        #B84A4A, /* Coral suave */
+        #D4A84B, /* Oro */
+        #C8674A  /* Terracota */
+    );
+    animation: spin-border 3s linear infinite;
+}
+
+.animated-gradient-border::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    z-index: -1;
+    background: inherit;
+}

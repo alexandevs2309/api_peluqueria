@@ -1,0 +1,42 @@
+{
+  "name": "Auron Suite",
+  "short_name": "AuronSuite",
+  "description": "Plataforma SaaS de gestión para salones y peluquerías",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563EB",
+  "orientation": "portrait-primary",
+  "categories": ["business", "lifestyle"],
+  "screenshots": [
+    {
+      "src": "/assets/og/auron-gradient.png",
+      "sizes": "360x640",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Dashboard móvil de Auron Suite en smartphone"
+    },
+    {
+      "src": "/assets/og/auron-gradient.png",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "form_factor": "wide",
+      "label": "Panel principal de escritorio de Auron Suite"
+    }
+  ],
+  "icons": [
+    {
+      "src": "/assets/favicon/web-app-manifest-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/favicon/web-app-manifest-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

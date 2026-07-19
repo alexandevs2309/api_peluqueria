@@ -1,0 +1,208 @@
+@use 'mixins' as *;
+
+.layout-topbar {
+    --shell-topbar-bg:     #FFFFFF;
+    --shell-topbar-border: rgba(228, 231, 236, 0.95);
+    --shell-topbar-shadow: 0 1px 0 rgba(228, 231, 236, 1),
+                           0 4px 12px rgba(16, 24, 40, 0.04);
+    --shell-topbar-hover-bg: rgba(26, 86, 219, 0.06);
+    --shell-brand-mark-bg:    linear-gradient(135deg, var(--brand), #1039A3);
+    --shell-brand-mark-color: #FFFFFF;
+    --shell-search-bg:           #F7F8FA;
+    --shell-search-border:       rgba(228, 231, 236, 0.8);
+    --shell-search-border-hover: rgba(26, 86, 219, 0.3);
+    --shell-search-shadow:       none;
+    --shell-search-kbd-bg: rgba(255, 255, 255, 0.75);
+    --shell-search-kbd-border: rgba(148, 163, 184, 0.25);
+    position: fixed;
+    height: 4.75rem;
+    z-index: 997;
+    left: 1rem;
+    top: 1rem;
+    width: calc(100% - 2rem);
+    padding: 0 1.25rem;
+    background: var(--shell-topbar-bg);
+    backdrop-filter: none;          /* remove glass effect */
+    -webkit-backdrop-filter: none;
+    border: 1px solid var(--shell-topbar-border);
+    border-radius: 1rem;            /* was 1.4rem */
+    box-shadow: var(--shell-topbar-shadow);
+    transition: left var(--layout-section-transition-duration);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+
+    .layout-topbar-logo-container {
+        width: 20rem;
+        display: flex;
+        align-items: center;
+    }
+
+    .layout-topbar-logo {
+        display: inline-flex;
+        align-items: center;
+        font-size: 1.5rem;
+        border-radius: var(--content-border-radius);
+        color: var(--text-color);
+        font-weight: 500;
+        gap: 0.85rem;
+
+        svg {
+            width: 3rem;
+        }
+
+        &:focus-visible {
+            @include focused();
+        }
+    }
+
+    .layout-topbar-action {
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        color: var(--text-color-secondary);
+        border-radius: 50%;
+        width: 2.5rem;
+        height: 2.5rem;
+        color: var(--text-color);
+        transition:
+            background-color var(--element-transition-duration),
+            transform var(--element-transition-duration),
+            color var(--element-transition-duration);
+        cursor: pointer;
+
+        &:hover {
+            background-color: var(--shell-topbar-hover-bg);
+            color: var(--brand);
+            transform: translateY(-1px);
+        }
+
+        &:focus-visible {
+            @include focused();
+        }
+
+        i {
+            font-size: 1.25rem;
+        }
+
+        span {
+            font-size: 1rem;
+            display: none;
+        }
+
+        &.layout-topbar-action-highlight {
+            background-color: var(--brand);
+            color: var(--primary-contrast-color);
+        }
+    }
+
+    .layout-menu-button {
+        margin-right: 0.5rem;
+    }
+
+    .layout-topbar-menu-button {
+        display: none;
+    }
+
+    .layout-topbar-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+
+    .layout-topbar-menu-content {
+        display: flex;
+        gap: 1rem;
+    }
+
+    .layout-config-menu {
+        display: flex;
+        gap: 0.5rem;
+    }
+}
+
+.app-dark {
+    .layout-topbar {
+        --shell-topbar-bg:     #13161D;
+        --shell-topbar-border: rgba(31, 35, 48, 1);
+        --shell-topbar-shadow: 0 1px 0 rgba(31, 35, 48, 1),
+                               0 4px 16px rgba(30, 27, 24, 0.3);
+        --shell-topbar-hover-bg: rgba(82, 123, 255, 0.12);
+        --shell-brand-mark-bg: linear-gradient(135deg, var(--brand), #1039A3);
+        --shell-brand-mark-color: #FFFFFF;
+        --shell-search-bg:     #1A1E28;
+        --shell-search-border: rgba(31, 35, 48, 1);
+        --shell-search-border-hover: rgba(82, 123, 255, 0.38);
+        --shell-search-shadow: none;
+        --shell-search-kbd-bg: rgba(30, 41, 59, 0.82);
+        --shell-search-kbd-border: rgba(148, 163, 184, 0.24);
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+    }
+}
+
+@media (max-width: 991px) {
+    .layout-topbar {
+        left: 0.75rem;
+        top: 0.75rem;
+        width: calc(100% - 1.5rem);
+        padding: 0 1rem;
+
+        .layout-topbar-logo-container {
+            width: auto;
+        }
+
+        .layout-menu-button {
+            margin-left: 0;
+            margin-right: 0.5rem;
+        }
+
+        .layout-topbar-menu-button {
+            display: inline-flex;
+        }
+
+        .layout-topbar-menu {
+            position: absolute;
+            background-color: var(--surface-overlay);
+            transform-origin: top;
+            box-shadow:
+                0px 3px 5px rgba(30, 27, 24, 0.02),
+                0px 0px 2px rgba(30, 27, 24, 0.05),
+                0px 1px 4px rgba(30, 27, 24, 0.08);
+            border-radius: var(--content-border-radius);
+            padding: 1rem;
+            right: 2rem;
+            top: 4rem;
+            min-width: 15rem;
+            border: 1px solid var(--surface-border);
+
+            .layout-topbar-menu-content {
+                gap: 0.5rem;
+            }
+
+            .layout-topbar-action {
+                display: flex;
+                width: 100%;
+                height: auto;
+                justify-content: flex-start;
+                border-radius: var(--content-border-radius);
+                padding: 0.5rem 1rem;
+
+                i {
+                    font-size: 1rem;
+                    margin-right: 0.5rem;
+                }
+
+                span {
+                    font-weight: medium;
+                    display: block;
+                }
+            }
+        }
+
+        .layout-topbar-menu-content {
+            flex-direction: column;
+        }
+    }
+}

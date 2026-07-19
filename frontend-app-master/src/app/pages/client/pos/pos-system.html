@@ -1,0 +1,782 @@
+<div class="pos-shell au-module-card">
+  <div id="pos-tour-header" class="pos-toolbar">
+    <div class="pos-toolbar__left">
+      <div class="pos-toolbar__text">
+        <strong>Auron Suite <span>/ POS</span></strong>
+      </div>
+      <span class="pos-status-pill" [class.is-open]="cart.isOpen()" [class.is-closed]="!cart.isOpen()">
+        <span class="pos-status-dot"></span>
+        {{ cart.isOpen() ? t('pos.caja_abierta') : t('pos.caja_cerrada') }}
+      </span>
+      <span *ngIf="offlineService.isOffline()" class="pos-status-pill is-closed ml-1 text-xs! py-1!">
+        <i class="pi pi-wifi text-xs"></i>
+        Offline
+      </span>
+      <span class="pos-toolbar__meta">{{ obtenerUsuarioActual() }} · {{ getCurrentDateTime() }}</span>
+      <p-select *ngIf="showBranchSelector" [options]="branches()" [ngModel]="selectedBranch()"
+                (ngModelChange)="onBranchChange($event)"
+                 optionLabel="name" [placeholder]="t('pos.sucursal')" class="pos-branch-select ml-2"
+                class="pos-select-sm"></p-select>
+    </div>
+
+    <div class="pos-toolbar__right">
+      <button *ngIf="!cart.isOpen()" au-btn (click)="mostrarDialogoAbrirCaja = true" icon="pi pi-unlock">{{ t('pos.open_register') }}</button>
+      <button *ngIf="cart.isOpen()" au-btn variant="secondary" (click)="mostrarDialogoArqueo = true" icon="pi pi-calculator">{{ t('pos.arqueo') }}</button>
+      <button pButton icon="pi pi-chart-bar" class="p-button-outlined" [pTooltip]="t('pos.dashboard')" (click)="abrirDashboard()"></button>
+      <button pButton icon="pi pi-history" class="p-button-outlined" [pTooltip]="t('pos.historial')" (click)="mostrarDialogoHistorial=true; cargarHistorialVentas()"></button>
+      <button pButton icon="pi pi-refresh" class="p-button-outlined" [pTooltip]="t('pos.recargar')" [loading]="repo.loading()" (click)="repo.loadAll(true)"></button>
+      <button *ngIf="cart.isOpen()" au-btn variant="danger" (click)="prepararCierreCaja()" icon="pi pi-lock">{{ t('pos.close_register') }}</button>
+    </div>
+  </div>
+
+  <div class="pos-workspace" [class.show-cart-only]="activeMobileView() === 'cart'">
+    <section class="pos-catalog" [class.hidden-mobile]="activeMobileView() === 'cart'">
+      <div id="pos-tour-filters" class="pos-controls">
+        <div class="pos-type-switch">
+          <button type="button" class="p-button" [class.is-active]="tipoActivo==='services'" (click)="seleccionarTipo('services')">{{ t('pos.servicios') }}</button>
+          <button type="button" class="p-button" [class.is-active]="tipoActivo==='products'" (click)="seleccionarTipo('products')">{{ t('pos.productos') }}</button>
+        </div>
+
+        <div class="pos-search-row">
+          <label class="pos-search">
+            <i class="pi pi-search"></i>
+            <input pInputText [(ngModel)]="busqueda" [placeholder]="t('pos.buscar_escanear')" (input)="filterItems()" (keyup.enter)="filterItems()" [disabled]="repo.loading()">
+            <i class="pi pi-qrcode pos-search__qricon"></i>
+          </label>
+          <p-select [options]="categorias" [(ngModel)]="categoriaSeleccionada"
+                    optionLabel="name" optionValue="value" [placeholder]="t('pos.categoria')"
+                    (onChange)="filterItems()" class="pos-category-select" [disabled]="repo.loading()"></p-select>
+          <button pButton icon="pi pi-qrcode" [class]="modoScanner ? 'p-button-success' : 'p-button-outlined'" [pTooltip]="t('pos.scanner_tooltip')" [disabled]="repo.loading()" (click)="modoScanner = !modoScanner"></button>
+          <button pButton icon="pi pi-tags" class="p-button-outlined" [pTooltip]="t('pos.promociones')" [disabled]="promociones.length === 0" (click)="mostrarDialogoPromociones = true"></button>
+        </div>
+
+        <div *ngIf="modoScanner" class="pos-scanner-row">
+          <input pInputText [(ngModel)]="codigoBarras" [placeholder]="t('pos.escanear_codigo')" (keyup.enter)="buscarPorCodigoBarras()" class="w-full" autofocus>
+          <button au-btn (click)="buscarPorCodigoBarras()" icon="pi pi-arrow-right">{{ t('pos.buscar') }}</button>
+          <button pButton icon="pi pi-camera" pTooltip="Cámara" (click)="abrirCamara()" class="p-button-outlined"></button>
+        </div>
+
+        <div class="pos-meta-row">
+          <div class="pos-meta-row__selectors">
+            <p-select [options]="clientes" [ngModel]="cart.client()"
+                      (ngModelChange)="cart.client.set($event)"
+                      optionLabel="full_name" [placeholder]="t('pos.cliente_general')"
+                      [showClear]="true" class="pos-inline-select"
+                      (onChange)="aplicarDescuentoClienteFrecuente()">
+              <ng-template pTemplate="item" let-cliente>
+                <div class="flex items-center justify-between w-full gap-2">
+                  <span>{{ cliente.full_name }}</span>
+                  <div class="flex items-center gap-1">
+                    <span *ngIf="cliente.loyalty_points > 0" class="pos-inline-badge" style="background:#f59e0b20;color:#b45309;border-color:#f59e0b40">
+                      {{ cliente.loyalty_points }} pts
+                    </span>
+                    <span *ngIf="esClienteFrecuente(cliente)" class="pos-inline-badge">{{ t('pos.vip') }}</span>
+                  </div>
+                </div>
+              </ng-template>
+            </p-select>
+
+            <p-select [options]="empleadosFiltrados()" [ngModel]="cart.employee()"
+                      (ngModelChange)="cart.employee.set($event)"
+                      optionLabel="displayName" [placeholder]="t('pos.empleado')"
+                      appendTo="body" class="pos-inline-select">
+              <ng-template pTemplate="item" let-emp>
+                <div class="flex items-center gap-2">
+                  <i class="pi pi-user text-primary-500"></i>
+                  <span>{{ emp.displayName }}</span>
+                </div>
+              </ng-template>
+            </p-select>
+          </div>
+
+          <div class="pos-shortcuts">
+            <span>{{ t('pos.shortcut_scanner') }}</span>
+            <span>{{ t('pos.shortcut_clear') }}</span>
+            <span>{{ t('pos.shortcut_charge') }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pos-catalog__header">
+        <strong>{{ tipoActivo === 'services' ? t('pos.servicios') : t('pos.productos') }} — {{ itemsFiltrados.length }} {{ t('pos.disponibles') }}</strong>
+        <span>{{ categoriaSeleccionada || t('pos.catalogo_general') }}</span>
+      </div>
+
+      <div class="pos-results" *ngIf="!repo.loading(); else loadingTpl">
+        <div class="pos-results-grid" *ngIf="itemsFiltrados.length > 0; else emptyStateTpl">
+          <button *ngFor="let item of itemsFiltrados"
+                  type="button"
+                  class="pos-product-tile"
+                  [class.has-quantity]="getCatalogItemQuantity(item) > 0"
+                  [class.is-disabled]="!cart.canAddMore(item)"
+                  (click)="cart.canAddMore(item) && agregarAlCarrito(item)">
+            <div class="pos-product-tile__img">
+              <img *ngIf="item.image" [src]="item.image" alt="" loading="lazy">
+              <i *ngIf="!item.image" class="pi pi-image"></i>
+            </div>
+
+            <div class="pos-product-tile__top">
+              <span class="pos-product-type">{{ tipoActivo === 'services' ? t('pos.servicio') : t('pos.producto') }}</span>
+              <span *ngIf="getCatalogItemQuantity(item) > 0" class="pos-product-qty">
+                ×{{ getCatalogItemQuantity(item) }}
+              </span>
+            </div>
+
+            <div class="pos-product-tile__body">
+              <strong>{{ item.name }}</strong>
+            </div>
+
+            <div class="pos-product-tile__bottom">
+              <span class="pos-product-price">{{ formatearMoneda(item.price) }}</span>
+              <span *ngIf="tipoActivo==='products'" class="pos-product-stock" [class.is-empty]="cart.availableStock(item) === 0">
+                {{ cart.availableStock(item) === 0 ? t('pos.agotado') : t('pos.stock') + ' ' + cart.availableStock(item) }}
+              </span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      <ng-template #loadingTpl>
+        <div class="pos-results">
+          <div class="pos-results-grid">
+            <div *ngFor="let i of [1,2,3,4,5,6]">
+              <au-skeleton width="100%" height="120px"></au-skeleton>
+              <au-skeleton width="70%" height="1rem" class="mt-2"></au-skeleton>
+              <au-skeleton width="40%" height="1rem" class="mt-1"></au-skeleton>
+            </div>
+          </div>
+        </div>
+      </ng-template>
+
+      <ng-template #emptyStateTpl>
+        <div class="pos-empty-state">
+          <i class="pi pi-search text-3xl"></i>
+          <strong>{{ tipoActivo === 'services' ? t('pos.no_encontrados_servicios') : t('pos.no_encontrados_productos') }}</strong>
+          <span>{{ t('pos.no_encontrados_desc') }}</span>
+          <button au-btn variant="ghost" (click)="categoriaSeleccionada=''; busqueda=''; filterItems()">{{ t('pos.limpiar_filtros') }}</button>
+        </div>
+      </ng-template>
+    </section>
+
+    <aside id="pos-tour-summary" class="pos-payment" [class.hidden-mobile]="activeMobileView() === 'catalog'" (keydown.enter)="procesarVenta()">
+      <div class="pos-order-panel">
+        <div class="pos-order-panel__header">
+          <span>{{ t('pos.orden_actual') }}</span>
+          <span>{{ cart.items().length }} {{ cart.items().length === 1 ? t('pos.item') : t('pos.items') }}</span>
+        </div>
+
+        <div class="pos-order-list" *ngIf="cart.items().length > 0; else emptyOrderTpl">
+          <div *ngFor="let item of cart.items(); let i=index" class="pos-order-item">
+            <div class="pos-order-item__main">
+              <strong>{{ item.item.name }}</strong>
+              <span>{{ item.type==='service' ? (cart.employee()?.displayName || t('pos.servicio')) : t('pos.producto') }}</span>
+            </div>
+
+            <div class="pos-order-item__qty">
+              <button au-btn variant="ghost" size="sm" icon="pi pi-minus" [iconOnly]="true" (click)="cart.updateQuantity(i, -1)"></button>
+              <span>{{ item.quantity }}</span>
+              <button au-btn variant="ghost" size="sm" icon="pi pi-plus" [iconOnly]="true" (click)="cart.updateQuantity(i, 1)"></button>
+            </div>
+
+            <div class="pos-order-item__price">
+              <strong>{{ formatearMoneda(item.subtotal) }}</strong>
+              <button au-btn variant="danger" size="sm" icon="pi pi-trash" [iconOnly]="true" (click)="cart.removeItem(i)"></button>
+            </div>
+          </div>
+        </div>
+
+        <ng-template #emptyOrderTpl>
+          <div class="pos-order-list">
+            <div class="pos-empty-order">
+              <i class="pi pi-shopping-cart text-3xl"></i>
+              <strong>{{ t('pos.orden_vacia') }}</strong>
+              <span>{{ t('pos.orden_vacia_desc') }}</span>
+            </div>
+          </div>
+        </ng-template>
+      </div>
+
+      <div class="pos-total-panel">
+        <span class="pos-total-panel__label">{{ t('pos.total_cobrar') }}</span>
+        <span class="pos-total-panel__value">{{ formatearMoneda(cart.total()) }}</span>
+        <div class="pos-total-panel__meta">
+          <span>{{ t('pos.subtotal') }} {{ formatearMoneda(cart.subtotal()) }}</span>
+          <span>{{ cart.discountValue() > 0 ? t('pos.discount') + ' ' + formatearMoneda(cart.discountValue()) : '' }}</span>
+          <span>{{ cart.redeemPoints() > 0 ? t('pos.points_prefix') + formatearMoneda(cart.pointsDiscount()) : '' }}</span>
+        </div>
+
+        <div class="pos-discount-row">
+          <p-inputNumber [ngModel]="cart.discount()" (ngModelChange)="cart.discount.set($event)" [min]="0" [max]="cart.discountType() === '%' ? 100 : cart.subtotal()" class="w-full"></p-inputNumber>
+          <button au-btn variant="secondary" (click)="cart.toggleDiscountType()">{{ cart.discountType() }}</button>
+        </div>
+
+        <!-- Coupon Row -->
+        <div class="pos-coupon-row mt-3 mb-2 flex gap-2 w-full">
+          <ng-container *ngIf="!cart.couponApplied(); else appliedCouponTpl">
+            <input pInputText [(ngModel)]="couponCode" [placeholder]="t('pos.placeholder_cupon') || 'Código de cupón'" class="pos-coupon-input flex-1">
+            <button au-btn size="sm" [loading]="aplicandoCupon" [disabled]="!couponCode.trim()" (click)="aplicarCupon()" class="pos-coupon-apply">{{ t('pos.aplicar') || 'Aplicar' }}</button>
+          </ng-container>
+          <ng-template #appliedCouponTpl>
+            <div class="pos-coupon-applied">
+              <span class="font-mono font-bold" style="color: var(--success-color-text)">
+                <i class="pi pi-tag mr-1"></i> {{ cart.couponApplied().code }} (-{{ formatearMoneda(cart.discountValue()) }})
+              </span>
+              <button au-btn variant="danger" size="sm" icon="pi pi-trash" [iconOnly]="true" (click)="removerCupon()" class="pos-coupon-remove" type="button"></button>
+            </div>
+          </ng-template>
+        </div>
+
+        <div *ngIf="cart.client() && cart.client().loyalty_points > 0" class="pos-loyalty-row">
+          <label class="pos-loyalty-label">
+            <i class="pi pi-star"></i>
+            {{ cart.client().loyalty_points }} {{ t('pos.puntos_disponibles') }}
+          </label>
+          <div class="pos-loyalty-input">
+            <p-inputNumber [ngModel]="cart.redeemPoints()" (ngModelChange)="cart.redeemPoints.set($event)" [min]="0" [max]="cart.client().loyalty_points" [step]="10"></p-inputNumber>
+            <span *ngIf="cart.redeemPoints() > 0" class="pos-loyalty-discount">-{{ formatearMoneda(cart.pointsDiscount()) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="pos-payment-methods">
+      <button *ngFor="let metodo of metodosPago"
+              au-btn
+              type="button"
+              [class.is-active]="cart.paymentMethod() === metodo.value"
+              (click)="selectPaymentMethod(metodo.value)">{{ metodo.label }}
+      </button>
+      </div>
+
+      <button id="pos-tour-process-btn" pButton
+              [label]="api.loading() ? t('pos.procesando') : t('pos.checkout') + ' ' + formatearMoneda(cart.total())"
+              [icon]="api.loading() ? 'pi pi-spin pi-spinner' : 'pi pi-check'"
+              [disabled]="!cart.canSell() || api.loading()"
+              type="button"
+              (click)="procesarVenta()"
+              class="pos-charge-button"
+              [pTooltip]="!cart.canSell() ? cart.validationMessage() : ''"></button>
+
+      <div class="pos-readiness">
+        {{ cart.canSell() ? t('pos.listo_cobrar') : cart.validationMessage() || t('pos.completar_venta') }}
+      </div>
+
+      <div class="pos-bottom-strip">
+        @if (statsLoading()) {
+          <div class="flex gap-4">
+            <au-skeleton width="80px" height="24px"></au-skeleton>
+            <au-skeleton width="110px" height="24px"></au-skeleton>
+            <au-skeleton width="140px" height="24px"></au-skeleton>
+          </div>
+        } @else {
+          <div>
+            <span>{{ t('pos.ventas_hoy') }}</span>
+            <strong>{{ cart.dailyStats().ventas }}</strong>
+          </div>
+          <div>
+            <span>{{ t('pos.ventas_dia') }}</span>
+            <strong>{{ formatearMoneda(cart.dailyStats().ingresos) }}</strong>
+          </div>
+          <div>
+            <span>{{ t('pos.operador_actual') }}</span>
+            <strong>{{ cart.userSalesCount() }} / {{ formatearMoneda(cart.userSalesRevenue()) }}</strong>
+          </div>
+        }
+      </div>
+    </aside>
+  </div>
+
+  <!-- DIALOGS -->
+
+  <!-- Open Register -->
+  <p-dialog [header]="t('pos.open_register')" [(visible)]="mostrarDialogoAbrirCaja" [modal]="true" styleClass="mobile-dialog pos-dialog-sm" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-3">
+      <label class="font-medium">{{ t('pos.monto_inicial') }}</label>
+      <p-inputNumber [(ngModel)]="montoInicialCaja" mode="currency" currency="DOP" locale="es-DO" class="w-full" [placeholder]="t('pos.monto_inicial')" (onFocus)="selectOnFocus($event)"></p-inputNumber>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="ghost" (click)="mostrarDialogoAbrirCaja=false">{{ t('pos.cancelar') }}</button>
+        <button au-btn (click)="abrirCaja()" style="width: 100%;">{{ t('pos.open_register') }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Close Register -->
+  <p-dialog [header]="t('pos.cuadre_cierre')" [(visible)]="mostrarDialogoCerrarCaja" [modal]="true" styleClass="mobile-dialog pos-dialog-lg" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <div class="p-3 bg-surface-50 rounded">
+        <h5 class="font-bold mb-2">{{ t('pos.resumen_dia') }}</h5>
+        <div class="flex justify-between text-sm"><span>{{ t('pos.monto_inicial_caja') }}</span><span class="font-mono">{{ formatearMoneda(montoEsperado - ventasEfectivoHoy) }}</span></div>
+        <div class="flex justify-between text-sm"><span>{{ t('pos.ventas_efectivo') }}</span><span class="font-mono">{{ formatearMoneda(ventasEfectivoHoy) }}</span></div>
+        <div class="flex justify-between text-sm font-bold border-t pt-1"><span>{{ t('pos.efectivo_esperado') }}</span><span class="font-mono">{{ formatearMoneda(+montoEsperado || 0) }}</span></div>
+      </div>
+      <div>
+        <label class="font-medium block mb-2">{{ t('pos.efectivo_contado') }}</label>
+        <p-inputNumber [(ngModel)]="montoFinalCaja" mode="currency" currency="DOP" locale="es-DO" class="w-full" (onInput)="calcularDiferencia()" (onFocus)="selectOnFocus($event)"></p-inputNumber>
+      </div>
+          <div [class]="'p-3 rounded ' + (Math.abs(diferenciaCaja) > 5 ? 'pos-diff-neg' : 'pos-diff-pos')">
+        <div class="flex justify-between font-bold">
+          <span>{{ t('pos.diferencia_label') }}</span>
+          <span [class]="'font-mono ' + (diferenciaCaja >= 0 ? 'pos-text-success' : 'pos-text-danger')">
+            {{ (diferenciaCaja >= 0 ? '+' : '') }}{{ formatearMoneda(Math.abs(diferenciaCaja)) }}
+          </span>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="ghost" (click)="mostrarDialogoCerrarCaja=false">{{ t('pos.cancelar') }}</button>
+        <button au-btn [variant]="Math.abs(diferenciaCaja) > 5 ? 'danger' : 'primary'" (click)="cerrarCaja()">{{ t('pos.cerrar_caja') }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Payment Dialog -->
+  <p-dialog [header]="t('pos.pago_efectivo')" [(visible)]="mostrarDialogoPago" [modal]="true" styleClass="mobile-dialog pos-dialog-md" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <form (ngSubmit)="confirmarVenta()">
+    <div class="flex flex-col gap-4">
+      <div class="p-3 bg-surface-50 rounded">
+        <div class="flex justify-between text-lg font-bold">
+          <span>{{ t('pos.total_pagar_label') }}</span>
+          <span class="text-primary-600">{{ formatearMoneda(cart.total()) }}</span>
+        </div>
+      </div>
+      <div>
+        <label class="font-medium block mb-2">{{ t('pos.ncf') }}</label>
+        <p-select [(ngModel)]="selectedNcfType" name="selectedNcfType" [options]="ncfTypes" optionLabel="label" optionValue="value" [placeholder]="t('pos.seleccionar')" class="w-full" (onChange)="onNcfTypeChange()"></p-select>
+      </div>
+      <div *ngIf="selectedNcfType === '01'" class="flex flex-col gap-3">
+        <div>
+          <label class="font-medium block mb-2">{{ t('pos.ncf_rnc') }} <span class="text-red-500">*</span></label>
+          <input pInputText [(ngModel)]="ncfRnc" name="ncfRnc" [placeholder]="t('pos.ncf_rnc')" class="w-full" (keyup.enter)="confirmarVenta()">
+        </div>
+        <div>
+          <label class="font-medium block mb-2">{{ t('pos.ncf_company_name') }} <span class="text-red-500">*</span></label>
+          <input pInputText [(ngModel)]="ncfCompanyName" name="ncfCompanyName" [placeholder]="t('pos.ncf_company_name')" class="w-full" (keyup.enter)="confirmarVenta()">
+        </div>
+      </div>
+      <div>
+        <label class="font-medium block mb-2">{{ t('pos.monto_recibido') }}</label>
+        <p-inputNumber [(ngModel)]="cart.receivedAmount" name="receivedAmount" mode="currency" currency="DOP" locale="es-DO" class="w-full" (onFocus)="selectOnFocus($event)"></p-inputNumber>
+      </div>
+      <div [class]="'p-3 rounded ' + ((cart.receivedAmount() ?? 0) >= cart.total() ? 'pos-diff-pos' : 'pos-diff-neg')">
+        <div class="flex justify-between font-bold">
+          <span>{{ t('pos.cambio') }}</span>
+          <span [class]="'font-mono ' + (cart.change() >= 0 ? 'pos-text-success' : 'pos-text-danger')">{{ formatearMoneda(cart.change()) }}</span>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="ghost" (click)="mostrarDialogoPago=false" type="button">{{ t('pos.cancelar') }}</button>
+        <button au-btn type="submit" [disabled]="(cart.receivedAmount() ?? 0) < cart.total() || (selectedNcfType === '01' && (!ncfRnc || !ncfCompanyName)) || offlineService.isOffline()" style="width: 100%;">{{ t('pos.confirmar_pago') }}</button>
+      </div>
+    </div>
+    </form>
+  </p-dialog>
+
+  <!-- Cash Count -->
+  <p-dialog [header]="t('pos.arqueo_caja')" [(visible)]="mostrarDialogoArqueo" [modal]="true" styleClass="mobile-dialog pos-dialog-lg" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <p class="text-sm text-surface-600 dark:text-surface-400">{{ t('pos.arqueo_consulta') }}</p>
+      <div *ngFor="let denom of cart.denominations(); trackBy: trackByDenominacion" class="flex items-center gap-3">
+        <span class="w-16 font-mono">{{ formatearMoneda(denom.valor) }}</span>
+        <p-inputNumber [(ngModel)]="denom.cantidad" [min]="0" class="w-20"></p-inputNumber>
+        <span class="w-24 text-right font-mono">{{ formatearMoneda(denom.valor * denom.cantidad) }}</span>
+      </div>
+      <div class="border-t pt-3">
+        <div class="flex justify-between font-bold text-lg">
+          <span>{{ t('pos.total_contado') }}</span>
+          <span class="font-mono">{{ formatearMoneda(cart.countTotal()) }}</span>
+        </div>
+        <div class="flex justify-between text-sm text-surface-600 dark:text-surface-400 mt-2">
+          <span>{{ t('pos.efectivo_esperado') }}</span>
+          <span class="font-mono">{{ formatearMoneda(cart.expectedCash()) }}</span>
+        </div>
+        <div [class]="'flex justify-between font-semibold mt-1 ' + (cart.countDifference() >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')">
+          <span>{{ t('pos.diferencia_label') }}</span>
+          <span class="font-mono">{{ cart.countDifference() >= 0 ? '+' : '' }}{{ formatearMoneda(Math.abs(cart.countDifference())) }}</span>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="secondary" (click)="cart.resetCount()">{{ t('pos.limpiar') }}</button>
+        <button au-btn (click)="mostrarDialogoArqueo=false" style="width: 100%;">{{ t('pos.cerrar') }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Sales History -->
+  <p-dialog [header]="t('pos.historial_ventas')" [(visible)]="mostrarDialogoHistorial" [modal]="true" styleClass="mobile-dialog pos-dialog-3xl" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <div *ngIf="cargandoHistorial" class="flex flex-col gap-3 p-4">
+        <au-skeleton width="100%" height="4rem"></au-skeleton>
+        <au-skeleton width="100%" height="4rem"></au-skeleton>
+        <au-skeleton width="100%" height="4rem"></au-skeleton>
+      </div>
+      <div *ngIf="!cargandoHistorial && historialVentas.length === 0" class="flex flex-col items-center gap-2 p-6 text-center">
+        <i class="pi pi-history text-4xl text-surface-300 dark:text-surface-600"></i>
+        <strong>{{ t('pos.no_ventas') }}</strong>
+        <span class="text-sm text-surface-500">{{ t('pos.no_ventas_desc') }}</span>
+      </div>
+      <div *ngIf="!cargandoHistorial && historialVentas.length > 0" class="max-h-96 overflow-y-auto">
+        <div *ngFor="let venta of historialVentas" class="border rounded p-3 mb-2 hover:bg-surface-50">
+          <div class="flex justify-between items-center">
+            <div class="flex-1">
+              <div class="flex items-center gap-2 mb-1">
+                <strong>{{ t('pos.venta_num') }}{{ venta.id }}</strong>
+                <span class="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 px-2 py-1 rounded">{{ getPaymentMethodName(venta.payment_method) }}</span>
+              </div>
+              <p class="text-sm text-surface-600 dark:text-surface-400">{{ venta.date_time | date:'dd/MM/yyyy HH:mm' }}</p>
+              <p class="text-sm text-surface-600 dark:text-surface-400" *ngIf="venta.client">{{ t('pos.cliente') }}: {{ venta.client.full_name }}</p>
+            </div>
+            <div class="text-right">
+              <div class="font-bold text-lg">{{ formatearMoneda(venta.total) }}</div>
+            </div>
+            <div class="flex gap-1 ml-4">
+              <button pButton icon="pi pi-eye" size="small" (click)="visualizarVenta(venta)" [pTooltip]="t('pos.ver')"></button>
+              <button pButton icon="pi pi-print" size="small" (click)="reimprimirRecibo(venta.id)" [pTooltip]="t('pos.reimprimir')"></button>
+              <button pButton icon="pi pi-refund" size="small" severity="danger" (click)="abrirReembolso(venta)" [pTooltip]="t('pos.reembolsar')"></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end"><button au-btn variant="ghost" (click)="mostrarDialogoHistorial=false">{{ t('pos.cerrar') }}</button></div>
+    </div>
+  </p-dialog>
+
+  <!-- Promotions -->
+  <p-dialog [header]="t('pos.promociones_disp')" [(visible)]="mostrarDialogoPromociones" [modal]="true" styleClass="mobile-dialog pos-dialog-xl" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <div *ngIf="promociones.length === 0" class="flex flex-col items-center gap-2 p-6 text-center">
+        <i class="pi pi-tags text-4xl text-surface-300 dark:text-surface-600"></i>
+        <strong>{{ t('pos.no_promociones') }}</strong>
+        <span class="text-sm text-surface-500">{{ t('pos.no_promociones_desc') }}</span>
+      </div>
+      <div *ngFor="let promo of promociones" class="border rounded p-3">
+        <div class="flex justify-between items-center">
+          <div>
+            <h4 class="font-bold">{{ promo.name }}</h4>
+            <p class="text-sm text-surface-600 dark:text-surface-400">{{ promo.description }}</p>
+            <div class="text-sm">
+              <span *ngIf="promo.type === 'percentage'">{{ promo.discount_value }}% {{ t('pos.discount') }}</span>
+              <span *ngIf="promo.type === 'fixed'">{{ formatearMoneda(promo.discount_value) }} {{ t('pos.discount') }}</span>
+              <span *ngIf="promo.min_amount != null && promo.min_amount > 0"> - {{ t('pos.minimo') }} {{ formatearMoneda(promo.min_amount) }}</span>
+            </div>
+          </div>
+          <button au-btn (click)="aplicarPromocion(promo)" style="width: 100%;">{{ t('pos.aplicar') }}</button>
+        </div>
+      </div>
+      <div class="flex justify-end"><button au-btn variant="ghost" (click)="mostrarDialogoPromociones=false">{{ t('pos.cerrar') }}</button></div>
+    </div>
+  </p-dialog>
+
+  <!-- Dashboard Dialog -->
+  <p-dialog [header]="t('pos.dashboard')" [(visible)]="mostrarDashboard" [modal]="true" styleClass="mobile-dialog pos-dialog-2xl" [breakpoints]="{'960px':'75vw','640px':'100vw'}" [closable]="true">
+    <div *ngIf="dashboardLoading" class="flex flex-col gap-4 py-4">
+      <div class="grid grid-cols-3 gap-3">
+        <au-skeleton width="100%" height="6rem"></au-skeleton>
+        <au-skeleton width="100%" height="6rem"></au-skeleton>
+        <au-skeleton width="100%" height="6rem"></au-skeleton>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <au-skeleton width="100%" height="12rem"></au-skeleton>
+        <au-skeleton width="100%" height="12rem"></au-skeleton>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <au-skeleton width="100%" height="10rem"></au-skeleton>
+        <au-skeleton width="100%" height="10rem"></au-skeleton>
+      </div>
+    </div>
+    <div *ngIf="!dashboardLoading && dashboardData" class="flex flex-col gap-4">
+      <div class="grid grid-cols-3 gap-3">
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-xs font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">{{ t('pos.ingresos_hoy') }}</div>
+          <div class="mt-1 text-2xl font-bold text-surface-900">{{ formatearMoneda(dashboardData.revenue_today) }}</div>
+        </div>
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-xs font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">{{ t('pos.ventas_hoy') }}</div>
+          <div class="mt-1 text-2xl font-bold text-surface-900">{{ dashboardData.sales_today_count }}</div>
+        </div>
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-xs font-semibold uppercase tracking-wider text-surface-500 dark:text-surface-400">{{ t('pos.ticket_prom') }}</div>
+          <div class="mt-1 text-2xl font-bold text-surface-900">{{ formatearMoneda(dashboardData.average_ticket) }}</div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-sm font-semibold mb-3 text-surface-700 dark:text-surface-300">{{ t('pos.ingresos_diarios') }}</div>
+          <div style="height:200px">
+            <p-chart *ngIf="chartRevenue" type="line" [data]="chartRevenue" [options]="chartOptions"></p-chart>
+          </div>
+        </div>
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-sm font-semibold mb-3 text-surface-700 dark:text-surface-300">{{ t('pos.ingresos_mensuales') }}</div>
+          <div style="height:200px">
+            <p-chart *ngIf="chartMonthly" type="line" [data]="chartMonthly" [options]="chartOptions"></p-chart>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-sm font-semibold mb-3 text-surface-700 dark:text-surface-300">{{ t('pos.payment_method') }}</div>
+          <div style="height:200px">
+            <p-chart *ngIf="chartPayment" type="doughnut" [data]="chartPayment" [options]="{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom'}}}"></p-chart>
+          </div>
+        </div>
+        <div class="rounded-xl border p-4 bg-white dark:bg-surface-900">
+          <div class="text-sm font-semibold mb-3 text-surface-700 dark:text-surface-300">{{ t('pos.top_servicios') }}</div>
+          <div class="space-y-2">
+            <div *ngFor="let s of (dashboardData.top_services || [])" class="flex items-center justify-between text-sm">
+              <span class="truncate">{{ s.name }}</span>
+              <span class="font-mono font-semibold">{{ s.sold }} {{ t('pos.ventas_plural') }}</span>
+            </div>
+            <div *ngIf="!dashboardData.top_services?.length" class="flex flex-col items-center gap-1 py-6 text-center">
+              <i class="pi pi-chart-bar text-2xl text-surface-300 dark:text-surface-600"></i>
+              <span class="text-sm text-surface-500">{{ t('pos.sin_datos_desc') }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Reembolso Dialog -->
+  <p-dialog [header]="t('pos.reembolsar_venta')" [(visible)]="mostrarDialogoReembolso" [modal]="true" styleClass="mobile-dialog pos-dialog-md" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <div class="p-3 bg-surface-50 rounded" *ngIf="ventaAReembolsar">
+        <div class="text-sm font-medium">{{ t('pos.venta_num') }}{{ ventaAReembolsar.id }}</div>
+        <div class="text-sm text-surface-600 dark:text-surface-400">{{ t('pos.total') }}: {{ formatearMoneda(ventaAReembolsar.total) }}</div>
+      </div>
+      <div>
+        <label class="block font-medium mb-1">{{ t('pos.motivo_reembolso') }}</label>
+        <textarea pInputTextarea [(ngModel)]="motivoReembolso" class="w-full" rows="3"
+                  [placeholder]="t('pos.motivo_reembolso_placeholder')"></textarea>
+        <small class="text-surface-500 dark:text-surface-400">{{ t('pos.min_caracteres') }}</small>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="ghost" (click)="mostrarDialogoReembolso=false">{{ t('pos.cancelar') }}</button>
+        <button au-btn variant="danger" [loading]="reembolsando" style="width: 100%;"
+                [disabled]="motivoReembolso.length < 10" (click)="confirmarReembolso()">{{ t('pos.reembolsar') }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Stripe Card Dialog -->
+  <p-dialog [header]="t('pos.pago_tarjeta')" [(visible)]="mostrarDialogoTarjeta" [modal]="true" styleClass="mobile-dialog pos-dialog-sm" [breakpoints]="{'960px':'75vw','640px':'100vw'}" (onHide)="stripeCard?.clear()">
+    <div class="flex flex-col gap-4">
+      <div class="text-center">
+        <div class="text-sm text-surface-500 dark:text-surface-400">{{ t('pos.total_cobrar') }}</div>
+        <div class="text-2xl font-bold">{{ formatearMoneda(cart.total()) }}</div>
+      </div>
+      <div>
+        <label class="block font-medium mb-2">{{ t('pos.datos_tarjeta') }}</label>
+        <div id="stripe-card-element" class="p-3 border rounded bg-white dark:bg-surface-900"></div>
+        <div *ngIf="stripeError" class="mt-2 text-sm text-red-600">{{ stripeError }}</div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="ghost" (click)="mostrarDialogoTarjeta=false; stripeCard?.clear()">{{ t('pos.cancelar') }}</button>
+        <button au-btn [loading]="stripeLoading" (click)="procesarPagoTarjeta()">{{ t('pos.pagar_total') + ' ' + formatearMoneda(cart.total()) }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Signature Dialog -->
+  <p-dialog [header]="t('pos.firma_cliente')" [(visible)]="mostrarDialogoFirma" [modal]="true" styleClass="mobile-dialog pos-dialog-lg" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <p>{{ t('pos.solicite_firma') }}</p>
+      <div class="border-2 border-surface-300 rounded">
+        <canvas #firmaCanvas width="450" height="200" class="cursor-crosshair"
+                (mousedown)="iniciarFirma($event)" (mousemove)="dibujarFirma($event)"
+                (mouseup)="terminarFirma()" (mouseleave)="terminarFirma()"
+                (touchstart)="iniciarFirmaTouch($event)" (touchmove)="dibujarFirmaTouch($event)"
+                (touchend)="terminarFirma()" (touchcancel)="terminarFirma()"></canvas>
+      </div>
+      <div class="flex justify-between">
+        <button au-btn variant="secondary" (click)="limpiarFirma()" icon="pi pi-eraser">{{ t('pos.limpiar') }}</button>
+        <div class="flex gap-2">
+          <button au-btn variant="ghost" (click)="mostrarDialogoFirma=false; confirmarVenta()">{{ t('pos.omitir') }}</button>
+          <button au-btn (click)="confirmarFirma()" style="width: 100%;">{{ t('pos.confirmar') }}</button>
+        </div>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Ticket Dialog -->
+  <p-dialog [(visible)]="mostrarticket" [modal]="true" styleClass="pos-dialog-sm" [breakpoints]="{'960px':'75vw','640px':'100vw'}" [closable]="false" [showHeader]="false" [dismissableMask]="false">
+    <div class="receipt" *ngIf="ventaActual">
+      <!-- Header -->
+      <div class="receipt-header">
+        <div class="receipt-brand">
+          <div class="receipt-brand-icon">
+            <img *ngIf="barbershopSettings.settings().logo; else defaultReceiptIcon" [src]="barbershopSettings.settings().logo" alt="Logo" class="h-7 w-7 object-contain">
+            <ng-template #defaultReceiptIcon>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+            </ng-template>
+          </div>
+          <div class="receipt-brand-text">
+            <div class="receipt-brand-name">{{ configuracionPos.business_name || barbershopSettings.settings().name || t('pos.recibo_brand_default') }}</div>
+            <div class="receipt-brand-sub">{{ t('pos.recibo_venta_sub') }}</div>
+          </div>
+          <div class="receipt-badge" [class.is-paid]="ventaActual.status === 'completed' || ventaActual.status === 'paid'">
+            {{ (ventaActual.status === 'completed' || ventaActual.status === 'paid') ? t('pos.recibo_pagado') : (ventaActual.status || t('pos.recibo_completado')) }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Meta -->
+      <div class="receipt-meta">
+        <div class="receipt-meta-row">
+          <span class="receipt-meta-label">{{ t('pos.recibo_recibo') }}</span>
+          <span class="receipt-meta-value">{{ getTicketId(ventaActual.id) }}</span>
+        </div>
+        <div class="receipt-meta-row">
+          <span class="receipt-meta-label">{{ t('pos.recibo_fecha') }}</span>
+          <span class="receipt-meta-value">{{ getCurrentDateTime() }}</span>
+        </div>
+        <div class="receipt-meta-row" *ngIf="ventaActual.cliente">
+          <span class="receipt-meta-label">{{ t('pos.recibo_cliente') }}</span>
+          <span class="receipt-meta-value">{{ $any(ventaActual.cliente).full_name }}</span>
+        </div>
+        <div class="receipt-meta-row" *ngIf="ventaActual.empleado">
+          <span class="receipt-meta-label">{{ t('pos.recibo_barbero') }}</span>
+          <span class="receipt-meta-value">{{ getEmpleadoDisplayName(ventaActual.empleado) }}</span>
+        </div>
+        <div class="receipt-meta-row">
+          <span class="receipt-meta-label">{{ t('pos.recibo_atendio') }}</span>
+          <span class="receipt-meta-value">{{ ventaActual.cajero }}</span>
+        </div>
+      </div>
+
+      <div class="receipt-divider"></div>
+
+      <!-- Items -->
+      <div class="receipt-items">
+        <div class="receipt-items-header">
+          <span class="receipt-items-header-desc">{{ t('pos.recibo_desc') }}</span>
+          <span class="receipt-items-header-qty">{{ t('pos.recibo_cant') }}</span>
+          <span class="receipt-items-header-total">{{ t('pos.recibo_total') }}</span>
+        </div>
+        <div class="receipt-item" *ngFor="let item of ventaActual.items">
+          <div class="receipt-item-info">
+            <div class="receipt-item-name">{{ item.item?.name || item.name }}</div>
+            <div class="receipt-item-type">{{ item.type === 'service' ? t('pos.servicio') : t('pos.producto') }}</div>
+          </div>
+          <div class="receipt-item-qty">{{ item.quantity }}</div>
+          <div class="receipt-item-amount">{{ formatearMoneda(getItemTotal(item)) }}</div>
+        </div>
+      </div>
+
+      <div class="receipt-divider"></div>
+
+      <!-- Summary -->
+      <div class="receipt-summary">
+        <div class="receipt-summary-row">
+          <span>{{ t('pos.subtotal') }}</span>
+          <span>{{ formatearMoneda(ventaActual.subtotal) }}</span>
+        </div>
+        <div class="receipt-summary-row" *ngIf="ventaActual.descuento > 0">
+          <span>{{ t('pos.discount') }}</span>
+          <span class="receipt-summary-discount">-{{ formatearMoneda(ventaActual.descuento) }}</span>
+        </div>
+        <div class="receipt-summary-row" *ngIf="ventaActual.points_redeemed">
+          <span>{{ t('pos.recibo_puntos') }}</span>
+          <span class="receipt-summary-discount">-{{ formatearMoneda(ventaActual.points_redeemed / 10) }}</span>
+        </div>
+        <div class="receipt-summary-divider"></div>
+        <div class="receipt-total">
+          <span class="receipt-total-label">{{ t('pos.total') }}</span>
+          <span class="receipt-total-amount">{{ formatearMoneda(ventaActual.total) }}</span>
+        </div>
+        <div class="receipt-payment-badge">
+          <i class="pi" [class.pi-credit-card]="ventaActual.metodoPago === 'card'" [class.pi-dollar]="ventaActual.metodoPago === 'cash'" [class.pi-building]="ventaActual.metodoPago === 'transfer'" [class.pi-credit-card]="ventaActual.metodoPago === 'mixed'"></i>
+          {{ getPaymentMethodName(ventaActual.metodoPago) }}
+        </div>
+        <div *ngIf="ventaActual.ncf" class="receipt-ncf-info mt-3 p-3 bg-surface-50 dark:bg-surface-900 border border-surface-200 dark:border-surface-800 rounded-lg text-xs space-y-1">
+          <div class="flex justify-between">
+            <span class="font-medium text-surface-500 dark:text-surface-400">{{ t('pos.ncf') }}:</span>
+            <span class="font-mono font-bold text-surface-900 dark:text-surface-100">{{ ventaActual.ncf }}</span>
+          </div>
+          <div *ngIf="ventaActual.ncf_type" class="flex justify-between">
+            <span class="text-surface-500 dark:text-surface-400">{{ t('ncf.type') }}:</span>
+            <span class="text-surface-800 dark:text-surface-200">{{ getNcfTypeLabel(ventaActual.ncf_type) }}</span>
+          </div>
+          <div *ngIf="ventaActual.rnc" class="flex justify-between">
+            <span class="text-surface-500 dark:text-surface-400">{{ t('pos.ncf_rnc') }}:</span>
+            <span class="font-mono text-surface-800 dark:text-surface-200">{{ ventaActual.rnc }}</span>
+          </div>
+          <div *ngIf="ventaActual.company_name" class="flex justify-between">
+            <span class="text-surface-500 dark:text-surface-400">{{ t('pos.ncf_company_name') }}:</span>
+            <span class="truncate max-w-[180px] text-surface-800 dark:text-surface-200" [title]="ventaActual.company_name">{{ ventaActual.company_name }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- QR -->
+      <div *ngIf="configuracionPos.rnc || configuracionPos.address || configuracionPos.phone" class="receipt-business-info">
+        <div *ngIf="configuracionPos.rnc" class="receipt-info-line">RNC: {{ configuracionPos.rnc }}</div>
+        <div *ngIf="configuracionPos.address" class="receipt-info-line">{{ configuracionPos.address }}</div>
+        <div *ngIf="configuracionPos.phone" class="receipt-info-line">Tel: {{ configuracionPos.phone }}</div>
+      </div>
+
+      <!-- Footer -->
+      <div class="receipt-footer">
+        <div class="receipt-footer-thanks">{{ t('pos.recibo_gracias') }}</div>
+        <div *ngIf="configuracionPos.receipt_footer" class="receipt-footer-message">{{ configuracionPos.receipt_footer }}</div>
+        <div class="receipt-footer-points" *ngIf="ventaActual.points_earned">
+          <i class="pi pi-star"></i> {{ t('pos.recibo_gano_puntos').replace('{points}', $any(ventaActual.points_earned) || '0') }}
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="receipt-actions flex gap-2">
+        <button au-btn variant="secondary" (click)="reimprimirTicket()" icon="pi pi-print" class="flex-1">{{ t('pos.reprint') }}</button>
+        <button au-btn (click)="cerrarTicket()" icon="pi pi-check" class="flex-1">{{ t('pos.cerrar') }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Feature missing: Inventory -->
+  <p-dialog [header]="t('pos.productos_no_disp')" [(visible)]="mostrarDialogoSinInventario" [modal]="true" styleClass="pos-dialog-sm" [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4">
+      <div class="flex items-start gap-3 p-3 bg-amber-50 dark:bg-amber-900/20 rounded border border-amber-200 dark:border-amber-700">
+        <i class="pi pi-exclamation-triangle text-2xl text-amber-500 mt-1"></i>
+        <div>
+          <strong class="block text-surface-900 dark:text-surface-100">{{ t('pos.plan_no_productos') }}</strong>
+          <p class="text-sm text-surface-600 dark:text-surface-400 mt-1">
+            {{ t('pos.plan_no_productos_desc') }}
+          </p>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button au-btn variant="ghost" (click)="mostrarDialogoSinInventario=false">{{ t('pos.ahora_no') }}</button>
+        <button au-btn (click)="irAPlanes()" icon="pi pi-arrow-right" iconPos="right">{{ t('pos.ver_planes') }}</button>
+      </div>
+    </div>
+  </p-dialog>
+
+  <!-- Camera Scanner -->
+  <p-dialog [header]="t('pos.escanear_codigo')" [(visible)]="mostarCamara" [modal]="true" styleClass="pos-dialog-lg" [breakpoints]="{'960px':'75vw','640px':'100vw'}" (onHide)="detenerCamara()">
+    <div class="flex flex-col gap-3">
+      <video #scannerVideo class="w-full rounded-lg bg-black" style="max-height:350px" autoplay playsinline></video>
+      <p class="text-sm text-surface-500 dark:text-surface-400 text-center">{{ t('pos.camera_scan_hint') }}</p>
+      <button au-btn variant="secondary" (click)="detenerCamara()" icon="pi pi-times" class="w-full">{{ t('pos.cancelar') }}</button>
+    </div>
+  </p-dialog>
+
+  <p-confirmDialog styleClass="pos-dialog-md"></p-confirmDialog>
+  <p-toast></p-toast>
+
+  <!-- Botón de Acción Flotante (FAB) para alternar vista en móvil -->
+  <button
+    *ngIf="cart.isOpen()"
+    type="button"
+    class="pos-mobile-fab font-bold text-sm border-none shadow-2xl lg:hidden flex items-center justify-center gap-2 fixed bottom-6 right-6 z-[1100] rounded-full px-5 py-4 transform active:scale-95 transition-all duration-300"
+    [class.is-catalog]="activeMobileView() === 'catalog'"
+    [class.is-cart]="activeMobileView() === 'cart'"
+    (click)="toggleMobileView()"
+  >
+    <i class="pi text-lg" [class.pi-shopping-cart]="activeMobileView() === 'catalog'" [class.pi-th-large]="activeMobileView() === 'cart'"></i>
+    <span>
+      {{ activeMobileView() === 'catalog' ? t('pos.view_cart') : t('pos.view_catalog') }}
+    </span>
+    <span *ngIf="activeMobileView() === 'catalog' && cart.items().length > 0" class="pos-mobile-fab__badge animate-pulse">
+      {{ cart.items().length }}
+    </span>
+  </button>
+</div>

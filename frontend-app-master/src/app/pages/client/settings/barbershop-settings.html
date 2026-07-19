@@ -1,0 +1,631 @@
+<div class="min-h-screen bg-surface-50 p-4 transition-colors dark:bg-surface-950">
+  <!-- HEADER -->
+  <div class="rounded-[1.6rem] p-6 mb-6 border border-surface-200 bg-white shadow-[var(--shadow-overlay)] dark:border-surface-700 dark:bg-surface-900">
+    <div class="grid gap-6 xl:grid-cols-[1.15fr,0.85fr] xl:items-center">
+      <div class="flex items-start gap-4">
+        <div class="p-3 bg-blue-800 rounded-2xl shadow dark:bg-surface-950">
+          <i class="pi pi-cog text-3xl text-white"></i>
+        </div>
+        <div>
+          <div class="inline-flex rounded-full bg-surface-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.24em] text-surface-600 dark:bg-surface-800 dark:text-surface-300">{{ 'settings.title' | t }}</div>
+          <h1 class="text-3xl font-black tracking-tight text-surface-900 dark:text-white mt-3">{{ 'onboarding.main.business_settings.title' | t }}</h1>
+          <p class="text-sm text-surface-600 dark:text-surface-400 mt-2 max-w-2xl">{{ 'settings.subtitle' | t }}</p>
+        </div>
+      </div>
+      <div class="rounded-[1.6rem] border border-surface-200 bg-white p-5 shadow-xl dark:border-transparent dark:bg-surface-950">
+        <div class="text-[11px] font-semibold uppercase tracking-[0.28em] text-surface-500 dark:text-surface-400">{{ 'settings.ready_to_operate' | t }}</div>
+        <div class="mt-2 text-2xl font-black text-surface-900 dark:text-white">{{ hasFiscalIdentity() ? ('settings.fiscal_ready' | t) : ('settings.fiscal_missing' | t) }}</div>
+        <div class="mt-4 rounded-2xl border border-surface-200 bg-surface-100 p-4 text-sm leading-6 text-surface-600 dark:border-white/10 dark:bg-white/5 dark:text-surface-300">
+          {{ getOperationalReadinessMessage() }}
+        </div>
+        <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-center">
+          <div class="rounded-2xl border border-surface-200 bg-surface-100 p-3 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] uppercase tracking-[0.22em] text-surface-500 dark:text-surface-400">{{ 'settings.configured_contact' | t }}</div>
+            <div class="mt-2 text-2xl font-black text-surface-900 dark:text-white">{{ getConfiguredContactCount() }}/3</div>
+          </div>
+          <div class="rounded-2xl border border-surface-200 bg-surface-100 p-3 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] uppercase tracking-[0.22em] text-surface-500 dark:text-surface-400">{{ 'settings.configured_fiscal' | t }}</div>
+            <div class="mt-2 text-2xl font-black text-surface-900 dark:text-white">{{ hasFiscalIdentity() ? ('settings.fiscal_status_ok' | t) : ('settings.fiscal_status_missing' | t) }}</div>
+          </div>
+          <div class="rounded-2xl border border-surface-200 bg-surface-100 p-3 dark:border-white/10 dark:bg-white/5">
+            <div class="text-[11px] uppercase tracking-[0.22em] text-surface-500 dark:text-surface-400">{{ 'settings.configured_currency' | t }}</div>
+            <div class="mt-2 text-2xl font-black text-surface-900 dark:text-white">{{ settings().currency_symbol }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REINICIAR TOUR -->
+  <div class="rounded-[1.25rem] p-4 mb-6 border border-surface-200 bg-white shadow-[var(--shadow-card)] dark:border-surface-700 dark:bg-surface-900">
+    <div class="flex items-center justify-between flex-wrap gap-3">
+      <div class="flex items-center gap-3">
+        <div class="p-2.5 rounded-xl bg-[rgba(26,86,219,0.10)] dark:bg-[rgba(26,86,219,0.18)]">
+          <i class="pi pi-compass text-[var(--brand)] dark:text-[var(--brand-400)] text-xl"></i>
+        </div>
+        <div>
+          <h6 class="font-semibold text-surface-900 dark:text-white">{{ 'settings.guided_tour' | t }}</h6>
+          <p class="text-sm text-surface-600 dark:text-surface-400">{{ 'settings.guided_tour_desc' | t }}</p>
+        </div>
+      </div>
+      <button au-btn variant="secondary"
+              icon="pi pi-refresh"
+              (click)="restartTour()">{{ 'settings.guided_tour_btn' | t }}
+      </button>
+    </div>
+  </div>
+
+
+  <!-- TABS DE NAVEGACIÓN -->
+  <div class="flex flex-wrap gap-2 sm:gap-4 border-b border-surface-200 dark:border-surface-800 pb-2 mb-6">
+    <button au-btn type="button" variant="ghost"
+            [class]="activeTab() === 'general' ? 'font-bold text-primary border-b-2 border-primary rounded-none !py-1' : 'rounded-none !py-1'"
+            (click)="activeTab.set('general')">{{ 'settings.general_info' | t }}</button>
+    <button au-btn type="button" variant="ghost"
+            [class]="activeTab() === 'billing' ? 'font-bold text-primary border-b-2 border-primary rounded-none !py-1' : 'rounded-none !py-1'"
+            (click)="activeTab.set('billing')">{{ 'settings.pos_config_title' | t }}</button>
+    <button au-btn type="button" variant="ghost"
+            [class]="activeTab() === 'whatsapp' ? 'font-bold text-primary border-b-2 border-primary rounded-none !py-1' : 'rounded-none !py-1'"
+            (click)="activeTab.set('whatsapp')">{{ 'settings.whatsapp.tab_title' | t }}</button>
+  </div>
+
+  <!-- TAB CONTENT: GENERAL -->
+  <div *ngIf="activeTab() === 'general'" class="grid gap-6 lg:grid-cols-2">
+    <!-- INFORMACIÓN GENERAL -->
+    <div class="rounded-[1.25rem] bg-white p-6 shadow-[var(--shadow-card)] transition-colors dark:bg-surface-900">
+      <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-surface-100">
+        <i class="pi pi-building text-blue-600 dark:text-blue-400"></i>
+        {{ 'settings.general_info' | t }}
+      </h3>
+
+      <div class="space-y-4">
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.business_name_label' | t }}</label>
+          <input type="text" pInputText [ngModel]="settings().name" (ngModelChange)="updateName($event)"
+                 class="w-full" [placeholder]="'settings.business_name_placeholder' | t"
+                 [class.ng-invalid]="isBusinessNameInvalid()">
+          <small *ngIf="isBusinessNameInvalid()" class="text-red-600 dark:text-red-400">
+            {{ 'settings.business_name_required' | t }}
+          </small>
+        </div>
+
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.logo_label' | t }}</label>
+          <ng-container *ngIf="customBrandingEnabled(); else premiumBrandingBlock">
+            <p-fileUpload mode="basic" name="logo" accept="image/*"
+                          [maxFileSize]="1000000" (onSelect)="onLogoUpload($event)"
+                          [chooseLabel]="'settings.logo_select_btn' | t" class="w-full">
+            </p-fileUpload>
+            <div *ngIf="settings().logo" class="mt-2">
+              <img [src]="settings().logo" alt="Logo" class="h-16 w-auto rounded">
+            </div>
+          </ng-container>
+          <ng-template #premiumBrandingBlock>
+            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-900/10">
+              <div class="flex items-start gap-3">
+                <i class="pi pi-star text-amber-500 text-lg mt-1"></i>
+                <div class="flex-1">
+                  <div class="font-semibold text-amber-900 dark:text-amber-100">{{ 'settings.logo_premium_title' | t }}</div>
+                  <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
+                    {{ 'settings.logo_premium_desc' | t }}
+                  </p>
+                  <button au-btn size="sm" class="mt-3" (click)="goToPlans()">{{ 'settings.logo_premium_btn' | t }}</button>
+                </div>
+              </div>
+            </div>
+          </ng-template>
+          <div *ngIf="!customBrandingEnabled() && settings().logo" class="mt-2">
+            <img [src]="settings().logo" alt="Logo" class="h-16 w-auto rounded opacity-70">
+          </div>
+        </div>
+
+        <div *ngIf="customBrandingEnabled()" class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.brand_color_primary' | t }}</label>
+            <p-colorPicker [(ngModel)]="settings().brand_colors!.primary" (onChange)="onBrandColorChange()" styleClass="w-full"></p-colorPicker>
+            <div class="mt-1 flex items-center gap-2">
+              <span class="h-4 w-4 rounded-full border" [style]="{background: settings().brand_colors!.primary}"></span>
+              <span class="text-xs text-surface-500 font-mono">{{ settings().brand_colors!.primary }}</span>
+            </div>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.brand_color_secondary' | t }}</label>
+            <p-colorPicker [(ngModel)]="settings().brand_colors!.secondary" (onChange)="onBrandColorChange()" styleClass="w-full"></p-colorPicker>
+            <div class="mt-1 flex items-center gap-2">
+              <span class="h-4 w-4 rounded-full border" [style]="{background: settings().brand_colors!.secondary}"></span>
+              <span class="text-xs text-surface-500 font-mono">{{ settings().brand_colors!.secondary }}</span>
+            </div>
+          </div>
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.brand_color_accent' | t }}</label>
+            <p-colorPicker [(ngModel)]="settings().brand_colors!.accent" (onChange)="onBrandColorChange()" styleClass="w-full"></p-colorPicker>
+            <div class="mt-1 flex items-center gap-2">
+              <span class="h-4 w-4 rounded-full border" [style]="{background: settings().brand_colors!.accent}"></span>
+              <span class="text-xs text-surface-500 font-mono">{{ settings().brand_colors!.accent }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <label class="mb-2 flex items-center gap-2 text-sm font-medium text-surface-700 dark:text-surface-300">
+            <i class="pi pi-exclamation-triangle text-red-600"></i>
+            {{ 'settings.configured_currency' | t }}
+          </label>
+          <p-select [(ngModel)]="settings().currency" [options]="currencies"
+                    optionLabel="label" optionValue="value" class="w-full"
+                    [disabled]="settings().currency_locked ?? false"
+                    (onChange)="onCurrencyChange($event.value)">
+          </p-select>
+          <small *ngIf="settings().currency_locked" class="text-red-600 dark:text-red-400">
+            {{ settings().currency_lock_reason || ('settings.currency_lock_warning' | t) }}
+          </small>
+          <small *ngIf="!settings().currency_locked" class="text-amber-700 dark:text-amber-400">
+            {{ 'settings.currency_recommended' | t }}
+          </small>
+        </div>
+      </div>
+    </div>
+
+    <!-- HORARIOS DE ATENCIÓN -->
+    <div class="rounded-[1.25rem] bg-white p-6 shadow-[var(--shadow-card)] transition-colors dark:bg-surface-900">
+      <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-surface-100">
+        <i class="pi pi-clock text-[var(--brand)] dark:text-[var(--brand-400)]"></i>
+        {{ 'settings.business_hours_title' | t }}
+      </h3>
+
+      <div class="flex justify-end mb-4">
+        <button au-btn variant="secondary" size="sm" icon="pi pi-copy"
+                (click)="copyMondayScheduleToOpenDays()">{{ 'settings.business_hours_copy_monday' | t }}
+        </button>
+      </div>
+
+      <div class="space-y-3">
+        <div *ngFor="let day of days" class="flex items-center gap-3">
+          <div class="w-20 text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'common.days.' + day.key | t }}</div>
+
+          <div class="flex items-center gap-2">
+            <input type="checkbox"
+                   [checked]="!getBusinessHour(day.key, 'closed')"
+                   (change)="updateBusinessHour(day.key, 'closed', !$any($event.target).checked)"
+                   class="rounded">
+            <span class="text-sm text-surface-700 dark:text-surface-300">{{ 'settings.business_hours_open' | t }}</span>
+          </div>
+
+          <div *ngIf="!getBusinessHour(day.key, 'closed')"
+               class="flex items-center gap-2">
+            <input type="time"
+                   pInputText
+                   [ngModel]="getBusinessHour(day.key, 'open')"
+                   (ngModelChange)="updateBusinessHour(day.key, 'open', $event)"
+                   class="w-32 text-sm">
+            <span class="text-sm text-surface-700 dark:text-surface-300">{{ 'settings.business_hours_to' | t }}</span>
+            <input type="time"
+                   pInputText
+                   [ngModel]="getBusinessHour(day.key, 'close')"
+                   (ngModelChange)="updateBusinessHour(day.key, 'close', $event)"
+                   class="w-32 text-sm">
+          </div>
+
+          <div *ngIf="isDayScheduleInvalid(day.key)"
+               class="text-xs text-red-600 dark:text-red-400">
+            {{ 'settings.business_hours_invalid' | t }}
+          </div>
+
+          <div *ngIf="getBusinessHour(day.key, 'closed')"
+               class="text-sm text-surface-500 dark:text-surface-400">
+            {{ 'settings.business_hours_closed' | t }}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- INFORMACIÓN DE CONTACTO -->
+    <div class="rounded-[1.25rem] bg-white p-6 shadow-[var(--shadow-card)] transition-colors dark:bg-surface-900 col-span-full">
+      <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-surface-100">
+        <i class="pi pi-phone text-orange-600 dark:text-orange-400"></i>
+        {{ 'settings.contact_title' | t }}
+      </h3>
+
+      <div class="grid md:grid-cols-2 gap-4">
+        <div class="space-y-4">
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_phone' | t }}</label>
+            <input type="tel" pInputText [ngModel]="settings().contact.phone" (ngModelChange)="updateContact('phone', $event)"
+                   class="w-full" placeholder="+57 300 123 4567">
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_email' | t }}</label>
+            <input type="email" pInputText [ngModel]="settings().contact.email" (ngModelChange)="updateContact('email', $event)"
+                   class="w-full" placeholder="contacto@mipeluqueria.com"
+                   [class.ng-invalid]="isContactEmailInvalid()">
+            <small *ngIf="isContactEmailInvalid()" class="text-red-600 dark:text-red-400">
+              {{ 'settings.contact_email_invalid' | t }}
+            </small>
+          </div>
+        </div>
+
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_address' | t }}</label>
+          <textarea pInputText [ngModel]="settings().contact.address" (ngModelChange)="updateContact('address', $event)"
+                    class="w-full h-32 resize-none"
+                    placeholder="Calle 123 #45-67, Barrio Centro, Ciudad"></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB CONTENT: BILLING & NCF -->
+  <div *ngIf="activeTab() === 'billing'" class="space-y-6">
+    <div class="grid gap-6 lg:grid-cols-2">
+      <!-- CONFIGURACIÓN POS -->
+      <div class="rounded-[1.25rem] border-l-4 border-emerald-500 bg-white p-6 shadow-[var(--shadow-card)] transition-colors dark:bg-surface-900">
+        <h3 class="mb-4 flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-surface-100">
+          <i class="pi pi-shopping-cart text-emerald-600 dark:text-emerald-400"></i>
+          {{ 'settings.pos_config_title' | t }}
+        </h3>
+        <p class="mb-4 text-sm text-surface-600 dark:text-surface-400">{{ 'settings.pos_config_desc' | t }}</p>
+
+        <div class="space-y-4">
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_business_name' | t }}</label>
+            <input type="text" pInputText [ngModel]="settings().pos_config!.business_name" (ngModelChange)="updatePosConfig('business_name', $event)"
+                   class="w-full" placeholder="Mi Barbería Premium">
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_rnc' | t }}</label>
+            <input type="text" pInputText [ngModel]="settings().pos_config!.rnc" (ngModelChange)="updatePosConfig('rnc', $event)"
+                   class="w-full" placeholder="132-45678-9">
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_address' | t }}</label>
+            <input type="text" pInputText [ngModel]="settings().pos_config!.address" (ngModelChange)="updatePosConfig('address', $event)"
+                   class="w-full" placeholder="Calle Principal #123">
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_phone' | t }}</label>
+            <input type="tel" pInputText [ngModel]="settings().pos_config!.phone" (ngModelChange)="updatePosConfig('phone', $event)"
+                   class="w-full" placeholder="809-555-1234">
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_email' | t }}</label>
+            <input type="email" pInputText [ngModel]="settings().pos_config!.email" (ngModelChange)="updatePosConfig('email', $event)"
+                   class="w-full" placeholder="contacto@mibarberia.com"
+                   [class.ng-invalid]="isPosEmailInvalid()">
+            <small *ngIf="isPosEmailInvalid()" class="text-red-600 dark:text-red-400">
+              {{ 'settings.pos_config_email_invalid' | t }}
+            </small>
+          </div>
+
+          <div>
+            <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'settings.pos_config_website' | t }}</label>
+            <input type="url" pInputText [ngModel]="settings().pos_config!.website" (ngModelChange)="updatePosConfig('website', $event)"
+                   class="w-full" placeholder="www.mibarberia.com"
+                   [class.ng-invalid]="isPosWebsiteInvalid()">
+            <small *ngIf="isPosWebsiteInvalid()" class="text-red-600 dark:text-red-400">
+              {{ 'settings.pos_config_website_invalid' | t }}
+            </small>
+          </div>
+        </div>
+      </div>
+
+      <!-- VISTA PREVIA DEL TICKET -->
+      <div class="rounded-[1.25rem] border-l-4 border-[var(--brand)] bg-white p-6 shadow-[var(--shadow-card)] transition-colors dark:bg-surface-900 flex flex-col">
+        <div class="mb-4">
+          <h3 class="flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-surface-100">
+            <i class="pi pi-ticket text-[var(--brand)] dark:text-[var(--brand-400)]"></i>
+            {{ 'settings.ticket_preview_title' | t }}
+          </h3>
+          <p class="mt-1 text-sm text-surface-600 dark:text-surface-400">{{ 'settings.ticket_preview_desc' | t }}</p>
+        </div>
+
+        <div class="mx-auto w-full max-w-sm rounded-lg border border-dashed border-surface-300 bg-white p-4 font-mono text-xs text-surface-900 dark:border-surface-600 dark:bg-surface-800 dark:text-surface-100 mt-auto">
+          <div class="text-center mb-3">
+            <div *ngIf="settings().logo" class="mb-2">
+              <img [src]="settings().logo" alt="Logo" class="h-12 w-auto mx-auto rounded">
+            </div>
+            <div class="font-bold text-sm uppercase tracking-wide">{{ getTicketPreviewBusinessName() }}</div>
+            <div class="text-[11px] mt-1">{{ 'settings.ticket_preview_receipt' | t }}</div>
+          </div>
+
+          <div class="space-y-1 mb-3">
+            <div>RNC {{ getTicketPreviewRnc() }}</div>
+            <div>📍 {{ getTicketPreviewAddress() }}</div>
+            <div>📞 {{ getTicketPreviewPhone() }}</div>
+            <div>🌐 {{ getTicketPreviewWebsite() }}</div>
+            <div>📧 {{ getTicketPreviewEmail() }}</div>
+          </div>
+
+          <div class="my-2 border-y border-dashed border-surface-400 py-2">
+            <div class="flex justify-between"><span>TICKET #</span><span>000001</span></div>
+            <div class="flex justify-between"><span>CLIENTE</span><span>Cliente Demo</span></div>
+          </div>
+
+          <div class="mb-2">
+            <div class="flex justify-between font-bold">
+              <span>Corte Completo</span>
+              <span>{{ getTicketPreviewCurrency() }}1300.00</span>
+            </div>
+            <div class="text-[11px]">Servicio</div>
+          </div>
+
+          <div class="space-y-1 border-t border-dashed border-surface-400 pt-2">
+            <div class="flex justify-between"><span>{{ 'settings.ticket_preview_subtotal' | t }}</span><span>{{ getTicketPreviewCurrency() }}1300.00</span></div>
+            <div class="flex justify-between font-bold"><span>{{ 'settings.ticket_preview_total_paid' | t }}</span><span>{{ getTicketPreviewCurrency() }}1300.00</span></div>
+          </div>
+
+          <div class="text-center mt-4 space-y-1">
+            <div>{{ 'settings.ticket_preview_thanks' | t }}</div>
+            <div>{{ 'settings.ticket_preview_served_by' | t }}</div>
+            <div>{{ 'settings.ticket_preview_cashier' | t }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECUENCIAS NCF -->
+    <div class="rounded-[1.25rem] bg-white p-6 shadow-[var(--shadow-card)] transition-colors dark:bg-surface-900 col-span-full mt-6">
+      <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+        <div>
+          <h3 class="flex items-center gap-2 text-lg font-semibold text-surface-900 dark:text-surface-100">
+            <i class="pi pi-ticket text-[var(--brand)] dark:text-[var(--brand-400)]"></i>
+            {{ 'ncf.sequences' | t }}
+          </h3>
+          <p class="text-sm text-surface-600 dark:text-surface-400 mt-1">{{ 'ncf.sequences_desc' | t }}</p>
+        </div>
+        <button au-btn icon="pi pi-plus" (click)="openNcfDialog()">{{ 'ncf.sequence_new' | t }}</button>
+      </div>
+
+      <p-table [value]="ncfSequences()" [loading]="ncfLoading()" [rows]="5" [paginator]="ncfSequences().length > 5" responsiveLayout="scroll" styleClass="p-datatable-sm">
+        <ng-template pTemplate="header">
+          <tr>
+            <th>{{ 'ncf.type' | t }}</th>
+            <th>{{ 'ncf.prefix' | t }}</th>
+            <th>{{ 'ncf.start' | t }}</th>
+            <th>{{ 'ncf.end' | t }}</th>
+            <th>{{ 'ncf.current' | t }}</th>
+            <th>{{ 'ncf.expiration' | t }}</th>
+            <th>{{ 'ncf.is_active' | t }}</th>
+            <th style="width: 100px"></th>
+          </tr>
+        </ng-template>
+        <ng-template pTemplate="body" let-sequence>
+          <tr>
+            <td>
+              <span class="font-bold">{{ sequence.prefix }}{{ sequence.type }}</span>
+              <span class="text-xs text-surface-500 block">
+                {{ sequence.type === '01' ? ('pos.ncf_credito_fiscal' | t) :
+                   sequence.type === '02' ? ('pos.ncf_consumidor_final' | t) :
+                   sequence.type === '14' ? ('pos.ncf_regimenes_especiales' | t) :
+                   ('pos.ncf_gubernamentales' | t) }}
+              </span>
+            </td>
+            <td class="font-mono">{{ sequence.prefix }}</td>
+            <td class="font-mono">{{ sequence.start_sequence }}</td>
+            <td class="font-mono">{{ sequence.end_sequence }}</td>
+            <td class="font-mono font-bold">{{ sequence.current_sequence }}</td>
+            <td>{{ sequence.expiration_date | date:'dd/MM/yyyy' }}</td>
+            <td>
+              <span [class]="'px-2.5 py-1 rounded-full text-xs font-semibold ' + (sequence.is_active ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300')">
+                {{ sequence.is_active ? ('ncf.is_active' | t) : ('common.no' | t) }}
+              </span>
+            </td>
+            <td>
+              <div class="flex gap-2">
+                <button pButton icon="pi pi-pencil" class="p-button-text p-button-sm p-button-secondary" [pTooltip]="'common.edit' | t" (click)="openNcfDialog(sequence)"></button>
+                <button pButton icon="pi pi-trash" class="p-button-text p-button-sm p-button-danger" [pTooltip]="'common.delete' | t" (click)="deleteNcfSequence(sequence)"></button>
+              </div>
+            </td>
+          </tr>
+        </ng-template>
+        <ng-template pTemplate="emptymessage">
+          <tr>
+            <td colspan="8" class="text-center p-4 text-surface-500">
+              No hay secuencias NCF configuradas.
+            </td>
+          </tr>
+        </ng-template>
+      </p-table>
+    </div>
+  </div>
+     <!-- TAB CONTENT: WHATSAPP -->
+  <div *ngIf="activeTab() === 'whatsapp'">
+    <app-whatsapp-integration></app-whatsapp-integration>
+  </div>
+
+  <!-- BOTONES DE ACCIÓN (solo visibles en general y billing) -->
+  <div *ngIf="activeTab() !== 'whatsapp'" class="sticky bottom-4 z-10 mt-6">
+    <div class="ml-auto flex w-full max-w-xl justify-end gap-3 rounded-2xl border border-surface-200 bg-white/95 p-3 shadow-lg backdrop-blur dark:border-surface-700 dark:bg-surface-900/95">
+      <button au-btn variant="secondary" icon="pi pi-refresh"
+              (click)="loadSettings()" [loading]="loading()">{{ 'settings.reload_config_btn' | t }}
+      </button>
+      <button au-btn icon="pi pi-save"
+              (click)="saveSettings()" [loading]="loading()">{{ 'settings.save_changes_btn' | t }}
+      </button>
+    </div>
+  </div>
+
+  <p-toast></p-toast>
+
+  <!-- DIÁLOGO NCF -->
+  <p-dialog [header]="(editingNcfSequence() ? 'ncf.sequence_edit' : 'ncf.sequence_new') | t" 
+            [visible]="showNcfDialog()" 
+            (visibleChange)="showNcfDialog.set($event)"
+            [modal]="true" 
+            styleClass="settings-dialog-sm"
+            [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="flex flex-col gap-4 py-2">
+      <div>
+        <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.type' | t }}</label>
+        <p-select [options]="[
+          { label: 'pos.ncf_consumidor_final' | t, value: '02' },
+          { label: 'pos.ncf_credito_fiscal' | t, value: '01' },
+          { label: 'pos.ncf_regimenes_especiales' | t, value: '14' },
+          { label: 'pos.ncf_gubernamentales' | t, value: '15' }
+        ]" [(ngModel)]="ncfForm().type" optionLabel="label" optionValue="value" class="w-full"></p-select>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.prefix' | t }}</label>
+          <input type="text" pInputText [(ngModel)]="ncfForm().prefix" class="w-full" maxlength="3">
+        </div>
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.expiration' | t }}</label>
+          <input type="date" pInputText [(ngModel)]="ncfForm().expiration_date" class="w-full">
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.start' | t }}</label>
+          <input type="number" pInputText [(ngModel)]="ncfForm().start_sequence" class="w-full" min="1">
+        </div>
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.end' | t }}</label>
+          <input type="number" pInputText [(ngModel)]="ncfForm().end_sequence" class="w-full" min="1">
+        </div>
+        <div>
+          <label class="mb-2 block text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.current' | t }}</label>
+          <input type="number" pInputText [(ngModel)]="ncfForm().current_sequence" class="w-full" min="1">
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2 mt-2">
+        <input type="checkbox" id="ncf_is_active" [(ngModel)]="ncfForm().is_active" class="rounded">
+        <label for="ncf_is_active" class="text-sm font-medium text-surface-700 dark:text-surface-300">{{ 'ncf.is_active' | t }}</label>
+      </div>
+
+      <div class="flex justify-end gap-3 border-t pt-4 mt-2">
+        <button au-btn variant="ghost" (click)="showNcfDialog.set(false)">{{ 'common.cancel' | t }}</button>
+        <button au-btn [loading]="ncfLoading()" (click)="saveNcfSequence()">{{ 'common.save' | t }}</button>
+      </div>
+    </div>
+  </p-dialog>
+  
+  <!-- DIÁLOGO DE GOBIERNO DE CONFIGURACIONES -->
+  <p-dialog [header]="'settings.governance_title' | t"
+            [visible]="showGovernanceDialog()"
+            [modal]="true"
+            [closable]="false"
+            styleClass="settings-dialog-md"
+            [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    <div class="space-y-5 py-2">
+      <div class="flex items-start gap-3 bg-blue-50 dark:bg-blue-900/10 border border-blue-200 dark:border-blue-800 rounded-xl p-4">
+        <i class="pi pi-shield text-blue-600 dark:text-blue-400 text-2xl mt-1"></i>
+        <div>
+          <h4 class="font-semibold text-blue-900 dark:text-blue-100 text-base">{{ 'settings.governance_modal_title' | t }}</h4>
+          <p class="text-blue-800 dark:text-blue-200 text-sm mt-1">{{ 'settings.governance_modal_desc' | t }}</p>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="flex items-start gap-3 rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-900/10 p-4">
+          <div class="w-3 h-3 rounded-full bg-red-500 mt-1.5 shrink-0"></div>
+          <div>
+            <div class="font-semibold text-red-900 dark:text-red-100">{{ 'settings.governance_critical' | t }}</div>
+            <p class="text-sm text-red-700 dark:text-red-300 mt-0.5">{{ 'settings.governance_critical_desc' | t }}</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/10 p-4">
+          <div class="w-3 h-3 rounded-full bg-blue-500 mt-1.5 shrink-0"></div>
+          <div>
+            <div class="font-semibold text-blue-900 dark:text-blue-100">{{ 'settings.governance_sensitive' | t }}</div>
+            <p class="text-sm text-blue-700 dark:text-blue-300 mt-0.5">{{ 'settings.governance_sensitive_desc' | t }}</p>
+          </div>
+        </div>
+        <div class="flex items-start gap-3 rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-900/10 p-4">
+          <div class="w-3 h-3 rounded-full bg-green-500 mt-1.5 shrink-0"></div>
+          <div>
+            <div class="font-semibold text-green-900 dark:text-green-100">{{ 'settings.governance_cosmetic' | t }}</div>
+            <p class="text-sm text-green-700 dark:text-green-300 mt-0.5">{{ 'settings.governance_cosmetic_desc' | t }}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <ng-template pTemplate="footer">
+      <div class="flex justify-end gap-3">
+        <button au-btn variant="ghost"
+                (click)="dismissGovernance()">{{ 'common.cancel' | t }}
+        </button>
+        <button au-btn
+                (click)="acknowledgeGovernance()">{{ 'settings.governance_acknowledge' | t }}
+        </button>
+      </div>
+    </ng-template>
+  </p-dialog>
+
+  <!-- DIÁLOGO DE CONFIRMACIÓN CRÍTICA -->
+  <p-dialog [header]="'settings.critical_dialog_title' | t" 
+            [visible]="showCriticalDialog()" 
+            [modal]="true" 
+            [closable]="false"
+            styleClass="settings-dialog-lg"
+            [breakpoints]="{'960px':'75vw','640px':'100vw'}">
+    
+    <div class="space-y-4">
+      <div class="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 rounded-lg p-4">
+        <div class="flex items-start gap-3">
+          <i class="pi pi-exclamation-triangle text-red-600 text-xl mt-1"></i>
+          <div>
+            <h4 class="font-semibold text-red-900 dark:text-red-100 mb-2">{{ 'settings.critical_dialog_warning_title' | t }}</h4>
+            <p class="text-red-800 dark:text-red-200 text-sm">
+              {{ 'settings.critical_dialog_warning_desc' | t }}
+              <strong>Confirme que comprende las consecuencias antes de continuar.</strong>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="space-y-3">
+        <div *ngFor="let change of criticalChanges()" 
+             class="rounded-lg border border-surface-200 p-3 dark:border-surface-700">
+          <div class="flex items-start justify-between">
+            <div class="flex-1">
+              <div class="font-medium text-surface-900 dark:text-surface-100">{{ change.setting }}</div>
+              <div class="mt-1 text-sm text-surface-600 dark:text-surface-400">{{ change.impact }}</div>
+              <div class="mt-2 text-xs text-surface-500 dark:text-surface-400">
+                <span class="font-medium">{{ 'settings.critical_dialog_previous' | t }}</span> {{ change.old_value || 'No definido' }} → 
+                <span class="font-medium">{{ 'settings.critical_dialog_new' | t }}</span> {{ change.new_value }}
+              </div>
+            </div>
+            <div class="ml-3">
+              <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium"
+                    [ngClass]="{
+                      'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-300': change.type === 'critical',
+                      'bg-orange-100 text-orange-800 dark:bg-orange-900/20 dark:text-orange-300': change.type === 'sensitive'
+                    }">
+                {{ change.type === 'critical' ? ('settings.critical_dialog_type_critical' | t) : ('settings.critical_dialog_type_sensitive' | t) }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+        <p class="text-yellow-800 dark:text-yellow-200 text-sm">
+          <i class="pi pi-info-circle mr-2"></i>
+          {{ 'settings.critical_dialog_note' | t }}
+        </p>
+      </div>
+    </div>
+
+    <ng-template pTemplate="footer">
+      <div class="flex justify-end gap-3">
+        <button au-btn variant="secondary" 
+                (click)="cancelCriticalChanges()">{{ 'settings.critical_dialog_cancel' | t }}
+        </button>
+        <button au-btn variant="danger" 
+                (click)="confirmCriticalChanges()"
+                [loading]="loading()">{{ 'settings.critical_dialog_confirm' | t }}
+        </button>
+      </div>
+    </ng-template>
+  </p-dialog>
+</div>
+

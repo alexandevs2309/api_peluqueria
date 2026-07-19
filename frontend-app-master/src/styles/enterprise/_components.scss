@@ -1,0 +1,442 @@
+@layer components {
+  /* ============================================
+     ENTERPRISE BUTTONS
+     Estilo Stripe/Vercel — serios, limpios, B2B
+     ============================================ */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    line-height: 1.25rem;
+    border: 1px solid transparent;
+    border-radius: var(--app-radius-lg, 0.75rem);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    text-decoration: none;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .btn:focus-visible {
+    outline: 2px solid var(--brand-500, var(--brand));
+    outline-offset: 2px;
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+  }
+
+  .btn-primary {
+    background-color: var(--brand-500, var(--brand));
+    color: #fff;
+    border-color: var(--brand-500, var(--brand));
+  }
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--brand-600, #1447C0);
+    border-color: var(--brand-600, #1447C0);
+  }
+  .btn-primary:active:not(:disabled) {
+    background-color: var(--brand-700, #1039A3);
+  }
+
+  .btn-secondary {
+    background-color: var(--gray-900, #0F172A);
+    color: #fff;
+    border-color: var(--gray-900, #0F172A);
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background-color: var(--gray-800, #1E293B);
+    border-color: var(--gray-800, #1E293B);
+  }
+
+  .btn-accent {
+    background-color: var(--brand-500, var(--brand));
+    color: #fff;
+    border-color: var(--brand-500, var(--brand));
+  }
+  .btn-accent:hover:not(:disabled) {
+    background-color: var(--brand-600, #1447C0);
+  }
+
+  .btn-outline {
+    background-color: transparent;
+    color: var(--brand-500, var(--brand));
+    border-color: var(--brand-500, var(--brand));
+  }
+  .btn-outline:hover:not(:disabled) {
+    background-color: var(--brand-50, #EEF4FF);
+  }
+
+  .btn-ghost {
+    background-color: transparent;
+    color: var(--gray-700, #334155);
+    border-color: transparent;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background-color: var(--gray-100, #F1F5F9);
+  }
+
+  .btn-sm {
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8125rem;
+  }
+  .btn-lg {
+    padding: 0.625rem 1.25rem;
+    font-size: 1rem;
+  }
+
+  /* ============================================
+     ENTERPRISE CARDS
+     ============================================ */
+  .card-dashboard {
+    background: var(--surface-card, #fff);
+    border: 1px solid var(--surface-border, #E2E8F0);
+    border-radius: var(--app-radius-xl, 1rem);
+    padding: 1.5rem;
+    box-shadow: 0 1px 3px 0 rgba(30, 27, 24, 0.06);
+  }
+
+  .card-stat {
+    background: var(--surface-card, #fff);
+    border: 1px solid var(--surface-border, #E2E8F0);
+    border-radius: var(--app-radius-xl, 1rem);
+    padding: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .card-stat__label {
+    font-size: 0.75rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--gray-500, #64748B);
+  }
+  .card-stat__value {
+    font-size: 1.75rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    line-height: 1.1;
+    color: var(--gray-900, #0F172A);
+  }
+  .card-stat__change {
+    font-size: 0.8125rem;
+    color: var(--gray-500, #64748B);
+  }
+  .card-stat__change.is-positive {
+    color: var(--success-600, #059669);
+  }
+  .card-stat__change.is-negative {
+    color: var(--danger-600, #DC2626);
+  }
+
+  .card-tenant {
+    background: var(--surface-card, #fff);
+    border: 1px solid var(--surface-border, #E2E8F0);
+    border-radius: var(--app-radius-xl, 1rem);
+    padding: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
+  }
+  .card-tenant:hover {
+    border-color: var(--brand-200, #B4CCFF);
+    box-shadow: 0 4px 12px rgba(26, 86, 219, 0.08);
+  }
+  .card-tenant__avatar {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: var(--app-radius-lg, 0.75rem);
+    background: var(--brand-100, #D7E5FF);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: var(--app-font-weight-strong, 600);
+    font-size: 0.875rem;
+    color: var(--brand-700, #1039A3);
+    flex-shrink: 0;
+  }
+  .card-tenant__info {
+    flex: 1;
+    min-width: 0;
+  }
+  .card-tenant__name {
+    font-weight: var(--app-font-weight-strong, 600);
+    font-size: 0.9375rem;
+    color: var(--gray-900, #0F172A);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .card-tenant__meta {
+    font-size: 0.8125rem;
+    color: var(--gray-500, #64748B);
+    margin-top: 0.125rem;
+  }
+
+  /* ============================================
+     ENTERPRISE FORM INPUTS
+     ============================================ */
+  .input-field {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    font-size: 0.875rem;
+    font-weight: var(--app-font-weight-ui, 500);
+    line-height: 1.5;
+    color: var(--gray-900, #0F172A);
+    background: var(--surface-card, #fff);
+    border: 1px solid var(--surface-border, #E2E8F0);
+    border-radius: var(--app-radius-lg, 0.75rem);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    appearance: none;
+  }
+  .input-field::placeholder {
+    color: var(--gray-400, #94A3B8);
+  }
+  .input-field:focus {
+    outline: none;
+    border-color: var(--brand-500, var(--brand));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand-500, var(--brand)) 15%, transparent);
+  }
+  .input-field:disabled {
+    background: var(--gray-50, #F8FAFC);
+    color: var(--gray-400, #94A3B8);
+    cursor: not-allowed;
+  }
+
+  .input-error {
+    border-color: var(--danger-500, #EF4444);
+  }
+  .input-error:focus {
+    border-color: var(--danger-500, #EF4444);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger-500, #EF4444) 15%, transparent);
+  }
+  .input-error__message {
+    font-size: 0.75rem;
+    color: var(--danger-600, #DC2626);
+    margin-top: 0.25rem;
+  }
+
+  .input-success {
+    border-color: var(--success-500, #10B981);
+  }
+  .input-success:focus {
+    border-color: var(--success-500, #10B981);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--success-500, #10B981) 15%, transparent);
+  }
+
+  .input-label {
+    display: block;
+    font-size: 0.8125rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    color: var(--gray-700, #334155);
+    margin-bottom: 0.375rem;
+  }
+
+  .input-hint {
+    font-size: 0.75rem;
+    color: var(--gray-400, #94A3B8);
+    margin-top: 0.25rem;
+  }
+
+  /* ============================================
+     ENTERPRISE TABLE
+     ============================================ */
+  .table-modern {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .table-modern thead {
+    border-bottom: 1px solid var(--surface-border, #E2E8F0);
+  }
+  .table-modern th {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    font-weight: var(--app-font-weight-strong, 600);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--gray-500, #64748B);
+    background: transparent;
+    border-bottom: 1px solid var(--surface-border, #E2E8F0);
+  }
+  .table-modern td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--surface-border, #E2E8F0);
+    color: var(--gray-900, #0F172A);
+    vertical-align: middle;
+  }
+  .table-modern tbody tr {
+    transition: background-color 0.1s ease;
+  }
+  .table-modern tbody tr:hover {
+    background-color: var(--gray-50, #F8FAFC);
+  }
+  .table-modern tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  /* ============================================
+     ENTERPRISE HEADERS
+     ============================================ */
+  .header-dashboard {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.5rem 0;
+    flex-wrap: wrap;
+  }
+  .header-dashboard__title {
+    font-size: 1.5rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    line-height: 1.2;
+    color: var(--gray-900, #0F172A);
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  .header-dashboard__subtitle {
+    font-size: 0.875rem;
+    color: var(--gray-500, #64748B);
+    margin-top: 0.25rem;
+  }
+  .header-dashboard__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-shrink: 0;
+  }
+
+  .header-section {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1.25rem;
+  }
+  .header-section__icon {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: var(--app-radius-lg, 0.75rem);
+    background: var(--brand-50, #EEF4FF);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--brand-600, #1447C0);
+    font-size: 1rem;
+    flex-shrink: 0;
+  }
+  .header-section__title {
+    font-size: 1.125rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    color: var(--gray-900, #0F172A);
+    margin: 0;
+  }
+  .header-section__description {
+    font-size: 0.8125rem;
+    color: var(--gray-500, #64748B);
+    margin: 0.125rem 0 0;
+  }
+
+  /* ============================================
+     ENTERPRISE BADGES & PILLS
+     ============================================ */
+  .badge-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.625rem;
+    font-size: 0.75rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    line-height: 1.5rem;
+    border-radius: var(--app-radius-pill, 9999px);
+    white-space: nowrap;
+  }
+
+  .badge-status--active {
+    background-color: var(--success-50, #ECFDF5);
+    color: var(--success-700, #047857);
+  }
+  .badge-status--inactive {
+    background-color: var(--gray-100, #F1F5F9);
+    color: var(--gray-600, #475569);
+  }
+  .badge-status--pending {
+    background-color: var(--warning-50, #FFFBEB);
+    color: var(--warning-700, #B45309);
+  }
+  .badge-status--suspended {
+    background-color: var(--danger-50, #FEF2F2);
+    color: var(--danger-700, #B91C1C);
+  }
+  .badge-status--trial {
+    background-color: var(--brand-50, #EEF4FF);
+    color: var(--brand-700, #1039A3);
+  }
+
+  .badge-plan {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.125rem 0.5rem;
+    font-size: 0.6875rem;
+    font-weight: var(--app-font-weight-strong, 600);
+    line-height: 1.25rem;
+    border-radius: var(--app-radius-pill, 9999px);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .badge-plan--basic {
+    background-color: var(--gray-100, #F1F5F9);
+    color: var(--gray-600, #475569);
+  }
+  .badge-plan--pro {
+    background-color: var(--brand-50, #EEF4FF);
+    color: var(--brand-700, #1039A3);
+  }
+  .badge-plan--business {
+    background: linear-gradient(135deg, var(--brand-500, var(--brand)), #103585);
+    color: #fff;
+  }
+  .badge-plan--enterprise {
+    background-color: var(--gray-900, #0F172A);
+    color: #fff;
+  }
+
+  /* ============================================
+     PROGRESS (for earnings, usage, etc.)
+     ============================================ */
+  .progress-quota {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .progress-quota__header {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    color: var(--gray-600, #475569);
+  }
+  .progress-quota__bar {
+    height: 0.5rem;
+    border-radius: var(--app-radius-pill, 9999px);
+    background: var(--gray-100, #F1F5F9);
+    overflow: hidden;
+  }
+  .progress-quota__fill {
+    height: 100%;
+    border-radius: var(--app-radius-pill, 9999px);
+    background: var(--brand-500, var(--brand));
+    transition: width 0.3s ease;
+  }
+  .progress-quota__fill.is-complete {
+    background: var(--success-500, #10B981);
+  }
+  .progress-quota__fill.is-over {
+    background: var(--warning-500, #F59E0B);
+  }
+}

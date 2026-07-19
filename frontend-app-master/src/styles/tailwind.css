@@ -1,0 +1,171 @@
+@import 'tailwindcss';
+@import 'tailwindcss-primeui';
+@custom-variant dark (&:where(.app-dark, .app-dark *));
+
+@theme {
+    --breakpoint-sm: 576px;
+    --breakpoint-md: 768px;
+    --breakpoint-lg: 992px;
+    --breakpoint-xl: 1200px;
+    --breakpoint-2xl: 1920px;
+
+    /* === SPACING === */
+    --space-0: var(--space-0);
+    --space-1: var(--space-1);
+    --space-2: var(--space-2);
+    --space-3: var(--space-3);
+    --space-4: var(--space-4);
+    --space-5: var(--space-5);
+    --space-6: var(--space-6);
+    --space-8: var(--space-8);
+    --space-10: var(--space-10);
+    --space-12: var(--space-12);
+    --space-16: var(--space-16);
+
+    /* === TYPOGRAPHY === */
+    --font-family: var(--font-family);
+    --font-display: var(--font-display);
+    --text-xs: var(--text-xs);
+    --text-sm: var(--text-sm);
+    --text-base: var(--text-base);
+    --text-lg: var(--text-lg);
+    --text-xl: var(--text-xl);
+    --text-2xl: var(--text-2xl);
+    --text-3xl: var(--text-3xl);
+    --text-4xl: var(--text-4xl);
+    --font-weight-light: var(--font-light);
+    --font-weight-normal: var(--font-normal);
+    --font-weight-medium: var(--font-medium);
+    --font-weight-semibold: var(--font-semibold);
+    --font-weight-bold: var(--font-bold);
+    --font-weight-extrabold: var(--font-extrabold);
+    --leading-tight: var(--leading-tight);
+    --leading-snug: var(--leading-snug);
+    --leading-normal: var(--leading-normal);
+    --leading-relaxed: var(--leading-relaxed);
+    --tracking-tight: var(--tracking-tight);
+    --tracking-wide: var(--tracking-wide);
+
+    /* === BORDER RADIUS === */
+    --radius-xs: var(--radius-xs);
+    --radius-sm: var(--radius-sm);
+    --radius-md: var(--radius-md);
+    --radius-lg: var(--radius-lg);
+    --radius-xl: var(--radius-xl);
+    --radius-2xl: var(--radius-2xl);
+    --radius-3xl: var(--radius-3xl);
+    --radius-full: var(--radius-full);
+
+    /* === SHADOWS === */
+    --shadow-xs: var(--shadow-xs);
+    --shadow-sm: var(--shadow-sm);
+    --shadow-md: var(--shadow-md);
+    --shadow-lg: var(--shadow-lg);
+    --shadow-xl: var(--shadow-xl);
+    --shadow-2xl: var(--shadow-2xl);
+
+    /* === MAPEO A VARIABLES SAKAI === */
+    --color-primary: var(--primary-color);
+    --color-surface: var(--surface-card);
+    --color-background: var(--surface-ground);
+    --color-border: var(--surface-border);
+    --color-text: var(--text-color);
+    --color-text-secondary: var(--text-color-secondary);
+
+    /* === BRAND === */
+    --color-brand: var(--brand);
+    --color-brand-hover: var(--brand-hover);
+    --color-brand-dark: var(--brand-400);
+    --color-brand-dark-hover: #85A8FF;
+    --color-brand-50: var(--brand-50);
+    --color-brand-100: var(--brand-100);
+    --color-brand-200: var(--brand-200);
+    --color-brand-300: var(--brand-300);
+    --color-brand-400: var(--brand-400);
+    --color-brand-500: var(--brand-500);
+    --color-brand-600: var(--brand-600);
+    --color-brand-700: var(--brand-700);
+    --color-brand-800: var(--brand-800);
+    --color-brand-900: var(--brand-900);
+    --color-brand-950: var(--brand-950);
+
+    /* === ACCENT === */
+    --color-accent: var(--accent);
+    --color-accent-50: var(--accent-50);
+    --color-accent-100: var(--accent-100);
+    --color-accent-200: var(--accent-200);
+    --color-accent-300: var(--accent-300);
+    --color-accent-400: var(--accent-400);
+    --color-accent-500: var(--accent-500);
+    --color-accent-600: var(--accent-600);
+    --color-accent-700: var(--accent-700);
+    --color-accent-800: var(--accent-800);
+    --color-accent-900: var(--accent-900);
+    --color-accent-950: var(--accent-950);
+
+    /* === SEMÁNTICOS === */
+    --color-success: var(--success);
+    --color-success-50: var(--success-50);
+    --color-success-500: var(--success-500);
+    --color-success-600: var(--success-600);
+    --color-warning: var(--warning);
+    --color-warning-50: var(--warning-50);
+    --color-warning-500: var(--warning-500);
+    --color-warning-600: var(--warning-600);
+    --color-danger: var(--danger);
+    --color-danger-50: var(--danger-50);
+    --color-danger-500: var(--danger-500);
+    --color-danger-600: var(--danger-600);
+    --color-info: var(--info);
+    --color-info-50: var(--info-50);
+    --color-info-500: var(--info-500);
+    --color-info-600: var(--info-600);
+
+    /* === NEUTROS === */
+    --color-gray-50: var(--gray-50);
+    --color-gray-100: var(--gray-100);
+    --color-gray-200: var(--gray-200);
+    --color-gray-300: var(--gray-300);
+    --color-gray-400: var(--gray-400);
+    --color-gray-500: var(--gray-500);
+    --color-gray-600: var(--gray-600);
+    --color-gray-700: var(--gray-700);
+    --color-gray-800: var(--gray-800);
+    --color-gray-900: var(--gray-900);
+    --color-gray-950: var(--gray-950);
+}
+
+/* === SURFACE + TEXT TOKENS (theme-aware) === */
+:root {
+    --surface-ground: var(--gray-50);
+    --surface-section: #FFFFFF;
+    --surface-card: #FFFFFF;
+    --surface-border: var(--gray-200);
+    --surface-hover: var(--gray-100);
+    --surface-hover-background: color-mix(in srgb, var(--gray-50) 50%, var(--gray-100));
+    --text-color: var(--gray-900);
+    --text-color-secondary: var(--gray-500);
+    --text-color-tertiary: var(--gray-400);
+    --primary-color: var(--brand);
+    --primary-color-text: #FFFFFF;
+    --success-color: var(--success);
+    --success-color-text: var(--success-700);
+    --warning-color: var(--warning);
+    --warning-color-text: var(--warning-700);
+    --danger-color: var(--danger);
+    --danger-color-text: var(--danger-700);
+    --info-color: var(--info);
+    --info-color-text: var(--info-600);
+}
+
+.app-dark {
+    --surface-ground: #1A1816;
+    --surface-section: var(--gray-950);
+    --surface-card: #242120;
+    --surface-border: var(--gray-700);
+    --surface-hover: var(--gray-800);
+    --surface-hover-background: color-mix(in srgb, var(--gray-800) 50%, var(--gray-900));
+    --text-color: var(--gray-50);
+    --text-color-secondary: var(--gray-400);
+    --text-color-tertiary: var(--gray-500);
+}

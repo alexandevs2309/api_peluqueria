@@ -1,0 +1,49 @@
+/* Utils */
+.clearfix:after {
+    content: ' ';
+    display: block;
+    clear: both;
+}
+
+.card {
+    background: var(--surface-card);
+    padding: 2rem;
+    margin-bottom: 2rem;
+    border-radius: var(--content-border-radius);
+
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+
+.p-toast {
+    &.p-toast-top-right,
+    &.p-toast-top-left,
+    &.p-toast-top-center {
+        top: 100px;
+    }
+}
+
+.hero-gradient {
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at top left, rgba(26, 86, 219, 0.15), transparent 40%),
+                radial-gradient(circle at top right, rgba(26, 86, 219, 0.13), transparent 36%);
+}
+
+.dark .hero-gradient {
+    background: radial-gradient(circle at top left, rgba(26, 86, 219, 0.12), transparent 38%),
+                radial-gradient(circle at top right, rgba(82, 123, 255, 0.14), transparent 34%),
+                linear-gradient(135deg, rgba(12, 14, 18, 0.92), rgba(19, 22, 29, 0.86));
+}
+
+/* Mobile dialog responsive fixes */
+.mobile-dialog {
+    max-width: 95vw;
+    width: 420px;
+    @media (max-width: 360px) {
+        width: 95vw;
+        max-width: 100%;
+    }
+}

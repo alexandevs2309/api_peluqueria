@@ -1,0 +1,415 @@
+<div class="reg-wrapper">
+  <div class="reg-bg"></div>
+
+  <div class="reg-content">
+
+    <div class="reg-sidebar">
+      <div class="reg-sidebar-card">
+        <a routerLink="/landing" class="reg-sidebar-logo">
+          <div class="reg-sidebar-logo-icon">
+            <img src="assets/logos/logo-final.png" alt="Auron Suite" />
+          </div>
+          <div>
+            <div class="reg-sidebar-logo-supra">{{ t('auth.register.suite_management') }}</div>
+            <div class="reg-sidebar-logo-name">Auron Suite</div>
+          </div>
+        </a>
+
+        <div class="reg-badge reg-badge--terracotta">
+          <i class="pi pi-sparkles"></i>
+          {{ t('auth.register.guided_registration') }}
+        </div>
+
+        <div class="reg-sidebar-title">{{ t('auth.register.sidebar_title') }}</div>
+        <p class="reg-sidebar-desc">{{ t('auth.register.sidebar_subtitle') }}</p>
+
+        <div class="reg-sidebar-plan">
+          <div class="reg-sidebar-plan-row">
+            <div>
+              <div class="reg-sidebar-plan-label">{{ t('auth.register.selected_plan') }}</div>
+              <div class="reg-sidebar-plan-name">{{ getPlanDisplayName() }}</div>
+            </div>
+            <div *ngIf="hasSelectedPlan" class="text-right">
+              <div class="reg-sidebar-plan-price">
+                ${{ billingInterval === 'year' ? ((planData.selectedPrice / 12) | number:'1.1-2') : (planData.selectedPrice | number:'1.1-2') }}
+              </div>
+              <div class="reg-sidebar-plan-period">{{ t('auth.register.per_month') }}</div>
+              <div *ngIf="billingInterval === 'year'" class="reg-sidebar-plan-annual">
+                {{ t('auth.register.billed_annually') }} (${{ planData.selectedPrice | number:'1.1-2' }}/{{ t('auth.register.year_suffix') }})
+              </div>
+            </div>
+          </div>
+          <div class="reg-badge reg-badge--success">
+            <i class="pi pi-check-circle"></i>
+            {{ t('auth.register.trial_days') }}
+          </div>
+        </div>
+
+        <div class="reg-sidebar-features">
+          <div class="reg-sidebar-feature">
+            <i class="pi pi-check-circle"></i>
+            <span>{{ t('auth.register.no_card') }}</span>
+          </div>
+          <div class="reg-sidebar-feature">
+            <i class="pi pi-check-circle"></i>
+            <span>{{ t('auth.register.guided_steps') }}</span>
+          </div>
+          <div class="reg-sidebar-feature">
+            <i class="pi pi-check-circle"></i>
+            <span>{{ t('auth.register.email_credentials') }}</span>
+          </div>
+        </div>
+
+        <p-button [label]="t('auth.register.change_plan')"
+                  styleClass="reg-btn reg-btn--secondary reg-btn--large w-full"
+                  (onClick)="router.navigate(['/landing'], { fragment: 'pricing' })">
+        </p-button>
+
+        <div class="reg-sidebar-after">
+          <div class="reg-sidebar-after-label">{{ t('auth.register.after_registration') }}</div>
+          <div class="reg-sidebar-after-desc">{{ t('auth.register.after_registration_desc') }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="reg-main">
+      <div class="reg-main-card">
+        <div class="reg-main-header">
+          <div class="reg-main-header-text">
+            <div class="reg-badge reg-badge--terracotta">
+              <i class="pi pi-user-plus"></i>
+              {{ t('auth.register.guided') }}
+            </div>
+            <h1>{{ t('auth.register.title') }}</h1>
+            <p>{{ t('auth.register.description') }}</p>
+          </div>
+
+          <div class="reg-main-header-time">
+            <div class="reg-main-header-time-label">{{ t('auth.register.estimated_time') }}</div>
+            <div class="reg-main-header-time-value">{{ getEstimatedTime() }}</div>
+            <div *ngIf="autoSaveStatus !== 'idle'" class="mt-2 flex items-center gap-2 text-xs fw-medium"
+                 [class.reg-autosave-saved]="autoSaveStatus === 'saved'"
+                 [class.reg-autosave-saving]="autoSaveStatus === 'saving'">
+              <i [class]="autoSaveStatus === 'saved' ? 'pi pi-check-circle' : 'pi pi-spin pi-spinner'"
+                 [class.reg-autosave-saved]="autoSaveStatus === 'saved'"
+                 [class.reg-autosave-saving]="autoSaveStatus === 'saving'"></i>
+              <span>{{ autoSaveStatus === 'saved' ? t('auth.register.progress_saved') : t('auth.register.saving_draft') }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="reg-steps">
+          <div class="reg-steps-bar">
+            <div class="reg-steps-track"></div>
+            <div class="reg-steps-fill" [style.width.%]="(currentStep / 2) * 100"></div>
+
+            <div *ngFor="let step of steps; let i = index" class="reg-step">
+              <div [class]="i < currentStep ? 'reg-step-circle reg-step-circle--done' : i === currentStep ? 'reg-step-circle reg-step-circle--active' : 'reg-step-circle reg-step-circle--pending'">
+                <i [class]="step.icon" *ngIf="i <= currentStep"></i>
+                <span *ngIf="i > currentStep">{{ i + 1 }}</span>
+              </div>
+              <span [class]="'reg-step-label ' + (i <= currentStep ? 'reg-step-label--active' : 'reg-step-label--pending')">{{ t(step.label) }}</span>
+              <div *ngIf="i === currentStep && (i === 0 ? fieldCompletion.step0 : i === 1 ? fieldCompletion.step1 : fieldCompletion.step2) > 0"
+                   class="reg-step-completion">
+                {{ i === 0 ? fieldCompletion.step0 : i === 1 ? fieldCompletion.step1 : fieldCompletion.step2 }}%
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="reg-plan-mobile">
+          <div class="reg-plan-mobile-card">
+            <div class="reg-plan-mobile-row">
+              <div>
+                <div class="reg-plan-mobile-label">{{ t('auth.register.selected_plan') }}</div>
+                <div class="reg-plan-mobile-name">{{ getPlanDisplayName() }}</div>
+                <div class="reg-plan-mobile-trial">{{ t('auth.register.trial_days_start_short') }}</div>
+              </div>
+              <div *ngIf="hasSelectedPlan" class="text-right">
+                <div class="reg-plan-mobile-price">
+                  ${{ billingInterval === 'year' ? ((planData.selectedPrice / 12) | number:'1.1-2') : (planData.selectedPrice | number:'1.1-2') }}
+                </div>
+                <div class="reg-plan-mobile-period">{{ t('auth.register.per_month') }}</div>
+                <div *ngIf="billingInterval === 'year'" class="reg-sidebar-plan-annual">
+                  {{ t('auth.register.billed_annually') }} (${{ planData.selectedPrice | number:'1.1-2' }}/año)
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="reg-trial">
+          <div class="reg-trial-inner">
+            <div class="reg-trial-content">
+              <i class="pi pi-gift"></i>
+              <div>
+                <div class="reg-trial-title">{{ t('auth.register.trial_days_start').replace('{plan}', getPlanDisplayName()) }}</div>
+                <div class="reg-trial-desc">{{ t('auth.register.trial_access') }}</div>
+              </div>
+            </div>
+            <div class="reg-trial-desc">{{ t('auth.register.no_card_start') }}</div>
+          </div>
+        </div>
+
+        <div *ngIf="currentStep === 0" class="animate-fadeIn">
+          <h3 class="reg-section-title">{{ t('auth.register.section_business') }}</h3>
+
+          <div class="reg-section-card">
+            <div class="reg-field-grid">
+              <div class="reg-field">
+                <label class="reg-field-label">{{ t('auth.register.business_name') }}</label>
+                <div class="reg-field-input-wrap">
+                  <i class="pi pi-building reg-field-icon"></i>
+                  <input pInputText
+                         [(ngModel)]="businessData.businessName"
+                         (ngModelChange)="saveData(); updateFieldCompletion()"
+                         [placeholder]="t('auth.register.business_name_placeholder')"
+                         class="reg-field-input" />
+                </div>
+              </div>
+              <div class="reg-field">
+                <label class="reg-field-label">{{ t('auth.register.phone') }}</label>
+                <div class="reg-field-input-wrap">
+                  <i class="pi pi-phone reg-field-icon"></i>
+                  <input pInputText
+                         [(ngModel)]="businessData.phone"
+                         (ngModelChange)="validatePhone()"
+                         (blur)="validatePhone()"
+                         [placeholder]="t('auth.register.phone_placeholder')"
+                         [class]="'reg-field-input' + (validation.phoneTouched ? (validation.phoneValid ? ' reg-field-input--success' : ' reg-field-input--error') : '')" />
+                  <i *ngIf="validation.phoneTouched"
+                     [class]="'reg-field-validate-icon ' + (validation.phoneValid ? 'reg-field-validate-icon--success pi pi-check-circle' : 'reg-field-validate-icon--error pi pi-times-circle')"></i>
+                </div>
+                <span *ngIf="validation.phoneTouched && !validation.phoneValid" class="reg-field-msg reg-field-msg--error">
+                  <i class="pi pi-exclamation-triangle"></i>
+                  {{ t('auth.register.phone_invalid') }}
+                </span>
+              </div>
+              <div class="reg-field reg-field-wide">
+                <label class="reg-field-label">{{ t('auth.register.address') }}</label>
+                <div class="reg-field-input-wrap">
+                  <i class="pi pi-map-marker reg-field-icon"></i>
+                  <input pInputText
+                         [(ngModel)]="businessData.address"
+                         (ngModelChange)="saveData(); updateFieldCompletion()"
+                         [placeholder]="t('auth.register.address_placeholder')"
+                         class="reg-field-input" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="reg-actions">
+            <p-button [label]="t('auth.register.previous')"
+                      icon="pi pi-arrow-left"
+                      styleClass="reg-btn reg-btn--secondary reg-btn--large"
+                      (onClick)="prevStep()">
+            </p-button>
+            <p-button [label]="t('auth.register.next')"
+                      icon="pi pi-arrow-right"
+                      iconPos="right"
+                      styleClass="reg-btn reg-btn--primary reg-btn--large"
+                      [disabled]="!isStepValid(0)"
+                      (onClick)="nextStep()">
+            </p-button>
+          </div>
+        </div>
+
+        <div *ngIf="currentStep === 1" class="animate-fadeIn">
+          <h3 class="reg-section-title">{{ t('auth.register.section_owner') }}</h3>
+
+          <div class="reg-section-card">
+            <div class="reg-field-grid">
+              <div class="reg-field reg-field-wide">
+                <label class="reg-field-label">{{ t('auth.register.owner_name') }}</label>
+                <div class="reg-field-input-wrap">
+                  <i class="pi pi-user reg-field-icon"></i>
+                  <input pInputText
+                         [(ngModel)]="ownerData.ownerName"
+                         (ngModelChange)="saveData(); updateFieldCompletion()"
+                         [placeholder]="t('auth.register.owner_name_placeholder')"
+                         class="reg-field-input" />
+                </div>
+              </div>
+              <div class="reg-field reg-field-wide">
+                <label class="reg-field-label">{{ t('auth.register.email_label') }}</label>
+                <div class="reg-field-input-wrap">
+                  <i class="pi pi-envelope reg-field-icon"></i>
+                  <input pInputText
+                         [(ngModel)]="ownerData.email"
+                         (ngModelChange)="validateEmail()"
+                         (blur)="validateEmail()"
+                         type="email"
+                         [placeholder]="t('auth.register.email_placeholder')"
+                         [class]="'reg-field-input' + (validation.emailTouched ? (validation.emailValid && !validation.emailExists ? ' reg-field-input--success' : ' reg-field-input--error') : '')" />
+                  <i *ngIf="validation.checkingEmail"
+                     class="reg-field-validate-icon pi pi-spin pi-spinner"
+                     [style.color]="'#C8674A'"></i>
+                  <i *ngIf="validation.emailTouched && !validation.checkingEmail"
+                     [class]="'reg-field-validate-icon pi ' + (validation.emailValid && !validation.emailExists ? 'pi pi-check-circle reg-field-validate-icon--success' : 'pi pi-times-circle reg-field-validate-icon--error')"></i>
+                </div>
+                <span *ngIf="validation.emailTouched && !validation.emailValid"
+                      class="reg-field-msg reg-field-msg--error">
+                  <i class="pi pi-exclamation-triangle"></i>
+                  {{ t('auth.register.email_invalid') }}
+                </span>
+                <span *ngIf="validation.emailValid && validation.emailExists"
+                      class="reg-field-msg reg-field-msg--error">
+                  <i class="pi pi-exclamation-triangle"></i>
+                  {{ t('auth.register.email_exists') }}
+                </span>
+                <span *ngIf="validation.emailValid && !validation.emailExists && validation.emailTouched"
+                      class="reg-field-msg reg-field-msg--success">
+                  <i class="pi pi-check-circle"></i>
+                  {{ t('auth.register.email_available') }}
+                </span>
+              </div>
+              <div class="reg-field reg-field-wide">
+                <div class="reg-info-box">
+                  <div class="flex items-start gap-3">
+                    <i class="pi pi-info-circle reg-info-box-icon"></i>
+                    <div>
+                      <p class="reg-info-box-title">{{ t('auth.register.auto_password_title') }}</p>
+                      <p class="reg-info-box-desc">{{ t('auth.register.auto_password_desc') }}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="reg-actions">
+            <p-button [label]="t('auth.register.previous')"
+                      icon="pi pi-arrow-left"
+                      styleClass="reg-btn reg-btn--secondary reg-btn--large"
+                      (onClick)="prevStep()">
+            </p-button>
+            <p-button [label]="t('auth.register.next')"
+                      icon="pi pi-arrow-right"
+                      iconPos="right"
+                      styleClass="reg-btn reg-btn--primary reg-btn--large"
+                      [disabled]="!isStepValid(1)"
+                      (onClick)="nextStep()">
+            </p-button>
+          </div>
+        </div>
+
+        <div *ngIf="currentStep === 2" class="animate-fadeIn">
+          <h3 class="reg-section-title">{{ t('auth.register.summary_title') }}</h3>
+
+          <div class="reg-summary">
+            <div class="reg-summary-header">
+              <div class="reg-summary-icon">
+                <i class="pi pi-check"></i>
+              </div>
+              <h4 class="reg-summary-title">{{ t('auth.register.summary_account') }}</h4>
+            </div>
+            <div class="reg-summary-grid">
+              <div class="reg-summary-item">
+                <div class="reg-summary-item-header">
+                  <i class="pi pi-tag"></i>
+                  <span>{{ t('auth.register.plan_name') }}</span>
+                </div>
+                <div class="reg-summary-item-value">{{ getPlanDisplayName() }}</div>
+                <div *ngIf="hasSelectedPlan" class="reg-summary-item-sub">
+                  ${{ billingInterval === 'year' ? ((planData.selectedPrice / 12) | number:'1.1-2') : (planData.selectedPrice | number:'1.1-2') }}/mes
+                </div>
+                <div *ngIf="billingInterval === 'year' && hasSelectedPlan" class="reg-sidebar-plan-annual">
+                  {{ t('auth.register.billed_annually') }} (${{ planData.selectedPrice | number:'1.1-2' }}/año)
+                </div>
+              </div>
+              <div class="reg-summary-item">
+                <div class="reg-summary-item-header">
+                  <i class="pi pi-building"></i>
+                  <span>{{ t('auth.register.business_label') }}</span>
+                </div>
+                <div class="reg-summary-item-value">{{ businessData.businessName }}</div>
+                <div class="reg-summary-item-sub">{{ businessData.phone }}</div>
+              </div>
+              <div class="reg-summary-item">
+                <div class="reg-summary-item-header">
+                  <i class="pi pi-user"></i>
+                  <span>{{ t('auth.register.owner_label') }}</span>
+                </div>
+                <div class="reg-summary-item-value">{{ ownerData.ownerName }}</div>
+              </div>
+              <div class="reg-summary-item">
+                <div class="reg-summary-item-header">
+                  <i class="pi pi-envelope"></i>
+                  <span>{{ t('auth.register.email_info') }}</span>
+                </div>
+                <div class="reg-summary-item-value">{{ ownerData.email }}</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="reg-terms">
+            <h5 class="reg-terms-title">
+              <i class="pi pi-shield"></i>
+              {{ t('auth.register.terms_title') }}
+            </h5>
+            <div class="reg-terms-box">
+              <div class="reg-terms-row">
+                <p-checkbox
+                  [(ngModel)]="termsData.acceptTerms"
+                  [binary]="true"
+                  inputId="acceptTerms">
+                </p-checkbox>
+                <label for="acceptTerms" class="reg-terms-label">
+                  {{ t('auth.register.terms_accept').split('{terms}')[0] }}
+                  <a routerLink="/terms" class="reg-terms-link">{{ t('auth.register.terms_link') }}</a>
+                  {{ t('auth.register.terms_accept').split('{terms}')[1].split('{privacy}')[0] }}
+                  <a routerLink="/privacy" class="reg-terms-link">{{ t('auth.register.privacy_link') }}</a>
+                  {{ t('auth.register.terms_accept').split('{privacy}')[1] }}
+                </label>
+              </div>
+              <div class="reg-terms-row">
+                <p-checkbox
+                  [(ngModel)]="termsData.acceptMarketing"
+                  [binary]="true"
+                  inputId="acceptMarketing">
+                </p-checkbox>
+                <label for="acceptMarketing" class="reg-terms-label">
+                  {{ t('auth.register.marketing_accept') }}
+                </label>
+              </div>
+            </div>
+
+            <div class="reg-terms-secure">
+              <i class="pi pi-shield"></i>
+              <div>
+                <p class="fw-semibold mb-1">{{ t('auth.register.info_secure') }}</p>
+                <p>{{ t('auth.register.info_secure_desc') }}</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="reg-actions">
+            <p-button [label]="t('auth.register.previous')"
+                      icon="pi pi-arrow-left"
+                      styleClass="reg-btn reg-btn--secondary reg-btn--large w-full sm:w-auto"
+                      (onClick)="prevStep()">
+            </p-button>
+            <p-button [label]="submitLabel"
+                      icon="pi pi-play"
+                      iconPos="right"
+                      [disabled]="!isStepValid(2)"
+                      [loading]="isLoading"
+                      styleClass="reg-btn reg-submit-btn"
+                      (onClick)="onSubmit()">
+            </p-button>
+          </div>
+        </div>
+
+        <div class="reg-footer">
+          <span>{{ t('auth.register.already_account') }} </span>
+          <a routerLink="/auth/login">{{ t('auth.register.login_link') }}</a>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<p-toast position="top-right" />
