@@ -1,6 +1,6 @@
 from django.contrib import admin
 from apps.tenants_api.base_admin import BaseTenantAdmin
-from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
+from .models import Employee, WorkSchedule, AttendanceRecord
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 
 @admin.register(Employee)

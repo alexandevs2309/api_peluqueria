@@ -82,13 +82,7 @@ class Employee(models.Model):
     def __str__(self):
         return self.user.email
 
-class EmployeeService(models.Model):
-    employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='services')
-    service = models.ForeignKey(Service, on_delete=models.CASCADE)
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        unique_together = ('employee', 'service')
 
 class WorkSchedule(models.Model):
     employee = models.ForeignKey(Employee, on_delete=models.CASCADE, related_name='schedules')

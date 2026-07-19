@@ -1,3 +1,6 @@
+import logging
+from rest_framework import serializers
+
 """
 Base Admin classes para filtrado automático por tenant.
 Mantiene compatibilidad con comportamiento actual.

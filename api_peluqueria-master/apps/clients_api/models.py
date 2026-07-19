@@ -1,5 +1,7 @@
+from django.core.exceptions import ValidationError
 from django.db import models
 from django.conf import settings
+from django.utils.html import strip_tags
 
 class Client(models.Model):
     GENDER_CHOICES = [
@@ -26,6 +28,14 @@ class Client(models.Model):
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        super().clean()
+        if self.full_name:
+            sanitized = strip_tags(self.full_name).strip()
+            if not sanitized:
+                raise ValidationError({'full_name': 'El nombre no puede estar vacío'})
+            self.full_name = sanitized
 
     def __str__(self):
         return self.full_name

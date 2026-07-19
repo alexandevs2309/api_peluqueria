@@ -15,12 +15,13 @@ from apps.tenants_api.models import Tenant
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.subscriptions_api.access_control import can_add_employee
 from apps.settings_api.utils import maybe_auto_upgrade_employee_limit
-from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
+from apps.services_api.models import ServiceEmployee
+from .models import Employee, WorkSchedule, AttendanceRecord
 from apps.roles_api.models import UserRole
 from .serializers import EmployeeSerializer, EmployeeServiceSerializer, WorkScheduleSerializer, AttendanceRecordSerializer
 
 class EmployeeViewSet(TenantScopedViewSet):
-    queryset = Employee.objects.select_related('user', 'tenant').prefetch_related('services').all()
+    queryset = Employee.objects.select_related('user', 'tenant').prefetch_related('employee_services').all()
     serializer_class = EmployeeSerializer
     permission_classes = [TenantPermissionByAction]
     
@@ -268,14 +269,14 @@ class EmployeeViewSet(TenantScopedViewSet):
         service_ids = request.data.get('service_ids', [])
         
         # Limpiar servicios existentes
-        EmployeeService.objects.filter(employee=employee).delete()
+        ServiceEmployee.objects.filter(employee=employee).delete()
         
         # Asignar nuevos servicios
         for service_id in service_ids:
             try:
                 from apps.services_api.models import Service
                 service = Service.objects.get(id=service_id, is_active=True, tenant=self.request.tenant)
-                EmployeeService.objects.create(employee=employee, service=service)
+                ServiceEmployee.objects.create(employee=employee, service=service)
             except Service.DoesNotExist:
                 continue
                 
@@ -284,7 +285,7 @@ class EmployeeViewSet(TenantScopedViewSet):
     @action(detail=True, methods=['get'])
     def services(self, request, pk=None):
         employee = self.get_object()
-        employee_services = EmployeeService.objects.filter(employee=employee).select_related('service')
+        employee_services = ServiceEmployee.objects.filter(employee=employee).select_related('service')
         serializer = EmployeeServiceSerializer(employee_services, many=True)
         return Response(serializer.data)
 
@@ -339,7 +340,7 @@ class EmployeeViewSet(TenantScopedViewSet):
         return Response({
             'appointments_last_month': appointments_count,
             'sales_last_month': sales_count,
-            'services_count': EmployeeService.objects.filter(employee=employee).count()
+            'services_count': ServiceEmployee.objects.filter(employee=employee).count()
         })
     
     @action(detail=True, methods=['get', 'put'], url_path='payroll_config')

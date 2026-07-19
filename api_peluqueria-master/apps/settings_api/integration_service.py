@@ -248,6 +248,18 @@ class IntegrationService:
                     smtp_port,
                     use_tls)
 
+        if 'locmem' in email_backend or 'console' in email_backend:
+            from django.core.mail import send_mail
+            send_mail(
+                subject,
+                text_message or html_message,
+                from_email or 'noreply@auronsuite.com',
+                [to_email],
+                html_message=html_message,
+                fail_silently=False
+            )
+            return True
+
         # --- 1. Resend HTTP API (siempre primero — HTTPS puerto 443, más confiable que SMTP) ---
         using_resend_smtp = smtp_host and 'resend.com' in smtp_host.lower()
         resend_api_key = resend_api_key or (smtp_password if using_resend_smtp else '')

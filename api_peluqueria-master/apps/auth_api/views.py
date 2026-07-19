@@ -457,9 +457,13 @@ class LogoutView(APIView):
 class ChangePasswordView(generics.UpdateAPIView):
     serializer_class = PasswordChangeSerializer
     permission_classes = [IsAuthenticated]
+    http_method_names = ['put', 'patch', 'post']
 
     def get_object(self):
         return self.request.user
+
+    def post(self, request, *args, **kwargs):
+        return self.update(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
         user = self.get_object()

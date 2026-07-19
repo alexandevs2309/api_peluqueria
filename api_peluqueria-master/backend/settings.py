@@ -578,7 +578,10 @@ else:
     _smtp_host = env('EMAIL_HOST', default='')
     _smtp_password = env('EMAIL_HOST_PASSWORD', default='')
 
-    if _smtp_host and _smtp_password:
+    if DEBUG:
+        # En desarrollo: emails visibles en los logs del contenedor, sin SMTP real.
+        EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+    elif _smtp_host and _smtp_password:
         EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
         EMAIL_HOST = _smtp_host
         EMAIL_PORT = env.int('EMAIL_PORT', default=587)

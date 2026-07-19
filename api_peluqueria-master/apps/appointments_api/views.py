@@ -13,7 +13,8 @@ from apps.subscriptions_api.validators import SubscriptionLimitValidator
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
-from apps.employees_api.models import Employee, EmployeeService, WorkSchedule
+from apps.employees_api.models import Employee, WorkSchedule
+from apps.services_api.models import ServiceEmployee
 
 User = get_user_model() 
 
@@ -75,10 +76,10 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 "El estilista seleccionado no tiene un perfil de empleado"
             )
 
-        # Validar que el estilista ofrece el servicio (via EmployeeService, que es lo que puebla el frontend)
+        # Validar que el estilista ofrece el servicio (via ServiceEmployee, que es lo que puebla el frontend)
         if service:
             employee = getattr(stylist, 'employee_profile', None)
-            if not employee or not EmployeeService.objects.filter(employee=employee, service=service).exists():
+            if not employee or not ServiceEmployee.objects.filter(employee=employee, service=service).exists():
                 raise serializers.ValidationError(
                     "El estilista no ofrece este servicio"
                 )

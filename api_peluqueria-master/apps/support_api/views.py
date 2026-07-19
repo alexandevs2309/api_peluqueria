@@ -63,6 +63,11 @@ class SupportTicketViewSet(TenantScopedViewSet):
     serializer_class = SupportTicketSerializer
     permission_classes = [SupportTicketPermission]
     pagination_class = None
+
+    def get_queryset(self):
+        if self.request.user.is_superuser:
+            return SupportTicket.objects.all()
+        return super().get_queryset()
     permission_map = {
         'list': 'support_api.view_supportticket',
         'retrieve': 'support_api.view_supportticket',
@@ -95,6 +100,23 @@ class SupportTicketViewSet(TenantScopedViewSet):
         ticket.save(update_fields=['status', 'updated_at'])
         self._notify_status_change(ticket)
         return Response({'status': 'closed'})
+
+    @action(detail=True, methods=['post'])
+    def reply(self, request, pk=None):
+        from django.utils import timezone
+        ticket = self.get_object()
+        reply_text = request.data.get('reply', '').strip()
+        if not reply_text:
+            return Response({'detail': 'La respuesta no puede estar vacía.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ticket.admin_reply = reply_text
+        ticket.replied_at = timezone.now()
+        if ticket.status == 'open':
+            ticket.status = 'in_progress'
+        ticket.save(update_fields=['admin_reply', 'replied_at', 'status', 'updated_at'])
+        self._notify_admin_reply(ticket)
+        serializer = self.get_serializer(ticket)
+        return Response(serializer.data)
 
     def _notify_new_ticket(self, ticket):
         try:
@@ -159,3 +181,22 @@ class SupportTicketViewSet(TenantScopedViewSet):
             send_email_async.delay(subject, text, '', [ticket.created_by.email], html_message=html)
         except Exception as e:
             logger.error("Error sending status notification: %s", str(e))
+
+    def _notify_admin_reply(self, ticket):
+        try:
+            subject = f'Respuesta a tu ticket: {ticket.subject}'
+            text = (
+                f"Hola {ticket.created_by.get_full_name()},\n\n"
+                f"El equipo de soporte ha respondido a tu ticket.\n\n"
+                f"Asunto: {ticket.subject}\n"
+                f"Respuesta del soporte:\n{ticket.admin_reply}\n\n"
+                f"Puedes ver y gestionar tu ticket en el panel de soporte."
+            )
+            html = EmailRenderer.render('support_status_changed.html', {
+                'title': 'Respuesta a tu ticket',
+                'subject': ticket.subject,
+                'status': f'Respuesta del soporte: {ticket.admin_reply}',
+            })
+            send_email_async.delay(subject, text, '', [ticket.created_by.email], html_message=html)
+        except Exception as e:
+            logger.error("Error sending admin reply notification: %s", str(e))

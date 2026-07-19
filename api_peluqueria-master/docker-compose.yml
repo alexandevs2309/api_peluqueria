@@ -48,9 +48,9 @@ services:
     user: "1000:1000"
     command: sh -c "python manage.py collectstatic --noinput && gunicorn backend.wsgi:application --bind 0.0.0.0:8000 --workers=8 --threads=4 --worker-class=gthread --max-requests=1000 --timeout=120 --keep-alive=5"
     volumes:
-      - ./apps:/code/apps
-      - ./backend:/code/backend
-      - ./ops:/code/ops
+      - ../apps:/code/apps
+      - ../backend:/code/backend
+      - ../ops:/code/ops
       - static_volume:/code/staticfiles
       - media_volume:/code/media
     env_file:
@@ -94,6 +94,9 @@ services:
     user: "1000:1000"
     command: celery -A backend worker --loglevel=info
     volumes:
+      - ../apps:/code/apps
+      - ../backend:/code/backend
+      - ../ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env
@@ -122,6 +125,9 @@ services:
     user: "1000:1000"
     command: celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
+      - ../apps:/code/apps
+      - ../backend:/code/backend
+      - ../ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env
@@ -165,6 +171,9 @@ services:
     user: "1000:1000"
     command: uvicorn backend.asgi:application --host 0.0.0.0 --port 8001 --workers 1 --lifespan off
     volumes:
+      - ../apps:/code/apps
+      - ../backend:/code/backend
+      - ../ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env

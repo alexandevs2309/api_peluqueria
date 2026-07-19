@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
-from apps.services_api.models import Service
-from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
+from apps.services_api.models import Service, ServiceEmployee
+from .models import Employee, WorkSchedule, AttendanceRecord
 from apps.services_api.serializers import ServiceSerializer
 from django.contrib.auth import get_user_model
 from apps.auth_api.role_utils import get_effective_role_api
@@ -124,10 +124,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return instance
 
     def get_service_ids(self, obj):
-        return [employee_service.service_id for employee_service in obj.services.all()]
+        return [se.service_id for se in obj.employee_services.all()]
 
     def get_services_count(self, obj):
-        return len(obj.services.all())
+        return obj.employee_services.count()
 
 
 class EmployeeServiceSerializer(serializers.ModelSerializer):
@@ -135,7 +135,7 @@ class EmployeeServiceSerializer(serializers.ModelSerializer):
     service_id = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all(), source='service', write_only=True)
 
     class Meta:
-        model = EmployeeService
+        model = ServiceEmployee
         fields = ['id', 'employee', 'service', 'service_id', 'created_at']
         read_only_fields = ['created_at']
 

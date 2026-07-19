@@ -111,3 +111,81 @@ class TestClientAPI:
         response = client.delete(url)
         assert response.status_code == status.HTTP_204_NO_CONTENT
         assert not Client.objects.filter(id=client_obj.id).exists()
+
+    def test_xss_full_name_sanitized_on_create(self, auth_client):
+        client, user = auth_client
+        url = reverse('client-list')
+        xss_payload = '<script>alert("xss")</script>Juan Perez'
+        payload = {
+            "full_name": xss_payload,
+            "email": "xss_create@test.com",
+            "phone": "+18095551234",
+        }
+        response = client.post(url, payload, format='json')
+        assert response.status_code == status.HTTP_201_CREATED
+        assert '<script>' not in response.data['full_name']
+        assert 'Juan Perez' in response.data['full_name']
+        db_client = Client.objects.get(id=response.data['id'])
+        assert '<script>' not in db_client.full_name
+
+    def test_xss_full_name_sanitized_on_update(self, auth_client):
+        client, user = auth_client
+        url = reverse('client-list')
+        create_payload = {
+            "full_name": "Maria Test",
+            "email": "xss_update@test.com",
+            "phone": "+18095551235",
+        }
+        create_response = client.post(url, create_payload, format='json')
+        assert create_response.status_code == status.HTTP_201_CREATED
+        client_id = create_response.data['id']
+
+        update_url = reverse('client-detail', args=[client_id]) + f'?tenant={user.tenant.id}'
+        xss_payload = '<img src=x onerror=alert(1)>Maria Actualizada'
+        payload = {"full_name": xss_payload, "email": "xss_update@test.com"}
+        response = client.patch(update_url, payload, format='json')
+        assert response.status_code == status.HTTP_200_OK
+        assert '<img' not in response.data['full_name']
+        assert 'Maria Actualizada' in response.data['full_name']
+
+    def test_xss_full_name_preserves_legitimate_chars(self, auth_client):
+        client, user = auth_client
+        url = reverse('client-list')
+        legitimate_names = [
+            "José María",
+            "Müller",
+            "O'Conner",
+            "Nguyễn Văn A",
+            "Jean-Pierre",
+            "Ana Sofía García-López",
+            "Carlos Jr.",
+        ]
+        for i, name in enumerate(legitimate_names):
+            payload = {
+                "full_name": name,
+                "email": f"legit_{i}@test.com",
+                "phone": f"+1809{5550000 + i}",
+            }
+            response = client.post(url, payload, format='json')
+            assert response.status_code == status.HTTP_201_CREATED, f"Failed for name: {name}: {response.data}"
+            assert response.data['full_name'] == name, f"Name corrupted: {name} -> {response.data['full_name']}"
+
+    def test_xss_various_payloads_sanitized(self, auth_client):
+        client, user = auth_client
+        url = reverse('client-list')
+        payloads = [
+            ('<b>Bold Name</b>', 'Bold Name'),
+            ('<div onclick="steal()">Click</div>', 'Click'),
+            ('<svg onload=alert(1)>Test', 'Test'),
+            ('<a href="javascript:alert(1)">Link</a>Link', 'LinkLink'),
+            ('  <i>  Trimmed  </i>  ', 'Trimmed'),
+        ]
+        for i, (xss_input, expected) in enumerate(payloads):
+            payload = {
+                "full_name": xss_input,
+                "email": f"xss_{i}@test.com",
+                "phone": f"+1809{5560000 + i}",
+            }
+            response = client.post(url, payload, format='json')
+            assert response.status_code == status.HTTP_201_CREATED, f"Failed for: {xss_input}"
+            assert response.data['full_name'] == expected, f"Expected '{expected}', got '{response.data['full_name']}'"
