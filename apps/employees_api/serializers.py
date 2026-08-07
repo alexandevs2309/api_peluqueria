@@ -48,6 +48,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'branch', 'user', 'user_id', 'user_id_read',
             'profession', 'profession_display',
+            'payment_type', 'fixed_salary', 'commission_rate',
             'phone', 'hire_date', 'is_active',
             'service_ids', 'services_count',
             'created_at', 'updated_at',

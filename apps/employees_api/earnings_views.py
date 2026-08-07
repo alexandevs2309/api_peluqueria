@@ -69,6 +69,37 @@ class PayrollViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'], url_path='client/payroll')
     def list_periods(self, request):
         """Endpoint compatible con frontend: GET /payroll/client/payroll/"""
+        from apps.employees_api.models import Employee
+        from calendar import monthrange
+
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+
+        # Garantizar un período del ciclo actual para cada empleado activo del
+        # tenant. Así la pantalla muestra el monto real (net) de cada empleado y
+        # el botón de pago solo aparece cuando hay algo que liquidar.
+        if tenant:
+            today = timezone.localdate()
+            if today.day <= 15:
+                start_date = today.replace(day=1)
+                end_date = today.replace(day=15)
+            else:
+                start_date = today.replace(day=16)
+                end_date = today.replace(day=monthrange(today.year, today.month)[1])
+
+            for employee in Employee.objects.filter(tenant=tenant, is_active=True):
+                period, created = PayrollPeriod.objects.get_or_create(
+                    employee=employee,
+                    period_start=start_date,
+                    period_end=end_date,
+                    defaults={'period_type': 'biweekly', 'status': 'open'},
+                )
+                if created:
+                    period.calculate_amounts()
+                    period.save(update_fields=[
+                        'base_salary', 'commission_earnings', 'gross_amount',
+                        'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
+                    ])
+
         status_filter = request.query_params.get('status')
         periods = self.get_queryset().select_related('employee__user')
         
