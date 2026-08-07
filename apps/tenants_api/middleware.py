@@ -105,7 +105,8 @@ class TenantMiddleware(MiddlewareMixin):
             '/api/auth/cookie-refresh/',
             '/api/auth/mfa/login-verify/',
             '/api/auth/register/',
-            '/api/auth/password-reset/',
+            '/api/auth/reset-password/',
+            '/api/auth/reset-password-confirm/',
             '/api/healthz/',
             '/api/subscriptions/plans/',  # Solo lectura
             '/api/subscriptions/register/',

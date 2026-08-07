@@ -506,13 +506,18 @@ class PasswordResetRequestView(APIView):
         try:
             user = None
             if tenant_subdomain:
+                # Se permite también a negocios inactivos/suspendidos: su dueño
+                # necesita recuperar el acceso para poder regularizar la suscripción.
                 tenant = Tenant.objects.filter(
                     subdomain=tenant_subdomain,
-                    is_active=True,
                     deleted_at__isnull=True
                 ).first()
-                if tenant:
-                    user = User.objects.filter(email=email, tenant=tenant).first()
+                if not tenant:
+                    return Response(
+                        {"detail": f"No se encontró un negocio con el subdominio '{tenant_subdomain}'."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                user = User.objects.filter(email=email, tenant=tenant).first()
             else:
                 candidates = list(User.objects.filter(email=email).select_related('tenant'))
                 if len(candidates) > 1:
