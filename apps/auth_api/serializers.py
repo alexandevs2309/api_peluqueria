@@ -254,10 +254,11 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
         return validate_password_policy(value)
 
     def validate_email(self, value):
-        request = self.context.get('request')
-        tenant = getattr(request, 'tenant', None) or (request.user.tenant if hasattr(request, 'user') and request.user.tenant else None)
-        if tenant and User.objects.filter(email__iexact=value, tenant=tenant).exclude(pk=self.instance.pk if self.instance else None).exists():
-            raise serializers.ValidationError('Ya existe un usuario con este email en este negocio.')
+        qs = User.objects.filter(email__iexact=value)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('Este email ya está registrado en otro negocio.')
         return value
 
     def create(self, validated_data):

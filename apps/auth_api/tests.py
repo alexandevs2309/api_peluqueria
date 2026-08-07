@@ -182,6 +182,61 @@ def test_password_reset():
     assert user.check_password('newpassword123')
 
 @pytest.mark.django_db
+def test_password_reset_wrong_subdomain():
+    user = UserFactory(is_email_verified=True, password='testpassword')
+
+    client = APIClient()
+    response = client.post(reverse('password-reset'), {
+        'email': user.email,
+        'tenant_subdomain': 'negocio-inexistente-xyz',
+    }, format='json')
+
+    assert response.status_code == 400
+    assert 'subdominio' in response.data['detail']
+
+@pytest.mark.django_db
+def test_email_globally_unique_across_tenants():
+    from django.db import IntegrityError
+
+    email = 'global-unique@example.com'
+    UserFactory(email=email, is_email_verified=True)
+    with pytest.raises(IntegrityError):
+        UserFactory(email=email, is_email_verified=True)
+
+
+@pytest.mark.django_db
+def test_register_rejects_email_used_in_another_tenant():
+    UserFactory(email='cross@example.com', is_email_verified=True)
+    client = APIClient()
+    response = client.post(reverse('register'), {
+        'email': 'cross@example.com',
+        'full_name': 'Otro Usuario',
+        'phone': '1234567890',
+        'password': 'testpassword123',
+        'password2': 'testpassword123',
+        'role': 'Client'
+    })
+    assert response.status_code == 400
+    assert 'email' in response.data['details']
+
+@pytest.mark.django_db
+def test_password_reset_suspended_tenant():
+    user = UserFactory(is_email_verified=True, password='testpassword')
+    tenant = user.tenant
+    tenant.is_active = False
+    tenant.subscription_status = 'suspended'
+    tenant.save()
+
+    client = APIClient()
+    response = client.post(reverse('password-reset'), {
+        'email': user.email,
+        'tenant_subdomain': tenant.subdomain,
+    }, format='json')
+
+    assert response.status_code == 200
+    assert AccessLog.objects.filter(user=user, event_type='PASSWORD_RESET_REQUEST').exists()
+
+@pytest.mark.django_db
 def test_active_sessions():
     user = UserFactory(is_email_verified=True)
     client = APIClient()

@@ -28,7 +28,7 @@ class UserManager(BaseUserManager):
         return self.create_user(email, password, **extra_fields)
 
 class User(AbstractBaseUser, PermissionsMixin):
-    email = models.EmailField(max_length=255)  # ✅ Removido unique=True
+    email = models.EmailField(max_length=255, unique=True)
     full_name = models.CharField(max_length=255)
     phone = models.CharField(max_length=20, blank=True, null=True)
     avatar = models.ImageField(upload_to='users/avatars/', null=True, blank=True)
