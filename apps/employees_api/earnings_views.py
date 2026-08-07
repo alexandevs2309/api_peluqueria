@@ -27,6 +27,7 @@ class PayrollViewSet(viewsets.ViewSet):
         'approve_period': 'employees_api.approve_payroll',
         'reject_period': 'employees_api.approve_payroll',
         'history': 'employees_api.view_employee_payroll',
+        'config': 'employees_api.view_employee_payroll',
     }
     
     def _require_admin_role(self, request):
@@ -34,6 +35,25 @@ class PayrollViewSet(viewsets.ViewSet):
         tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
         if get_effective_role_name(request.user, tenant=tenant) not in {'SuperAdmin', 'Client-Admin'}:
             raise PermissionDenied("No autorizado para operaciones de nómina.")
+
+    @action(detail=False, methods=['get', 'put'], url_path='config')
+    def config(self, request):
+        """Obtener o actualizar la configuración de nómina del tenant (ISR/SFS/AFP)"""
+        user = request.user
+        tenant = getattr(request, 'tenant', getattr(user, 'tenant', None))
+        if not tenant:
+            return Response({'error': 'No se pudo determinar el tenant'}, status=400)
+
+        config, _ = PayrollConfiguration.objects.get_or_create(tenant=tenant)
+
+        if request.method == 'PUT':
+            self._require_admin_role(request)
+            serializer = PayrollConfigurationSerializer(config, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
+        return Response(PayrollConfigurationSerializer(config).data)
     
     def get_queryset(self):
         user = self.request.user
