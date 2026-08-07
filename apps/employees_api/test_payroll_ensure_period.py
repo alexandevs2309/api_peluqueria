@@ -107,3 +107,15 @@ class TestEnsurePeriod:
         client = self._client(staff, tenant)
         resp = client.post(reverse('payroll-ensure-period'), {'employee_id': employee.id}, format='json')
         assert resp.status_code == 403
+
+    def test_list_periods_includes_employee_id(self):
+        admin, tenant, employee = self._setup()
+        client = self._client(admin, tenant)
+        client.post(reverse('payroll-ensure-period'), {'employee_id': employee.id}, format='json')
+        resp = client.get(reverse('payroll-list-periods'))
+        assert resp.status_code == 200, resp.content
+        periods = resp.json()['periods']
+        assert periods, 'debe existir al menos un período'
+        assert any(p['employee_id'] == employee.id for p in periods)
+        for p in periods:
+            assert 'employee_id' in p

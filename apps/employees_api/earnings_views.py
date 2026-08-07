@@ -96,6 +96,7 @@ class PayrollViewSet(viewsets.ViewSet):
             
             periods_data.append({
                 'id': period.id,
+                'employee_id': period.employee_id,
                 'employee_name': period.employee.user.full_name or period.employee.user.email,
                 'period_display': period.period_display,
                 'status': status,
