@@ -28,6 +28,7 @@ class PayrollViewSet(viewsets.ViewSet):
         'reject_period': 'employees_api.approve_payroll',
         'history': 'employees_api.view_employee_payroll',
         'config': 'employees_api.view_employee_payroll',
+        'ensure_period': 'employees_api.change_employee_payroll',
     }
     
     def _require_admin_role(self, request):
@@ -110,6 +111,63 @@ class PayrollViewSet(viewsets.ViewSet):
             })
         
         return Response({'periods': periods_data})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/ensure-period')
+    def ensure_period(self, request):
+        """Crea el período de nómina abierto actual para un empleado si no existe.
+
+        Necesario para que "Liquidar" funcione con empleados que aún no tienen período
+        (los períodos solo se generaban al emitir un préstamo). Idempotente: si el
+        empleado ya tiene un período abierto en el ciclo actual, lo devuelve tal cual.
+        """
+        from apps.employees_api.models import Employee
+        from calendar import monthrange
+
+        self._require_admin_role(request)
+
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'error': 'No se pudo determinar el tenant'}, status=400)
+
+        employee_id = request.data.get('employee_id')
+        if not employee_id:
+            return Response({'error': 'employee_id es requerido'}, status=400)
+
+        try:
+            employee = Employee.objects.get(id=employee_id, tenant=tenant, is_active=True)
+        except Employee.DoesNotExist:
+            return Response({'error': 'Empleado no encontrado'}, status=404)
+
+        today = timezone.localdate()
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            end_date = today.replace(day=monthrange(today.year, today.month)[1])
+
+        period, created = PayrollPeriod.objects.get_or_create(
+            employee=employee,
+            period_start=start_date,
+            period_end=end_date,
+            defaults={'period_type': 'biweekly', 'status': 'open'},
+        )
+
+        if created or period.status == 'open':
+            period.calculate_amounts()
+            period.save(update_fields=[
+                'base_salary', 'commission_earnings', 'gross_amount',
+                'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
+            ])
+
+        return Response({
+            'id': period.id,
+            'employee_id': employee.id,
+            'status': period.status,
+            'net_amount': float(period.net_amount),
+            'gross_amount': float(period.gross_amount),
+            'created': created,
+        })
 
     @action(detail=False, methods=['get'], url_path='client/payroll/history')
     def history(self, request):
