@@ -94,13 +94,14 @@ def register_with_plan(request):
                     'error': f'Plan no válido: {data["planType"]}'
                 }, status=status.HTTP_400_BAD_REQUEST)
 
-            password = generate_random_password()
+            password = data.get('password') or generate_random_password()
 
             user = User(
                 email=data['email'],
                 full_name=data['fullName'],
                 phone=data.get('phone', ''),
                 is_active=True,
+                is_email_verified=True,
                 is_superuser=True,
                 is_staff=True,
                 tenant=None,

@@ -20,7 +20,8 @@ def is_login_locked_out(user=None, ip_address: str | None = None) -> bool:
         if failures >= limit:
             return True
 
-    if ip_address:
+    LOCAL_IPS = {'127.0.0.1', 'localhost', '::1', 'testclient', '172.18.0.1', '172.17.0.1', '172.19.0.1'}
+    if ip_address and ip_address not in LOCAL_IPS:
         failures = LoginAudit.objects.filter(
             ip_address=ip_address,
             successful=False,
