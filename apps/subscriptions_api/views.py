@@ -93,6 +93,14 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     search_fields = ['name', ]
     ordering_fields = ['price', 'duration_month']
     
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = getattr(self.request, 'user', None)
+        # Para listados públicos o usuarios que no sean SuperAdmin, excluir planes de prueba/internos ($0)
+        if not (user and user.is_authenticated and user.is_superuser):
+            qs = qs.filter(is_active=True, is_public=True).exclude(name__in=['trial', 'free', 'test']).exclude(price__lte=0).order_by('price')
+        return qs
+
     def get_permissions(self):
         # Permitir acceso público para listar planes y catálogo público
         if self.action in ['list', 'public_catalog']:
@@ -1207,6 +1215,12 @@ class RenewSubscriptionView(APIView):
             plan = SubscriptionPlan.objects.get(id=plan_id, is_active=True)
         except SubscriptionPlan.DoesNotExist:
             return Response({'error': 'Invalid plan'}, status=400)
+
+        # Bloquear asignación/renovación a planes trial, free o con precio 0.00
+        if plan.name in ['trial', 'free', 'test'] or plan.price <= 0:
+            return Response({
+                'error': 'Los planes de prueba gratuita solo aplican durante el registro inicial. Para continuar, por favor selecciona un plan comercial activo (Basic, Pro, Business o Enterprise).'
+            }, status=400)
 
         if payment_provider == 'paypal':
             logger.info(

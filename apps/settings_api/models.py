@@ -23,15 +23,21 @@ class Branch(models.Model):
 
     def save(self, *args, **kwargs):
         # Verificar que el tenant tenga un plan que permita multiples sucursales
-        plan = self.tenant.subscription_plan
+        plan = getattr(self.tenant, 'subscription_plan', None)
         if not plan:
-            subscription = self.tenant.subscription_set.filter(is_active=True).first()
-            if subscription:
-                plan = subscription.plan
+            sub = getattr(self.tenant, 'subscription_set', None)
+            if sub:
+                active_sub = sub.filter(is_active=True).first()
+                if active_sub:
+                    plan = active_sub.plan
+        if not plan and getattr(self.tenant, 'plan_type', None):
+            from apps.subscriptions_api.models import SubscriptionPlan
+            plan = SubscriptionPlan.objects.filter(name=self.tenant.plan_type).first()
 
-        if plan and not plan.allows_multiple_branches:
-            if Branch.objects.filter(tenant=self.tenant).exists() and not self.pk:
-                raise ValueError(_("Su plan actual no permite multiples sucursales"))
+        allows_multi = getattr(plan, 'allows_multiple_branches', False) if plan else False
+        if not allows_multi:
+            if Branch.objects.filter(tenant=self.tenant).exclude(pk=self.pk).exists():
+                raise ValueError(_("Tu plan actual solo permite 1 sucursal principal. Mejora a Business o Enterprise para abrir más sucursales."))
         super().save(*args, **kwargs)
 
     def __str__(self):

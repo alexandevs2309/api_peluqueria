@@ -35,12 +35,23 @@ class BranchWriteSerializer(serializers.ModelSerializer):
                 # Restricción si es una sucursal nueva (no modificación)
                 if not self.instance:
                     plan = tenant.subscription_plan
-                    if plan and not plan.allows_multiple_branches:
-                        active_branches = Branch.objects.filter(tenant=tenant, is_active=True).count()
+                    if not plan:
+                        sub = getattr(tenant, 'subscription_set', None)
+                        if sub:
+                            active_sub = sub.filter(is_active=True).first()
+                            if active_sub:
+                                plan = active_sub.plan
+                    if not plan and getattr(tenant, 'plan_type', None):
+                        from apps.subscriptions_api.models import SubscriptionPlan
+                        plan = SubscriptionPlan.objects.filter(name=tenant.plan_type).first()
+
+                    allows_multi = getattr(plan, 'allows_multiple_branches', False) if plan else False
+                    if not allows_multi:
+                        active_branches = Branch.objects.filter(tenant=tenant).count()
                         if active_branches >= 1:
                             raise serializers.ValidationError(
-                                "Tu plan actual no permite crear múltiples sucursales. "
-                                "Por favor, mejora tu plan a Business o Enterprise."
+                                "Tu plan actual solo permite 1 sucursal principal. "
+                                "Para crear sucursales adicionales, por favor mejora tu plan a Business o Enterprise."
                             )
 
                 if attrs.get("is_main"):
