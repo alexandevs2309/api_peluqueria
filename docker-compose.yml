@@ -94,6 +94,8 @@ services:
     user: "1000:1000"
     command: celery -A backend worker --loglevel=info
     volumes:
+      - ./apps:/code/apps
+      - ./backend:/code/backend
       - media_volume:/code/media
     env_file:
       - .env
@@ -165,6 +167,9 @@ services:
     user: "1000:1000"
     command: uvicorn backend.asgi:application --host 0.0.0.0 --port 8001 --workers 1 --lifespan off
     volumes:
+      - ./apps:/code/apps
+      - ./backend:/code/backend
+      - ./ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env
