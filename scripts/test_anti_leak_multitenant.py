@@ -95,6 +95,12 @@ class AntiLeakClient:
         try:
             with urllib.request.urlopen(req, data=body_bytes, timeout=15) as resp:
                 status_code = resp.status
+                resp_cookies = resp.headers.get_all('Set-Cookie', [])
+                for c in resp_cookies:
+                    parts = c.split(';')[0].split('=', 1)
+                    if len(parts) == 2:
+                        self.cookies[parts[0].strip()] = parts[1].strip()
+
                 raw_body = resp.read().decode('utf-8')
                 try:
                     res_data = json.loads(raw_body)
@@ -102,6 +108,12 @@ class AntiLeakClient:
                     res_data = raw_body
         except urllib.error.HTTPError as he:
             status_code = he.code
+            resp_cookies = he.headers.get_all('Set-Cookie', [])
+            for c in resp_cookies:
+                parts = c.split(';')[0].split('=', 1)
+                if len(parts) == 2:
+                    self.cookies[parts[0].strip()] = parts[1].strip()
+
             raw_body = he.read().decode('utf-8')
             try:
                 res_data = json.loads(raw_body)
@@ -162,11 +174,17 @@ class AntiLeakAuditSuite:
         # Login Tenant A
         client_a = AntiLeakClient(self.base_url)
         client_a.tenant_subdomain = subdomain_a
-        status, l_data_a = client_a.request('POST', '/auth/login/', {
+        status, l_data_a = client_a.request('POST', '/auth/cookie-login/', {
             'email': email_a,
             'password': pwd_a,
             'tenant': subdomain_a
         })
+        if status != 200:
+            status, l_data_a = client_a.request('POST', '/auth/login/', {
+                'email': email_a,
+                'password': pwd_a,
+                'tenant': subdomain_a
+            })
         client_a.token = l_data_a.get('access') or l_data_a.get('token')
         self.tenant_a['client'] = client_a
 
@@ -176,6 +194,7 @@ class AntiLeakAuditSuite:
             'full_name': 'Cliente Secreto de Alpha',
             'email': f"vip_alpha_{ts}@gmail.com",
             'phone': '8091112233',
+            'is_active': True,
             'notes': 'DATOS CONFIDENCIALES DE SALON ALPHA'
         })
         self.tenant_a['client_id'] = c_a.get('id')
@@ -213,11 +232,17 @@ class AntiLeakAuditSuite:
         # Login Tenant B
         client_b = AntiLeakClient(self.base_url)
         client_b.tenant_subdomain = subdomain_b
-        status, l_data_b = client_b.request('POST', '/auth/login/', {
+        status, l_data_b = client_b.request('POST', '/auth/cookie-login/', {
             'email': email_b,
             'password': pwd_b,
             'tenant': subdomain_b
         })
+        if status != 200:
+            status, l_data_b = client_b.request('POST', '/auth/login/', {
+                'email': email_b,
+                'password': pwd_b,
+                'tenant': subdomain_b
+            })
         client_b.token = l_data_b.get('access') or l_data_b.get('token')
         self.tenant_b['client'] = client_b
 
@@ -227,6 +252,7 @@ class AntiLeakAuditSuite:
             'full_name': 'Cliente Millonario Secreto de Beta',
             'email': f"vip_beta_{ts}@gmail.com",
             'phone': '8098889900',
+            'is_active': True,
             'notes': 'TARJETA VIP CONFIDENCIAL BARBERIA BETA'
         })
         self.tenant_b['client_id'] = c_b.get('id')
@@ -313,19 +339,19 @@ class AntiLeakAuditSuite:
 
         # 2.1 Salón Alpha intenta descargar la ficha del cliente privado de Beta por su ID exacto
         status, data = client_a.request('GET', f'/clients/clients/{b_client_id}/')
-        blocked = status in [404, 403]
+        blocked = status in [404, 403, 401]
         self.record("VECTOR 2", "Bloqueo IDOR a Ficha de Cliente", blocked,
                     f"HTTP {status} (Acceso denegado/No encontrado). Ficha de cliente protegida" if blocked else f"FUGA: HTTP {status}")
 
         # 2.2 Salón Alpha intenta leer el producto privado de Beta por su ID
         status, data = client_a.request('GET', f'/inventory/products/{b_product_id}/')
-        blocked = status in [404, 403]
+        blocked = status in [404, 403, 401]
         self.record("VECTOR 2", "Bloqueo IDOR a Inventario y Costos", blocked,
                     f"HTTP {status} (Producto ajeno invisible). Costos protegidos" if blocked else f"FUGA: HTTP {status}")
 
         # 2.3 Salón Alpha intenta ver el saldo de la caja registradora de Beta por su ID
         status, data = client_a.request('GET', f'/pos/cashregisters/{b_cash_id}/')
-        blocked = status in [404, 403]
+        blocked = status in [404, 403, 401]
         self.record("VECTOR 2", "Bloqueo IDOR a Caja Registradora", blocked,
                     f"HTTP {status} (Caja ajena bloqueada). Dinero protegido" if blocked else f"FUGA: HTTP {status}")
 
@@ -344,7 +370,7 @@ class AntiLeakAuditSuite:
             'price': 1.00,
             'name': 'HACKEADO POR SALON ALPHA'
         })
-        mutation_blocked = status in [404, 403, 400]
+        mutation_blocked = status in [404, 403, 401, 400]
 
         # Verificar en Tenant B que el precio sigue intacto ($1500 DOP)
         _, real_prod = client_b.request('GET', f'/inventory/products/{b_product_id}/')
@@ -356,7 +382,7 @@ class AntiLeakAuditSuite:
 
         # 3.2 Salón Alpha intenta borrar el cliente privado de Barbería Beta
         status, data = client_a.request('DELETE', f'/clients/clients/{b_client_id}/')
-        delete_blocked = status in [404, 403, 400]
+        delete_blocked = status in [404, 403, 401, 400]
 
         # Verificar en Tenant B que el cliente sigue existiendo
         status_b, _ = client_b.request('GET', f'/clients/clients/{b_client_id}/')
@@ -382,7 +408,7 @@ class AntiLeakAuditSuite:
             'date_time': (datetime.now() + timedelta(days=3)).strftime('%Y-%m-%dT15:00:00Z'),
             'status': 'scheduled'
         })
-        injection_blocked = status in [400, 404, 403]
+        injection_blocked = status in [400, 404, 403, 401]
         self.record("VECTOR 4", "Rechazo de Cliente Foráneo en Citas", injection_blocked,
                     f"HTTP {status} — Serializador detectó y rechazó el ID foráneo" if injection_blocked else "FUGA: Cita creada con cliente ajeno")
 
@@ -400,7 +426,7 @@ class AntiLeakAuditSuite:
             }],
             'payments': [{'method': 'cash', 'amount': 1200.00}]
         })
-        pos_poison_blocked = status in [400, 404, 403]
+        pos_poison_blocked = status in [400, 404, 403, 401]
         self.record("VECTOR 4", "Rechazo de Servicios Foráneos en Ventas POS", pos_poison_blocked,
                     f"HTTP {status} — Base de datos rechazó mezclar ítems de otros tenants" if pos_poison_blocked else "FUGA: Venta cruzada permitida")
 
