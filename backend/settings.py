@@ -182,11 +182,11 @@ if DEBUG:
     THROTTLE_RATES = {
         'user': '100000/hour',
         'anon': '10000/hour', 
-        'login': '10/min',
-        'register': '5/hour',
-        'password_reset': '5/hour',
-        'public_booking': '200/hour',
-        'mfa_verify': '10/min',
+        'login': '1000/min',
+        'register': '100/hour',
+        'password_reset': '50/hour',
+        'public_booking': '500/hour',
+        'mfa_verify': '100/min',
         'chatbot': '200/hour',
     }
 else:
