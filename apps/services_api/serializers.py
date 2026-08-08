@@ -81,6 +81,9 @@ class ServiceSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         categories = validated_data.pop('categories', None)
         image_file = validated_data.pop('image', None)
+        request = self.context.get('request')
+        if request and hasattr(request, 'tenant') and request.tenant and 'tenant' not in validated_data:
+            validated_data['tenant'] = request.tenant
         try:
             instance = super().create(validated_data)
         except IntegrityError:
