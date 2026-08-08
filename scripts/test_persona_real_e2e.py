@@ -15,7 +15,6 @@ HTTP de la API Django REST Framework:
 Uso:
   python3 scripts/test_persona_real_e2e.py
   python3 scripts/test_persona_real_e2e.py --base-url http://localhost:8000/api
-  python3 scripts/test_persona_real_e2e.py --base-url http://localhost:8001/api
 =============================================================================
 """
 
@@ -248,7 +247,7 @@ class PersonaTestSuite:
         log_header("PERSONA 2: Dueño de Salón / Tenant Owner")
         client = PersonaClient(self.base_url)
         ts = int(time.time())
-        owner_email = f"owner_{ts}@bellavista.com"
+        owner_email = f"owner_{ts}_{int(time.time()*1000)%1000}@bellavista.com"
         salon_name = f"Salón Bella Vista {ts % 1000}"
         
         self.context['owner_email'] = owner_email
@@ -339,8 +338,9 @@ class PersonaTestSuite:
         # 2.5 Catálogo de Servicios
         log_step("2.5 Creación de Servicios (Corte VIP $500, Lavado $300)")
         try:
+            unique_suffix = f"{ts}_{int(time.time()*1000)%1000}"
             status, s1 = client.post('/services/services/', {
-                'name': f'Corte de Cabello VIP {ts % 10000}',
+                'name': f'Corte de Cabello VIP {unique_suffix}',
                 'price': 500.00,
                 'duration': 30,
                 'is_active': True
@@ -348,7 +348,7 @@ class PersonaTestSuite:
             self.context['service_corte_id'] = s1.get('id')
 
             status, s2 = client.post('/services/services/', {
-                'name': f'Lavado y Estilo {ts % 10000}',
+                'name': f'Lavado y Estilo {unique_suffix}',
                 'price': 300.00,
                 'duration': 20,
                 'is_active': True
@@ -363,8 +363,8 @@ class PersonaTestSuite:
         log_step("2.6 Creación de Producto en Inventario")
         try:
             status, prod = client.post('/inventory/products/', {
-                'name': f'Cera Moldeadora {ts % 10000}',
-                'sku': f'CERA-{ts % 10000}',
+                'name': f'Cera Moldeadora {unique_suffix}',
+                'sku': f'CERA-{unique_suffix}',
                 'price': 450.00,
                 'cost': 200.00,
                 'stock': 50,
@@ -379,7 +379,7 @@ class PersonaTestSuite:
         # 2.7 Contratación de Empleados
         log_step("2.7 Alta de Empleados (Estilista Comisión 50% y Recepcionista Sueldo Fijo)")
         try:
-            stylist_email = f"stylist_{ts}@bellavista.com"
+            stylist_email = f"stylist_{unique_suffix}@bellavista.com"
             self.context['stylist_email'] = stylist_email
             self.context['stylist_password'] = 'Password123!'
 
@@ -396,6 +396,7 @@ class PersonaTestSuite:
                 'is_active': True
             }, expected_status=201)
             self.context['stylist_emp_id'] = emp1.get('id')
+            self.context['stylist_user_id'] = emp1.get('user', {}).get('id') if isinstance(emp1.get('user'), dict) else emp1.get('user')
 
             # Asignar servicios al estilista
             if self.context.get('service_corte_id'):
@@ -404,7 +405,7 @@ class PersonaTestSuite:
                 }, expected_status=200)
 
             # Recepcionista
-            recep_email = f"recep_{ts}@bellavista.com"
+            recep_email = f"recep_{unique_suffix}@bellavista.com"
             self.context['recep_email'] = recep_email
             self.context['recep_password'] = 'Password123!'
 
@@ -483,11 +484,12 @@ class PersonaTestSuite:
         # 3.3 Creación de Cliente
         log_step("3.3 Registro de Cliente (Juan Pérez)")
         try:
+            ts_str = str(int(time.time()))
             status, cliente = active_client.post('/clients/clients/', {
-                'first_name': 'Juan',
-                'last_name': 'Pérez',
-                'email': f"juan_perez_{int(time.time())}@gmail.com",
-                'phone': '8095559988'
+                'full_name': 'Juan Pérez',
+                'email': f"juan_perez_{ts_str}@gmail.com",
+                'phone': '8095559988',
+                'is_active': True
             }, expected_status=201)
             self.context['client_id'] = cliente.get('id')
             self.record_result("Recepcionista", "Directorio de Clientes", True, f"Cliente ID: {cliente.get('id')}")
@@ -497,14 +499,15 @@ class PersonaTestSuite:
         # 3.4 Agendamiento y Confirmación de Cita
         log_step("3.4 Agendamiento y Confirmación de Cita")
         try:
-            start_time = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%dT%H:%M:%SZ')
+            future_dt = (datetime.now() + timedelta(days=2)).strftime('%Y-%m-%dT15:00:00Z')
+            stylist_fk = self.context.get('stylist_user_id') or self.context.get('stylist_emp_id') or 1
             status, cita = active_client.post('/appointments/appointments/', {
                 'client': self.context.get('client_id'),
-                'employee': self.context.get('stylist_emp_id'),
+                'stylist': stylist_fk,
                 'service': self.context.get('service_corte_id'),
-                'appointment_datetime': start_time,
-                'duration': 30,
-                'status': 'confirmed'
+                'date_time': future_dt,
+                'status': 'scheduled',
+                'description': 'Cita de corte para cliente VIP'
             }, expected_status=201)
             self.context['appointment_id'] = cita.get('id')
             self.record_result("Recepcionista", "Agendamiento de Cita", True, f"Cita ID: {cita.get('id')}")
