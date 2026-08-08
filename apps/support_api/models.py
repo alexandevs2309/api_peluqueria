@@ -30,6 +30,8 @@ class SupportTicket(models.Model):
     description = models.TextField()
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='normal')
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default='open')
+    admin_reply = models.TextField(blank=True, null=True, verbose_name='Respuesta del soporte')
+    replied_at = models.DateTimeField(null=True, blank=True, verbose_name='Fecha de respuesta')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

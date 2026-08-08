@@ -32,6 +32,7 @@ class ProductSerializer(serializers.ModelSerializer):
     branch = serializers.PrimaryKeyRelatedField(
         queryset=Branch.objects.all(), allow_null=True, required=False
     )
+    image = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -39,8 +40,7 @@ class ProductSerializer(serializers.ModelSerializer):
         if request and hasattr(request, 'tenant') and request.tenant:
             self.fields['category'].queryset = ProductCategory.objects.filter(tenant=request.tenant)
             self.fields['branch'].queryset = Branch.objects.filter(tenant=request.tenant)
-        if 'image' in self.fields:
-            self.fields['image'].error_messages['invalid_image'] = 'El archivo debe ser una imagen válida (JPEG, PNG, WebP, GIF).'
+
     category_name = serializers.SerializerMethodField()
     description = serializers.CharField(default='', allow_blank=True, required=False)
     image_url = serializers.SerializerMethodField()
@@ -52,21 +52,43 @@ class ProductSerializer(serializers.ModelSerializer):
                   'image', 'image_url', 'branch']
         read_only_fields = ['id', 'category_name', 'image_url']
 
-    def validate_image(self, value):
-        if value:
-            allowed_types = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
-            if value.content_type not in allowed_types:
-                raise serializers.ValidationError('Tipo de archivo no permitido. Use JPEG, PNG, WebP o GIF.')
+    def create(self, validated_data):
+        image_file = validated_data.pop('image', None)
+        instance = super().create(validated_data)
+        if image_file:
+            self._save_image(instance, image_file)
+        return instance
 
-            max_size = 2 * 1024 * 1024
-            if value.size > max_size:
-                raise serializers.ValidationError('La imagen no puede superar los 2MB.')
+    def update(self, instance, validated_data):
+        image_file = validated_data.pop('image', None)
+        instance = super().update(instance, validated_data)
+        if image_file:
+            self._save_image(instance, image_file)
+        return instance
 
-            ext = value.name.split('.')[-1].lower()
-            allowed_exts = {'jpg', 'jpeg', 'png', 'webp', 'gif'}
-            if ext not in allowed_exts:
-                raise serializers.ValidationError('Extensión de archivo no permitida.')
-        return value
+    def _save_image(self, instance, image_file):
+        if not image_file:
+            return
+        try:
+            if isinstance(image_file, str):
+                image_str = image_file.strip()
+                if image_str.startswith('data:image'):
+                    import base64
+                    from django.core.files.base import ContentFile
+                    header, imgstr = image_str.split(';base64,')
+                    ext = header.split('/')[-1].split('+')[0]
+                    if ext == 'jpeg': ext = 'jpg'
+                    file_name = f"product_{instance.id}.{ext}"
+                    data = ContentFile(base64.b64decode(imgstr), name=file_name)
+                    instance.image.save(file_name, data, save=True)
+                elif image_str.startswith('http://') or image_str.startswith('https://'):
+                    instance.image = image_str
+                    instance.save(update_fields=['image'])
+            else:
+                instance.image = image_file
+                instance.save(update_fields=['image'])
+        except Exception as e:
+            pass
 
     def get_category_name(self, obj):
         return obj.category.name if obj.category else None

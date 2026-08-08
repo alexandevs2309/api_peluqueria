@@ -221,7 +221,9 @@ class TenantViewSet(viewsets.ModelViewSet):
     @decorators.action(detail=False, methods=["get"], url_path="subscription-status")
     def subscription_status(self, request):
         """Check subscription status - will trigger middleware validation"""
-        tenant = getattr(request, 'tenant', request.user.tenant)
+        tenant = getattr(request, 'tenant', None)
+        if not tenant and hasattr(request, 'user') and getattr(request.user, 'is_authenticated', False):
+            tenant = getattr(request.user, 'tenant', None)
         if tenant:
             access_level = tenant.get_access_level()
             payload = {
@@ -242,7 +244,7 @@ class TenantViewSet(viewsets.ModelViewSet):
                 })
                 return response.Response(payload, status=status.HTTP_402_PAYMENT_REQUIRED)
             return response.Response(payload, status=status.HTTP_200_OK)
-        return response.Response({"error": "No tenant assigned"}, status=403)
+        return response.Response({"error": "No tenant assigned", "code": "NO_TENANT"}, status=403)
     
     @decorators.action(detail=False, methods=["post"])
     def bulk_activate(self, request):

@@ -9,10 +9,10 @@ from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, Subscription
 from apps.auth_api.factories import UserFactory
 from apps.settings_api.models import SystemSettings, Branch
-from apps.employees_api.models import Employee, EmployeeService
+from apps.employees_api.models import Employee
+from apps.services_api.models import Service, ServiceEmployee
 from apps.clients_api.models import Client as AppClient
 from apps.appointments_api.models import Appointment
-from apps.services_api.models import Service
 
 @pytest.mark.django_db
 class TestMonetizationValidation:
@@ -274,7 +274,7 @@ class TestMonetizationValidation:
         service = Service.objects.create(tenant=tenant, name='Corte Test', price=Decimal('20.00'), is_active=True)
         db_client = AppClient.objects.create(tenant=tenant, full_name='Cliente Test Citas', created_by=user)
         
-        EmployeeService.objects.create(employee=employee, service=service)
+        ServiceEmployee.objects.create(employee=employee, service=service)
 
         appointments_to_create = []
         for i in range(100):

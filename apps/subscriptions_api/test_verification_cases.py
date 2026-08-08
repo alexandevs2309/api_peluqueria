@@ -12,8 +12,8 @@ from apps.subscriptions_api.models import SubscriptionPlan, Subscription, UserSu
 from apps.tenants_api.models import Tenant
 from apps.auth_api.models import User
 from apps.roles_api.models import Role, UserRole
-from apps.employees_api.models import Employee, EmployeeService
-from apps.services_api.models import Service
+from apps.employees_api.models import Employee
+from apps.services_api.models import Service, ServiceEmployee
 from apps.clients_api.models import Client as AppClient
 from apps.appointments_api.models import Appointment
 from apps.settings_api.models import SystemSettings
@@ -132,7 +132,7 @@ class TestFunctionalVerification(APITestCase):
         employee = Employee.objects.create(tenant=t1, user=emp_user, is_active=True)
         service = Service.objects.create(tenant=t1, name='Corte Mora', price=Decimal('20.00'), is_active=True)
         db_client = AppClient.objects.create(tenant=t1, full_name='Cliente Mora Cita', created_by=u1)
-        EmployeeService.objects.create(employee=employee, service=service)
+        ServiceEmployee.objects.create(employee=employee, service=service)
 
         appt_data = {
             "client": db_client.id,
@@ -266,7 +266,7 @@ class TestFunctionalVerification(APITestCase):
         employee3 = Employee.objects.create(tenant=t3, user=emp_user3, is_active=True)
         service3 = Service.objects.create(tenant=t3, name='Corte Rápido', price=Decimal('15.00'), is_active=True)
         db_client3 = AppClient.objects.create(tenant=t3, full_name='Cliente Fiel', created_by=u3)
-        EmployeeService.objects.create(employee=employee3, service=service3)
+        ServiceEmployee.objects.create(employee=employee3, service=service3)
 
         Appointment.objects.bulk_create([
             Appointment(

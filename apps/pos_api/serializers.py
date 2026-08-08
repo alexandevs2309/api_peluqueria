@@ -37,7 +37,7 @@ class SaleSerializer(serializers.ModelSerializer):
     class Meta:
         model = Sale
         fields = [
-            'id', 'branch', 'client', 'client_name', 'employee_name', 'user', 'user_name', 
+            'id', 'branch', 'client', 'client_name', 'employee', 'employee_name', 'user', 'user_name', 
             'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 
             'payments', 'appointment', 'points_earned', 'points_redeemed',
             'ncf', 'ncf_type', 'rnc', 'company_name',
@@ -53,7 +53,7 @@ class SaleSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get('request')
         if request:
-            tenant = getattr(request, 'tenant', None)
+            tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
             if tenant:
                 # Scoped: only appointments belonging to this tenant
                 from django.db.models import Q
@@ -62,7 +62,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 )
                 from apps.clients_api.models import Client
                 from apps.settings_api.models import Branch
+                from apps.employees_api.models import Employee
                 self.fields['client'].queryset = Client.objects.filter(tenant=tenant)
+                self.fields['employee'].queryset = Employee.objects.filter(tenant=tenant)
                 self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
                 self.fields['promotion'].queryset = Promotion.objects.filter(tenant=tenant)
                 self.fields['coupon'].queryset = Coupon.objects.filter(tenant=tenant)
@@ -71,7 +73,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 self.fields['appointment'].queryset = Appointment.objects.all()
                 from apps.clients_api.models import Client
                 from apps.settings_api.models import Branch
+                from apps.employees_api.models import Employee
                 self.fields['client'].queryset = Client.objects.all()
+                self.fields['employee'].queryset = Employee.objects.all()
                 self.fields['branch'].queryset = Branch.objects.all()
                 self.fields['promotion'].queryset = Promotion.objects.all()
                 self.fields['coupon'].queryset = Coupon.objects.all()
@@ -80,7 +84,9 @@ class SaleSerializer(serializers.ModelSerializer):
                 self.fields['appointment'].queryset = Appointment.objects.none()
                 from apps.clients_api.models import Client
                 from apps.settings_api.models import Branch
+                from apps.employees_api.models import Employee
                 self.fields['client'].queryset = Client.objects.none()
+                self.fields['employee'].queryset = Employee.objects.none()
                 self.fields['branch'].queryset = Branch.objects.none()
                 self.fields['promotion'].queryset = Promotion.objects.none()
                 self.fields['coupon'].queryset = Coupon.objects.none()
@@ -136,7 +142,7 @@ class SaleSerializer(serializers.ModelSerializer):
         if not request:
             return data
         
-        tenant = getattr(request, 'tenant', None)
+        tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
         
         # SuperAdmin puede relacionar cualquier objeto
         if request.user.is_superuser:
@@ -229,7 +235,7 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get('request')
         if request:
-            tenant = getattr(request, 'tenant', None)
+            tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
             if tenant:
                 from apps.settings_api.models import Branch
                 from django.contrib.auth import get_user_model

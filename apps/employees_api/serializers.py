@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
-from apps.services_api.models import Service
-from .models import Employee, EmployeeService, WorkSchedule, AttendanceRecord
+from apps.services_api.models import Service, ServiceEmployee
+from .models import Employee, WorkSchedule, AttendanceRecord
 from apps.services_api.serializers import ServiceSerializer
 from django.contrib.auth import get_user_model
 from apps.auth_api.role_utils import get_effective_role_api
@@ -34,7 +34,7 @@ class UserBasicSerializer(serializers.ModelSerializer):
         return ''
 
 class EmployeeSerializer(serializers.ModelSerializer):
-    user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.none(), source='user', write_only=True)
+    user_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     user = UserBasicSerializer(read_only=True)
     user_id_read = serializers.IntegerField(source='user.id', read_only=True)
     service_ids = serializers.SerializerMethodField()
@@ -61,12 +61,58 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if request:
             tenant = getattr(request, 'tenant', None)
             if tenant:
-                self.fields['user_id'].queryset = User.objects.filter(tenant=tenant)
                 self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
             else:
-                self.fields['user_id'].queryset = User.objects.none()
                 self.fields['branch'].queryset = Branch.objects.none()
     
+    def validate(self, attrs):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        if not tenant and request and getattr(request, 'user', None) and getattr(request.user, 'tenant', None):
+            tenant = request.user.tenant
+
+        user_id = attrs.pop('user_id', None) or self.initial_data.get('user_id')
+
+        if user_id:
+            try:
+                user_obj = User.objects.get(id=user_id)
+                if tenant and user_obj.tenant_id != tenant.id:
+                    raise serializers.ValidationError({"user_id": ["El usuario seleccionado no pertenece a este negocio."]})
+                attrs['user'] = user_obj
+            except User.DoesNotExist:
+                raise serializers.ValidationError({"user_id": ["Usuario no encontrado."]})
+        elif 'user' not in attrs:
+            user_data = self.initial_data.get('user')
+            if isinstance(user_data, dict) and user_data.get('email'):
+                email = user_data['email'].strip().lower()
+                full_name = user_data.get('full_name', '').strip()
+                password = user_data.get('password') or 'Auron123!'
+                
+                user_obj = User.objects.filter(email=email, tenant=tenant).first() if tenant else User.objects.filter(email=email).first()
+                if user_obj:
+                    if Employee.objects.filter(user=user_obj).exists():
+                        raise serializers.ValidationError({"email": ["Ya existe un empleado registrado con este correo electrónico."]})
+                    else:
+                        if getattr(user_obj, 'role', '') != 'CLIENT_STAFF':
+                            user_obj.role = 'CLIENT_STAFF'
+                            user_obj.save(update_fields=['role'])
+                else:
+                    try:
+                        user_obj = User.objects.create_user(
+                            email=email,
+                            password=password,
+                            full_name=full_name,
+                            tenant=tenant,
+                            role='CLIENT_STAFF'
+                        )
+                    except Exception as exc:
+                        raise serializers.ValidationError({"user": [f"Error al crear la cuenta del usuario: {str(exc)}"]})
+                attrs['user'] = user_obj
+            else:
+                raise serializers.ValidationError({"user": ["Debe proporcionar el correo electrónico del empleado."]})
+                
+        return super().validate(attrs)
+
     def validate_user_id(self, value):
         request = self.context.get('request')
         if request:
@@ -111,7 +157,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         profession = validated_data.pop('profession', None)
         if not profession:
-            profession = 'general'
+            profession = 'barber'
+        else:
+            profession = profession.lower()
         validated_data['profession'] = profession
         return Employee.objects.create(**validated_data)
 
@@ -125,10 +173,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return instance
 
     def get_service_ids(self, obj):
-        return [employee_service.service_id for employee_service in obj.services.all()]
+        return [se.service_id for se in obj.employee_services.all()]
 
     def get_services_count(self, obj):
-        return len(obj.services.all())
+        return obj.employee_services.count()
 
 
 class EmployeeServiceSerializer(serializers.ModelSerializer):
@@ -136,7 +184,7 @@ class EmployeeServiceSerializer(serializers.ModelSerializer):
     service_id = serializers.PrimaryKeyRelatedField(queryset=Service.objects.all(), source='service', write_only=True)
 
     class Meta:
-        model = EmployeeService
+        model = ServiceEmployee
         fields = ['id', 'employee', 'service', 'service_id', 'created_at']
         read_only_fields = ['created_at']
 

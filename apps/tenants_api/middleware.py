@@ -148,11 +148,14 @@ class TenantMiddleware(MiddlewareMixin):
             request.tenant = None
             return None
         
-        # Intentar obtener tenant desde JWT claims
+        # Intentar obtener tenant desde JWT claims (header o cookie)
         try:
             auth_header = request.META.get('HTTP_AUTHORIZATION', '')
             if auth_header.startswith('Bearer '):
                 token_str = auth_header.split(' ')[1]
+            else:
+                token_str = request.COOKIES.get('access_token')
+            if token_str:
                 jwt_auth = JWTAuthentication()
                 validated_token = jwt_auth.get_validated_token(token_str)
                 tenant_id = validated_token.get('tenant_id')

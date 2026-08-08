@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'apps.tutorials_api',
     'apps.booking_api',
     'apps.chatbot_api',
+    'apps.telemetry_api',
 ]
 
 MIDDLEWARE = [
@@ -66,6 +67,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',
+    'apps.utils.middleware.ErrorContextMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
@@ -92,7 +94,7 @@ MIGRATION_MODULES = {app: None for app in [
     'payments_api', 'notifications_api', 'audit_api', 'employees_api',
     'clients_api', 'services_api', 'appointments_api', 'pos_api',
     'inventory_api', 'reports_api', 'settings_api', 'support_api',
-    'tutorials_api', 'booking_api', 'chatbot_api',
+    'tutorials_api', 'booking_api', 'chatbot_api', 'telemetry_api',
 ]}
 CELERY_TASK_ALWAYS_EAGER = True
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
@@ -119,6 +121,7 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.AnonRateThrottle',
     ],
+    'EXCEPTION_HANDLER': 'apps.core.exceptions_handler.exception_handler',
     'DEFAULT_THROTTLE_RATES': {
         'user': '10000/hour',
         'anon': '200/hour',

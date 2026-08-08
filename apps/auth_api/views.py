@@ -415,7 +415,7 @@ class LoginView(generics.GenericAPIView):
         return response
 
 class LogoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
 
     def post(self, request):
         # Try to get refresh_token from cookies first, then from body
@@ -504,10 +504,10 @@ class PasswordResetRequestView(APIView):
         email = (serializer.validated_data.get('email') or '').strip().lower()
         tenant_subdomain = get_explicit_tenant_input(serializer.validated_data)
         try:
-            user = None
+            target_users = []
             if tenant_subdomain:
-                # Se permite también a negocios inactivos/suspendidos: su dueño
-                # necesita recuperar el acceso para poder regularizar la suscripción.
+                # Permitir también negocios inactivos/suspendidos: su dueño necesita
+                # recuperar acceso para poder regularizar la suscripción.
                 tenant = Tenant.objects.filter(
                     subdomain=tenant_subdomain,
                     deleted_at__isnull=True
@@ -517,62 +517,61 @@ class PasswordResetRequestView(APIView):
                         {"detail": f"No se encontró un negocio con el subdominio '{tenant_subdomain}'."},
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                user = User.objects.filter(email=email, tenant=tenant).first()
+                target_users = list(
+                    User.objects.filter(email=email, tenant=tenant)[:1]
+                )
             else:
-                candidates = list(User.objects.filter(email=email).select_related('tenant'))
-                if len(candidates) > 1:
-                    return Response(
-                        {
-                            "detail": "Este correo pertenece a varios tenants. Indica el subdominio para continuar.",
-                            "code": "tenant_required"
-                        },
-                        status=status.HTTP_400_BAD_REQUEST
-                    )
-                if candidates:
-                    user = candidates[0]
+                target_users = list(User.objects.filter(email=email).select_related('tenant')[:2])
+                distinct_tenants = {user.tenant_id for user in target_users}
+                if len(distinct_tenants) > 1:
+                    return Response({
+                        "detail": "Tu correo está asociado a varios negocios. Ingresa el subdominio del negocio.",
+                        "code": "tenant_required",
+                    }, status=status.HTTP_400_BAD_REQUEST)
 
-            if not user:
+            if not target_users:
                 return Response({"detail": "Correo enviado si el usuario existe."}, status=status.HTTP_200_OK)
 
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = default_token_generator.make_token(user)
-            
             # Use environment variable for frontend URL
             frontend_url = settings.FRONTEND_URL if hasattr(settings, 'FRONTEND_URL') else 'http://localhost:4200'
-            reset_url = f"{frontend_url}/auth/reset-password/{uid}/{token}"
 
-            AccessLog.objects.create(
-                user=user,
-                event_type='PASSWORD_RESET_REQUEST',
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request)[:255],
-                timestamp=now()
-            )
+            for user in target_users:
+                uid = urlsafe_base64_encode(force_bytes(user.pk))
+                token = default_token_generator.make_token(user)
+                reset_url = f"{frontend_url}/auth/reset-password/{uid}/{token}"
 
-            if settings.DEBUG:
-                logger.debug(
-                    "Password reset link generated for user_id=%s reset_url=%s",
-                    user.id,
-                    reset_url,
+                AccessLog.objects.create(
+                    user=user,
+                    event_type='PASSWORD_RESET_REQUEST',
+                    ip_address=get_client_ip(request),
+                    user_agent=get_user_agent(request)[:255],
+                    timestamp=now()
                 )
-            
-            subject = "Restablecer contraseña"
-            text_body = f"Hola {user.full_name}, para restablecer tu contraseña haz clic en el siguiente enlace:\n{reset_url}"
-            html_body = _render_email_html(
-                'password_reset.html',
-                user=user,
-                title=subject,
-                cta_url=reset_url,
-                cta_label='Restablecer contraseña',
-                request=request,
-            )
-            try:
-                _deliver_user_email(user, subject, text_body, html_body)
-            except Exception as exc:
-                return Response(
-                    {"detail": f"Error al enviar correo: {exc}"},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+
+                if settings.DEBUG:
+                    logger.debug(
+                        "Password reset link generated for user_id=%s reset_url=%s",
+                        user.id,
+                        reset_url,
+                    )
+
+                subject = "Restablecer contraseña"
+                text_body = f"Hola {user.full_name}, para restablecer tu contraseña haz clic en el siguiente enlace:\n{reset_url}"
+                html_body = _render_email_html(
+                    'password_reset.html',
+                    user=user,
+                    title=subject,
+                    cta_url=reset_url,
+                    cta_label='Restablecer contraseña',
+                    request=request,
                 )
+                try:
+                    _deliver_user_email(user, subject, text_body, html_body)
+                except Exception as exc:
+                    return Response(
+                        {"detail": f"Error al enviar correo: {exc}"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
 
             return Response({"detail": "Correo enviado para restablecer contraseña."}, status=status.HTTP_200_OK)
         except User.DoesNotExist:

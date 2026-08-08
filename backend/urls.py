@@ -161,6 +161,7 @@ urlpatterns = [
         path('tutorials/', include('apps.tutorials_api.urls')),
         path('booking/', include('apps.booking_api.urls')),
         path('chatbot/', include('apps.chatbot_api.urls')),
+        path('telemetry/', include('apps.telemetry_api.urls')),
 
         path("healthz/", health_check, name="health_check"),
         path("healthz/public/", public_health_check, name="public_health_check"),

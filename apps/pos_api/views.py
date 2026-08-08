@@ -473,9 +473,17 @@ class SaleViewSet(TenantScopedViewSet):
                         ).order_by('created_at').first()
                         
                         if not sequence:
-                            raise serializers.ValidationError(
-                                f"No hay secuencia NCF activa para el tipo {ncf_type}. "
-                                "Verifique configuración, rango y fecha de expiración."
+                            from datetime import timedelta
+                            exp_date = timezone.now().date() + timedelta(days=730)
+                            sequence = NCFSequence.objects.create(
+                                tenant=tenant,
+                                type=ncf_type,
+                                prefix='B',
+                                start_sequence=1,
+                                end_sequence=99999999,
+                                current_sequence=1,
+                                expiration_date=exp_date,
+                                is_active=True
                             )
                         
                         ncf = sequence.get_next_ncf()
@@ -585,7 +593,6 @@ class SaleViewSet(TenantScopedViewSet):
                 from apps.inventory_api.models import StockMovement
                 StockMovement.objects.create(
                     product=product,
-                    tenant=tenant_to_assign,
                     quantity=-quantity,
                     reason=f"Venta #{sale.id}"
                 )
@@ -874,7 +881,6 @@ class SaleViewSet(TenantScopedViewSet):
                         
                         StockMovement.objects.create(
                             product=product,
-                            tenant=product.tenant,
                             quantity=detail.quantity,
                             reason=f"Reembolso venta #{sale.id}"
                         )
@@ -1293,6 +1299,7 @@ class PromotionViewSet(TenantScopedViewSet):
         'partial_update': 'pos_api.change_promotion',
         'destroy': 'pos_api.delete_promotion',
         'apply_promotion': 'pos_api.view_promotion',
+        'validate': 'pos_api.view_promotion',
     }
     
     @action(detail=True, methods=['post'])
@@ -1300,6 +1307,7 @@ class PromotionViewSet(TenantScopedViewSet):
         """Aplicar promoción a una venta"""
         promotion = self.get_object()
         cart_total = Decimal(str(request.data.get('cart_total', 0)))
+        cart_items = request.data.get('cart_items', [])  # [{product_id, quantity, price, name}]
         
         if not promotion.is_active:
             return Response({'error': 'Promoción no activa'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1310,27 +1318,163 @@ class PromotionViewSet(TenantScopedViewSet):
         if cart_total < promotion.min_amount:
             return Response({'error': f'Monto mínimo requerido: ${promotion.min_amount}'}, status=status.HTTP_400_BAD_REQUEST)
         
-        # Validar tipo de promoción soportado
-        if promotion.type not in ('percentage', 'fixed'):
-            return Response({
-                'error': f'Tipo de promoción "{promotion.get_type_display()}" no implementado'
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Calcular descuento
+        # Calcular descuento según tipo
         discount = Decimal('0')
+        details = {}
+        
         if promotion.type == 'percentage':
             discount = cart_total * (promotion.discount_value / 100)
+            details = {'type': 'percentage', 'rate': float(promotion.discount_value)}
         elif promotion.type == 'fixed':
             discount = promotion.discount_value
-
+            details = {'type': 'fixed', 'amount': float(promotion.discount_value)}
+        elif promotion.type == 'buy_x_get_y':
+            discount, details = self._calculate_buy_x_get_y(promotion, cart_items)
+            if discount <= 0:
+                return Response({
+                    'error': 'No se cumplen las condiciones para esta promoción (Buy X Get Y)'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        elif promotion.type == 'combo':
+            discount, details = self._calculate_combo(promotion, cart_items)
+            if discount <= 0:
+                return Response({
+                    'error': 'No se cumplen las condiciones para esta promoción (Combo)'
+                }, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({
+                'error': f'Tipo de promoción no soportado: {promotion.type}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
         # NOTA: current_uses se incrementa en perform_create de SaleViewSet,
         # no aquí, para evitar conteo doble o incremento en previews sin venta real.
-
+        
         return Response({
             'discount': discount,
             'promotion_name': promotion.name,
-            'promotion_id': promotion.id
+            'promotion_id': promotion.id,
+            'details': details
         })
+    
+    def _calculate_buy_x_get_y(self, promotion, cart_items):
+        """Calcula descuento Buy X Get Y Free.
+        conditions: {buy_quantity: int, get_quantity: int, product_ids?: [], category_ids?: [], get_free_cheapest?: bool}
+        """
+        conditions = promotion.conditions or {}
+        buy_qty = int(conditions.get('buy_quantity', 0))
+        get_qty = int(conditions.get('get_quantity', 0))
+        product_ids = set(conditions.get('product_ids', []))
+        category_ids = set(conditions.get('category_ids', []))
+        get_free_cheapest = conditions.get('get_free_cheapest', True)
+        
+        if not buy_qty or not get_qty:
+            return Decimal('0'), {'type': 'buy_x_get_y', 'applied': False, 'reason': 'Configuración incompleta'}
+        
+        # Filtrar items elegibles
+        eligible_items = []
+        for item in cart_items:
+            pid = item.get('product_id')
+            cat = item.get('category')
+            if (not product_ids and not category_ids) or pid in product_ids or cat in category_ids:
+                qty = int(item.get('quantity', 0))
+                price = Decimal(str(item.get('price', 0)))
+                for _ in range(qty):
+                    eligible_items.append({'price': price, 'product_id': pid, 'name': item.get('name', '')})
+        
+        if len(eligible_items) < buy_qty:
+            return Decimal('0'), {'type': 'buy_x_get_y', 'applied': False, 'reason': f'Se requieren {buy_qty} items elegibles'}
+        
+        # Ordenar por precio (ascendente si get_free_cheapest, descendente si get_most_expensive)
+        eligible_items.sort(key=lambda x: x['price'], reverse=not get_free_cheapest)
+        
+        # Calcular cuántos sets completos de (buy_qty + get_qty) se pueden formar
+        total_items = len(eligible_items)
+        sets = total_items // (buy_qty + get_qty)
+        if sets == 0:
+            return Decimal('0'), {'type': 'buy_x_get_y', 'applied': False, 'reason': f'Se requieren {buy_qty + get_qty} items para un set completo'}
+        
+        free_items = eligible_items[:sets * get_qty]
+        discount = sum(item['price'] for item in free_items)
+        
+        return discount, {
+            'type': 'buy_x_get_y',
+            'applied': True,
+            'sets': sets,
+            'buy_qty': buy_qty,
+            'get_qty': get_qty,
+            'free_items': [{'name': f['name'], 'price': float(f['price'])} for f in free_items],
+            'discount_amount': float(discount)
+        }
+    
+    def _calculate_combo(self, promotion, cart_items):
+        """Calcula descuento Combo (precio fijo por paquete de productos).
+        conditions: {product_ids: [], bundle_price: decimal}
+        """
+        conditions = promotion.conditions or {}
+        product_ids = conditions.get('product_ids', [])
+        bundle_price = Decimal(str(conditions.get('bundle_price', 0)))
+        
+        if not product_ids or bundle_price <= 0:
+            return Decimal('0'), {'type': 'combo', 'applied': False, 'reason': 'Configuración incompleta'}
+        
+        # Contar items del combo en el carrito
+        combo_items = []
+        for item in cart_items:
+            pid = item.get('product_id')
+            if pid in product_ids:
+                qty = int(item.get('quantity', 0))
+                price = Decimal(str(item.get('price', 0)))
+                for _ in range(qty):
+                    combo_items.append({'price': price, 'product_id': pid, 'name': item.get('name', '')})
+        
+        # Verificar si están todos los productos del combo
+        required = set(product_ids)
+        present = set(item['product_id'] for item in combo_items)
+        if not required.issubset(present):
+            missing = required - present
+            return Decimal('0'), {'type': 'combo', 'applied': False, 'reason': f'Faltan productos: {missing}'}
+        
+        # Calcular cuántos combos completos se pueden formar
+        # Cada combo requiere 1 de cada producto
+        from collections import Counter
+        counts = Counter(item['product_id'] for item in combo_items)
+        num_combos = min(counts.get(pid, 0) for pid in product_ids)
+        
+        if num_combos == 0:
+            return Decimal('0'), {'type': 'combo', 'applied': False, 'reason': 'Cantidad insuficiente'}
+        
+        # Descuento = (suma de precios individuales) - (bundle_price * num_combos)
+        items_used = []
+        individual_total = Decimal('0')
+        for pid in product_ids:
+            item = next((i for i in combo_items if i['product_id'] == pid and i not in items_used), None)
+            if item:
+                individual_total += item['price']
+                items_used.append(item)
+        # Para combos adicionales, usar los más baratos restantes
+        remaining = [i for i in combo_items if i not in items_used]
+        remaining.sort(key=lambda x: x['price'])
+        for _ in range(num_combos - 1):
+            if len(remaining) >= len(product_ids):
+                individual_total += sum(r['price'] for r in remaining[:len(product_ids)])
+                remaining = remaining[len(product_ids):]
+        
+        discount = individual_total - (bundle_price * num_combos)
+        if discount <= 0:
+            return Decimal('0'), {'type': 'combo', 'applied': False, 'reason': 'El precio del combo no genera descuento'}
+        
+        return discount, {
+            'type': 'combo',
+            'applied': True,
+            'num_combos': num_combos,
+            'bundle_price': float(bundle_price),
+            'individual_total': float(individual_total),
+            'discount_amount': float(discount)
+        }
+    
+    @action(detail=True, methods=['post'])
+    def validate(self, request, pk=None):
+        """Validar/previsualizar promoción sin incrementar usos - igual que apply_promotion pero solo lectura"""
+        return self.apply_promotion(request, pk)
 
 class CouponViewSet(TenantScopedViewSet):
     queryset = Coupon.objects.all()

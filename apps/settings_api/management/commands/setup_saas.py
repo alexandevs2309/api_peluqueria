@@ -176,7 +176,6 @@ class Command(BaseCommand):
                     'inventory': True,
                     'multi_branch': True,
                     'reports': 'enterprise',
-                    'api_access': True,
                     'custom_branding': True,
                     'support': 'priority'
                 }

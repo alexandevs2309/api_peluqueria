@@ -151,6 +151,7 @@ INSTALLED_APPS = [
     'apps.tutorials_api',
     'apps.booking_api',
     'apps.chatbot_api',
+    'apps.telemetry_api',
 ]
 
 MIDDLEWARE = [
@@ -167,6 +168,7 @@ MIDDLEWARE = [
     'apps.tenants_api.middleware.TenantMiddleware',
     'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
     'apps.subscriptions_api.middleware.APIRateLimitMiddleware',  # Rate limiting por plan
+    'apps.utils.middleware.ErrorContextMiddleware',
     'apps.utils.middleware.StructuredLoggingMiddleware',  # Logging con tenant_id/user_id
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
@@ -217,7 +219,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
     'PAGE_SIZE': 25,
     'MAX_PAGE_SIZE': 100,
-    'EXCEPTION_HANDLER': 'rest_framework.views.exception_handler',
+    'EXCEPTION_HANDLER': 'apps.core.exceptions_handler.exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.AnonRateThrottle',

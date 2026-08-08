@@ -2,12 +2,11 @@ import pytest
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
-from apps.services_api.models import Service, StylistService
+from apps.services_api.models import Service, StylistService, ServiceEmployee
+from apps.employees_api.models import WorkSchedule, Employee
 from apps.clients_api.models import Client
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-
-from apps.employees_api.models import WorkSchedule, Employee, EmployeeService
 from .models import Appointment
 from faker import Faker
 from datetime import datetime, timedelta, timezone as dt_timezone
@@ -144,7 +143,7 @@ def test_create_appointment_with_service(authenticated_user, client_factory, ser
     start_time = time(9, 0)
     end_time = time(18, 0)
 
-    EmployeeService.objects.create(employee=employee, service=service)
+    ServiceEmployee.objects.create(employee=employee, service=service)
 
     WorkSchedule.objects.filter(employee=employee).delete()
     WorkSchedule.objects.create(
@@ -215,7 +214,7 @@ def test_list_appointments(api_client, client_factory, stylist, service_factory,
     
     client_obj = client_factory.create()
     service = service_factory.create(name='Corte Básico')
-    EmployeeService.objects.create(employee=employee, service=service)
+    ServiceEmployee.objects.create(employee=employee, service=service)
 
     appointment_date = timezone.now() - timedelta(days=1)
     WorkSchedule.objects.filter(employee=employee).delete()
@@ -301,7 +300,7 @@ def test_create_appointment_outside_schedule(client_factory, service_factory, st
 
     WorkSchedule.objects.filter(employee=employee).delete()
     WorkSchedule.objects.create(employee=employee, day_of_week=day_name, start_time=datetime(2025,1,1,9,0).time(), end_time=datetime(2025,1,1,18,0).time())
-    EmployeeService.objects.create(employee=employee, service=service)
+    ServiceEmployee.objects.create(employee=employee, service=service)
 
     data = {
         'client': client_obj.id,

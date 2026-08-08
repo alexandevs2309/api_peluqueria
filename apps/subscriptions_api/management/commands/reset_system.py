@@ -52,8 +52,6 @@ class Command(BaseCommand):
                     'inventory': False,
                     
                     'multi_location': False,
-                    'role_permissions': False,
-                    'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [],
@@ -75,8 +73,6 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': False,
-                    'role_permissions': False,
-                    'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [],
@@ -98,12 +94,9 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': True,
-                    'role_permissions': True,
-                    'api_access': True,
                     'custom_branding': True
                 },
                 'commercial_benefits': [
-                    'Permisos avanzados',
                     'Branding y multi-sucursal'
                 ],
                 'is_active': True
@@ -124,8 +117,6 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': True,
-                    'role_permissions': True,
-                    'api_access': True,
                     'custom_branding': True,
                     'priority_support': True
                 },

@@ -22,8 +22,6 @@ class Command(BaseCommand):
                     'inventory': False,
                     
                     'multi_location': False,
-                    'role_permissions': False,
-                    'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
@@ -46,8 +44,6 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': False,
-                    'role_permissions': False,
-                    'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
@@ -56,7 +52,7 @@ class Command(BaseCommand):
                 ]
             },
             'premium': {
-                'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
+                'description': 'Para equipos grandes que necesitan multi-sucursal, branding y mas capacidad.',
                 'price': 129.99,
                 'annual_price': 1299.88,
                 'max_employees': 50,
@@ -70,13 +66,11 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': True,
-                    'role_permissions': True,
-                    'api_access': True,
                     'custom_branding': True
                 },
                 'commercial_benefits': [
                     'Pensado para operaciones con varias areas o sucursales',
-                    'Permisos avanzados, branding y mas capacidad'
+                    'Branding y multi-sucursal'
                 ]
             },
             'enterprise': {
@@ -94,8 +88,6 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': True,
-                    'role_permissions': True,
-                    'api_access': True,
                     'custom_branding': True,
                     'priority_support': True
                 },

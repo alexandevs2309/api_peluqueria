@@ -13,7 +13,8 @@ from apps.subscriptions_api.validators import SubscriptionLimitValidator
 from .models import Appointment
 from .serializers import AppointmentSerializer
 from django.contrib.auth import get_user_model
-from apps.employees_api.models import Employee, EmployeeService, WorkSchedule
+from apps.employees_api.models import Employee, WorkSchedule
+from apps.services_api.models import ServiceEmployee
 
 User = get_user_model() 
 
@@ -75,13 +76,20 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 "El estilista seleccionado no tiene un perfil de empleado"
             )
 
-        # Validar que el estilista ofrece el servicio (via EmployeeService, que es lo que puebla el frontend)
+        # Validar que el estilista ofrece el servicio (via ServiceEmployee)
         if service:
             employee = getattr(stylist, 'employee_profile', None)
-            if not employee or not EmployeeService.objects.filter(employee=employee, service=service).exists():
+            if not employee:
                 raise serializers.ValidationError(
-                    "El estilista no ofrece este servicio"
+                    "El estilista seleccionado no tiene un perfil de empleado"
                 )
+            # Si el empleado tiene servicios asignados explícitamente en ServiceEmployee,
+            # verificar que el servicio seleccionado esté entre ellos.
+            if ServiceEmployee.objects.filter(employee=employee).exists():
+                if not ServiceEmployee.objects.filter(employee=employee, service=service).exists():
+                    raise serializers.ValidationError(
+                        "El estilista no ofrece este servicio"
+                    )
         
         # Asignar tenant automáticamente y validar sucursal
         tenant = None
@@ -155,6 +163,9 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
 
         serializer.save(**save_kwargs)
+
+    def perform_update(self, serializer):
+        self.perform_create(serializer)
 
     @action(detail=False, methods=['get'], url_path='availability')
     def availability(self, request):
@@ -339,7 +350,7 @@ def calendar_events(request):
     base_filter = Q(date_time__gte=start_date, date_time__lte=end_date)
 
     # Filtro de tenant obligatorio - previene fuga cross-tenant
-    tenant = getattr(request, 'tenant', None)
+    tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
     if not request.user.is_superuser:
         if not tenant:
             return Response([], status=200)
@@ -392,7 +403,7 @@ def reschedule_appointment(request, pk):
     try:
         # Validar tenant antes de buscar
         if not request.user.is_superuser:
-            if not hasattr(request, 'tenant') or not request.tenant:
+            if not (getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)):
                 return Response({'error': 'Usuario sin tenant'}, status=404)
             
             appointment = Appointment.objects.get(
@@ -461,7 +472,7 @@ def stylist_schedule(request, stylist_id):
         # ✅ VALIDAR TENANT del stylist (tolerando tanto User.id como Employee.id)
         stylist = None
         if not user.is_superuser:
-            if not hasattr(request, 'tenant') or not request.tenant:
+            if not (getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)):
                 return Response({'error': 'Usuario sin tenant'}, status=404)
             
             stylist = User.objects.filter(id=stylist_id, tenant=request.tenant).first()
@@ -492,7 +503,7 @@ def stylist_schedule(request, stylist_id):
         week_end = week_start + timedelta(days=6)
         
         tenant_filter = {}
-        if not user.is_superuser and hasattr(request, 'tenant') and request.tenant:
+        if not user.is_superuser and (getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)):
             tenant_filter['tenant'] = request.tenant
         appointments = Appointment.objects.filter(
             stylist=stylist,

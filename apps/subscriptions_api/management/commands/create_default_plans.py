@@ -26,8 +26,6 @@ class Command(BaseCommand):
                     'inventory': False,
                     
                     'multi_location': False,
-                    'role_permissions': False,
-                    'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
@@ -55,8 +53,6 @@ class Command(BaseCommand):
                     'inventory': True,
                     
                     'multi_location': False,
-                    'role_permissions': False,
-                    'api_access': False,
                     'custom_branding': False
                 },
                 'commercial_benefits': [
@@ -67,7 +63,7 @@ class Command(BaseCommand):
             },
             {
                 'name': 'premium',
-                'description': 'Para equipos grandes que necesitan multi-sucursal, permisos avanzados y branding.',
+                'description': 'Para equipos grandes que necesitan multi-sucursal, branding y mas capacidad.',
                 'price': 129.99,
                 'annual_price': 1299.88,
                 'duration_month': 1,
@@ -84,14 +80,13 @@ class Command(BaseCommand):
                     'inventory': True,
 
                     'multi_location': True,
-                    'role_permissions': True,
                     'custom_branding': True,
                     'export_reports': False,
                     'whatsapp_notifications': False
                 },
                 'commercial_benefits': [
                     'Pensado para operaciones con varias areas o sucursales',
-                    'Permisos avanzados, branding y mas capacidad'
+                    'Branding y multi-sucursal'
                 ],
                 'is_active': True
             },
@@ -114,7 +109,6 @@ class Command(BaseCommand):
                     'inventory': True,
 
                     'multi_location': True,
-                    'role_permissions': True,
                     'custom_branding': True,
                     'priority_support': True,
                     'export_reports': True,

@@ -21,7 +21,7 @@ from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
 from apps.settings_api.models import Branch, Setting
 from apps.roles_api.models import Role, UserRole
 from apps.roles_api.default_permissions import ensure_role_default_permissions
-from apps.employees_api.models import Employee, EmployeeService, WorkSchedule
+from apps.employees_api.models import Employee, WorkSchedule
 from apps.services_api.models import ServiceCategory, Service, ServiceEmployee
 from apps.inventory_api.models import ProductCategory, Supplier, Product, StockMovement
 from apps.clients_api.models import Client
@@ -391,8 +391,6 @@ def seed_data():
                     )
 
                 # Asignar servicios
-                EmployeeService.objects.get_or_create(employee=emp_profile, service=corte_srv)
-                EmployeeService.objects.get_or_create(employee=emp_profile, service=facial_srv)
                 ServiceEmployee.objects.get_or_create(service=corte_srv, employee=emp_profile, defaults={"commission_percentage": Decimal("40.00")})
                 ServiceEmployee.objects.get_or_create(service=facial_srv, employee=emp_profile, defaults={"commission_percentage": Decimal("40.00")})
 

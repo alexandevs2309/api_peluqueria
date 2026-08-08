@@ -76,8 +76,6 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
             'client_history': 'Historial completo de clientes',
             'inventory': 'Control de inventario en tiempo real',
                         'multi_location': 'Sucursales básicas: crea y organiza sucursales, asigna datos compatibles y consulta información consolidada. El aislamiento operativo avanzado por sucursal está en desarrollo.',
-            'role_permissions': 'Permisos avanzados para el equipo',
-            'api_access': 'Acceso a integraciones por API',
             'custom_branding': 'Logo personalizado para tu negocio',
         }
         if not isinstance(obj.features, dict):
