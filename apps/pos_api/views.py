@@ -1332,13 +1332,13 @@ class PromotionViewSet(TenantScopedViewSet):
             discount, details = self._calculate_buy_x_get_y(promotion, cart_items)
             if discount <= 0:
                 return Response({
-                    'error': 'No se cumplen las condiciones para esta promoción (Buy X Get Y)'
+                    'error': details.get('reason', 'No se cumplen las condiciones para esta promoción (Buy X Get Y)')
                 }, status=status.HTTP_400_BAD_REQUEST)
         elif promotion.type == 'combo':
             discount, details = self._calculate_combo(promotion, cart_items)
             if discount <= 0:
                 return Response({
-                    'error': 'No se cumplen las condiciones para esta promoción (Combo)'
+                    'error': details.get('reason', 'No se cumplen las condiciones para esta promoción (Combo)')
                 }, status=status.HTTP_400_BAD_REQUEST)
         else:
             return Response({

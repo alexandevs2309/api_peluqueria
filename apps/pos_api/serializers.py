@@ -294,6 +294,64 @@ class PromotionSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'type', 'conditions', 'discount_value', 
                  'min_amount', 'start_date', 'end_date', 'is_active', 'max_uses', 'current_uses']
 
+    def validate(self, attrs):
+        from decimal import Decimal, InvalidOperation
+
+        type_ = attrs.get('type', getattr(self.instance, 'type', None))
+        conditions = attrs.get('conditions', getattr(self.instance, 'conditions', None) or {}) or {}
+        discount_value = attrs.get('discount_value', getattr(self.instance, 'discount_value', None))
+        min_amount = attrs.get('min_amount', getattr(self.instance, 'min_amount', 0))
+        max_uses = attrs.get('max_uses', getattr(self.instance, 'max_uses', None))
+
+        def _positive(value, field):
+            if value is None:
+                return
+            try:
+                if Decimal(str(value)) <= 0:
+                    raise serializers.ValidationError({field: 'Debe ser mayor a 0.'})
+            except (InvalidOperation, ValueError):
+                raise serializers.ValidationError({field: 'Valor numérico inválido.'})
+
+        def _validate_product_ids(ids):
+            bad = [i for i in (ids or []) if (not isinstance(i, int)) or i <= 0]
+            if bad:
+                raise serializers.ValidationError({
+                    'conditions': f'product_ids inválidos: {bad}. Usa ids positivos o deja vacío para aplicar a todo.'
+                })
+
+        if type_ == 'buy_x_get_y':
+            if int(conditions.get('buy_quantity') or 0) < 1:
+                raise serializers.ValidationError({'conditions': 'buy_quantity debe ser al menos 1.'})
+            if int(conditions.get('get_quantity') or 0) < 1:
+                raise serializers.ValidationError({'conditions': 'get_quantity debe ser al menos 1.'})
+            _validate_product_ids(conditions.get('product_ids'))
+        elif type_ == 'combo':
+            if not conditions.get('product_ids'):
+                raise serializers.ValidationError({'conditions': 'combo requiere product_ids no vacío.'})
+            _validate_product_ids(conditions.get('product_ids'))
+            _positive(conditions.get('bundle_price'), 'bundle_price')
+
+        _positive(discount_value, 'discount_value')
+        if min_amount is not None:
+            try:
+                if Decimal(str(min_amount)) < 0:
+                    raise serializers.ValidationError({'min_amount': 'No puede ser negativo.'})
+            except (InvalidOperation, ValueError):
+                raise serializers.ValidationError({'min_amount': 'Valor numérico inválido.'})
+        if max_uses is not None:
+            try:
+                if int(max_uses) < 0:
+                    raise serializers.ValidationError({'max_uses': 'No puede ser negativo.'})
+            except (TypeError, ValueError):
+                raise serializers.ValidationError({'max_uses': 'Valor numérico inválido.'})
+
+        start = attrs.get('start_date', getattr(self.instance, 'start_date', None))
+        end = attrs.get('end_date', getattr(self.instance, 'end_date', None))
+        if start and end and end <= start:
+            raise serializers.ValidationError({'end_date': 'Debe ser posterior a la fecha de inicio.'})
+
+        return attrs
+
 class ReceiptSerializer(serializers.ModelSerializer):
     class Meta:
         model = Receipt
