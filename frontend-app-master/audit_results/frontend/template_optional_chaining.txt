@@ -1,2 +1,0 @@
-src/app/pages/client/pos/pos-system.html:482:            <div *ngIf="!dashboardData.top_services?.length" class="text-sm text-surface-400 py-4 text-center">{{ t('pos.sin_datos') }}</div>
-src/app/pages/client/pos/pos-system.html:607:            <div class="receipt-item-name">{{ item.item?.name || item.name }}</div>

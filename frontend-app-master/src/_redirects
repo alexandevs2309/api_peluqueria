@@ -1,3 +1,0 @@
-# Deprecated for Cloudflare Workers static assets.
-# SPA fallback now lives in wrangler.jsonc via:
-# assets.not_found_handling = "single-page-application"
