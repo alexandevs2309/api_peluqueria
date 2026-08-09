@@ -11,10 +11,10 @@ router.register(r'ncf-sequences', NCFSequenceViewSet, basename='ncf-sequence')
 router.register(r'coupons', CouponViewSet, basename='coupon')
 
 urlpatterns = [
-    path('', include(router.urls)),
     path('summary/daily/', daily_summary, name='daily-summary'),
     path('dashboard/stats/', dashboard_stats, name='dashboard-stats'),
     path('promotions/active/', active_promotions, name='active-promotions'),
     path('categories/', pos_categories, name='pos-categories'),
     path('config/', pos_config, name='pos-config'),
+    path('', include(router.urls)),
 ]
