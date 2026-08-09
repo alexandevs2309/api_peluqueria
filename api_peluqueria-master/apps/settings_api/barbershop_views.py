@@ -70,13 +70,18 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
 
         logger.debug(f"_get_pos_config_data: user_id={request.user.id}")
         
+        tax = float(pos.tax_rate) if pos.tax_rate is not None else 0.18
+        if tax <= 1.0:
+            tax = round(tax * 100.0, 2)
+
         return {
             'business_name': pos.business_name,
             'address': pos.address,
             'phone': pos.phone,
             'email': pos.email,
             'website': pos.website,
-            'rnc': pos.rnc
+            'rnc': pos.rnc,
+            'tax_rate': tax
         }
 
     def _save_pos_config(self, request, pos_config_data):
@@ -100,16 +105,6 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 pos.tenant = tenant
             logger.debug("PosConfiguration: user_id=%s, created=%s", request.user.id, created)
             
-            # Guardar valores anteriores
-            old_values = {
-                'business_name': pos.business_name,
-                'address': pos.address,
-                'phone': pos.phone,
-                'email': pos.email,
-                'website': pos.website,
-                'rnc': pos.rnc
-            }
-            
             # Actualizar campos
             pos.business_name = pos_config_data.get('business_name', pos.business_name)
             pos.address = pos_config_data.get('address', pos.address)
@@ -117,8 +112,17 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             pos.email = pos_config_data.get('email', pos.email)
             pos.website = pos_config_data.get('website', pos.website)
             pos.rnc = pos_config_data.get('rnc', pos.rnc)
+            if 'tax_rate' in pos_config_data and pos_config_data['tax_rate'] is not None:
+                try:
+                    from decimal import Decimal
+                    val = float(pos_config_data['tax_rate'])
+                    if val > 1.0:
+                        val = val / 100.0
+                    pos.tax_rate = Decimal(str(round(val, 4)))
+                except Exception as e:
+                    logger.error(f"Error parsing tax_rate: {e}")
             
-            logger.info(f"[DEBUG] Valores a guardar: business_name={pos.business_name}, address={pos.address}, phone={pos.phone}, email={pos.email}, website={pos.website}, rnc={pos.rnc}")
+            logger.info(f"[DEBUG] Valores a guardar: business_name={pos.business_name}, address={pos.address}, phone={pos.phone}, email={pos.email}, website={pos.website}, rnc={pos.rnc}, tax_rate={pos.tax_rate}")
             
             pos.save()
             logger.info(f"[DEBUG] PosConfiguration guardado exitosamente. user_id={request.user.id}, rnc={pos.rnc}")
@@ -249,9 +253,29 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             settings = None
             is_update = False
         
-        # Si no se envía 'name' pero sí hay nombre en la configuración POS, usarlo
-        if not data.get('name') and pos_config_data and pos_config_data.get('business_name'):
-            data['name'] = pos_config_data.get('business_name')
+        # Robust fallbacks for name
+        if not data.get('name'):
+            if pos_config_data and pos_config_data.get('business_name'):
+                data['name'] = pos_config_data.get('business_name')
+            elif is_update and settings and settings.name:
+                data['name'] = settings.name
+            else:
+                data['name'] = getattr(tenant, 'name', 'Mi Negocio') or 'Mi Negocio'
+        
+        # Build pos_config_data from contact if not explicitly provided
+        if not pos_config_data:
+            pos_config_data = {}
+            if 'contact' in data and isinstance(data['contact'], dict):
+                pos_config_data.update({
+                    'business_name': data.get('name'),
+                    'address': data['contact'].get('address'),
+                    'phone': data['contact'].get('phone'),
+                    'email': data['contact'].get('email'),
+                    'rnc': data['contact'].get('rnc')
+                })
+        
+        if 'tax_rate' in data and pos_config_data is not None:
+            pos_config_data['tax_rate'] = data['tax_rate']
         
         # Log incoming payload for debugging
         logger.debug(f"Barbershop create payload: {data}")
@@ -429,6 +453,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 settings.save(update_fields=['whatsapp_status', 'whatsapp_enabled'])
         
         return Response({
+            'status': settings.whatsapp_status,
             'whatsapp_enabled': settings.whatsapp_enabled,
             'whatsapp_status': settings.whatsapp_status,
             'whatsapp_phone': settings.whatsapp_phone,
@@ -491,8 +516,8 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             
         return Response({
             'success': False,
-            'error': result.get('error', 'No se pudo conectar a la pasarela de WhatsApp')
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            'error': result.get('error', 'No se pudo conectar a la pasarela de WhatsApp. Asegúrese de que el servicio de WhatsApp esté activo.')
+        }, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=False, methods=['post'])
     def whatsapp_disconnect(self, request):

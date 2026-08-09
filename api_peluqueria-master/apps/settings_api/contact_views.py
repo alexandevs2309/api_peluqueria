@@ -54,8 +54,8 @@ def presentation_request(request):
                 'contact_name': name if name != 'Lead sin nombre' else '',
             })
             send_email_async.delay(
-                subject='Recibimos tu solicitud de presentación - Auron Suite',
-                message='Gracias por tu interés en Auron Suite. Hemos recibido tu solicitud de presentación personalizada (Video Tour) de la plataforma.',
+                subject='Recibimos tu solicitud de presentación - Beauty',
+                message='Gracias por tu interés en Beauty. Hemos recibido tu solicitud de presentación personalizada (Video Tour) de la plataforma.',
                 from_email='',
                 recipient_list=[email],
                 html_message=ack_html,

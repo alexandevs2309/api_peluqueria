@@ -368,7 +368,7 @@ def handle_capture_refunded(resource):
                 f"por {amount} {currency} (Factura #{invoice.id}).\n\n"
                 f"Como resultado, tu suscripción ha sido suspendida.\n"
                 f"Por favor, contacta a soporte para regularizar tu situación.\n\n"
-                f"El equipo de AuronSuite"
+                f"El equipo de Beauty"
             )
             html_body = EmailRenderer.render('refund_notification.html', {
                 'title': 'Reembolso/Chargeback recibido',

@@ -49,4 +49,4 @@ class ChatBotTests(TestCase):
         # General
         response = self.client.post("/api/chatbot/", {"prompt": "alguna otra cosa?"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("Auron Suite es la plataforma", response.data["reply"])
+        self.assertIn("Beauty es la plataforma", response.data["reply"])

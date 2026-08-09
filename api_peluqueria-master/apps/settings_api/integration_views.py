@@ -27,7 +27,7 @@ class IntegrationTestView(views.APIView):
         try:
             if integration_type in ('twilio', 'sms'):
                 if IntegrationService.is_twilio_enabled():
-                    IntegrationService.send_sms('+1234567890', 'Test SMS from Auron Suite')
+                    IntegrationService.send_sms('+1234567890', 'Test SMS from Beauty')
                     return response.Response({'success': True, 'message': 'SMS de prueba enviado'})
                 return response.Response({'success': False, 'message': 'Twilio no esta habilitado'})
 
@@ -35,7 +35,7 @@ class IntegrationTestView(views.APIView):
                 if IntegrationService.is_twilio_enabled():
                     from django.conf import settings
                     test_phone = getattr(settings, 'WHATSAPP_TEST_PHONE', None) or request.data.get('test_phone', '+18299999999')
-                    IntegrationService.send_whatsapp(phone=test_phone, message='Test WhatsApp from Auron Suite')
+                    IntegrationService.send_whatsapp(phone=test_phone, message='Test WhatsApp from Beauty')
                     return response.Response({'success': True, 'message': f'WhatsApp de prueba enviado a {test_phone}'})
                 return response.Response({'success': False, 'message': 'Twilio no esta habilitado'})
 
@@ -45,7 +45,7 @@ class IntegrationTestView(views.APIView):
                     test_recipient = request.data.get('test_email') or system_settings.support_email or request.user.email
                     IntegrationService.send_email(
                         test_recipient,
-                        'Prueba de Integracion - Auron Suite',
+                        'Prueba de Integracion - Beauty',
                         'Si recibes este email, el correo esta configurado correctamente.'
                     )
                     return response.Response({'success': True, 'message': f'Email de prueba enviado a {test_recipient}'})

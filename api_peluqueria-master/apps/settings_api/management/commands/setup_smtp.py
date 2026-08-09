@@ -21,7 +21,7 @@ class Command(BaseCommand):
         settings.smtp_username = 'teacheracardenas@gmail.com'
         settings.smtp_password = password
         settings.from_email = 'notificaciones@auronsuite.com'
-        settings.from_name = 'Auron Suite'
+        settings.from_name = 'Beauty'
         settings.sendgrid_enabled = True
         settings.save()
         self.stdout.write(self.style.SUCCESS('SMTP configurado exitosamente'))

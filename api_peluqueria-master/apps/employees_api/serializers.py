@@ -34,7 +34,7 @@ class UserBasicSerializer(serializers.ModelSerializer):
         return ''
 
 class EmployeeSerializer(serializers.ModelSerializer):
-    user_id = serializers.PrimaryKeyRelatedField(queryset=User.objects.none(), source='user', write_only=True)
+    user_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
     user = UserBasicSerializer(read_only=True)
     user_id_read = serializers.IntegerField(source='user.id', read_only=True)
     service_ids = serializers.SerializerMethodField()
@@ -47,7 +47,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         model = Employee
         fields = [
             'id', 'branch', 'user', 'user_id', 'user_id_read',
-            'profession', 'profession_display',
+            'profession', 'profession_display', 'payment_type', 'fixed_salary', 'commission_rate', 'payment_type', 'fixed_salary', 'commission_rate',
             'phone', 'hire_date', 'is_active',
             'service_ids', 'services_count',
             'created_at', 'updated_at',
@@ -60,12 +60,64 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if request:
             tenant = getattr(request, 'tenant', None)
             if tenant:
-                self.fields['user_id'].queryset = User.objects.filter(tenant=tenant)
                 self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
             else:
-                self.fields['user_id'].queryset = User.objects.none()
                 self.fields['branch'].queryset = Branch.objects.none()
     
+    def validate(self, attrs):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) if request else None
+        if not tenant and request and getattr(request, 'user', None) and getattr(request.user, 'tenant', None):
+            tenant = request.user.tenant
+
+        # Si se está actualizando un empleado existente (PUT o PATCH), mantener su usuario asignado
+        if self.instance:
+            if not attrs.get('user'):
+                attrs['user'] = self.instance.user
+            return super().validate(attrs)
+
+        user_id = attrs.pop('user_id', None) or self.initial_data.get('user_id')
+
+        if user_id:
+            try:
+                user_obj = User.objects.get(id=user_id)
+                if tenant and user_obj.tenant_id != tenant.id:
+                    raise serializers.ValidationError({"user_id": ["El usuario seleccionado no pertenece a este negocio."]})
+                attrs['user'] = user_obj
+            except User.DoesNotExist:
+                raise serializers.ValidationError({"user_id": ["Usuario no encontrado."]})
+        elif 'user' not in attrs:
+            user_data = self.initial_data.get('user')
+            if isinstance(user_data, dict) and user_data.get('email'):
+                email = user_data['email'].strip().lower()
+                full_name = user_data.get('full_name', '').strip()
+                password = user_data.get('password') or 'Auron123!'
+                
+                user_obj = User.objects.filter(email=email, tenant=tenant).first() if tenant else User.objects.filter(email=email).first()
+                if user_obj:
+                    if Employee.objects.filter(user=user_obj).exists():
+                        raise serializers.ValidationError({"email": ["Ya existe un empleado registrado con este correo electrónico."]})
+                    else:
+                        if getattr(user_obj, 'role', '') != 'CLIENT_STAFF':
+                            user_obj.role = 'CLIENT_STAFF'
+                            user_obj.save(update_fields=['role'])
+                else:
+                    try:
+                        user_obj = User.objects.create_user(
+                            email=email,
+                            password=password,
+                            full_name=full_name,
+                            tenant=tenant,
+                            role='CLIENT_STAFF'
+                        )
+                    except Exception as exc:
+                        raise serializers.ValidationError({"user": [f"Error al crear la cuenta del usuario: {str(exc)}"]})
+                attrs['user'] = user_obj
+            else:
+                raise serializers.ValidationError({"user": ["Debe proporcionar el correo electrónico del empleado."]})
+                
+        return super().validate(attrs)
+
     def validate_user_id(self, value):
         request = self.context.get('request')
         if request:
@@ -110,13 +162,40 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         profession = validated_data.pop('profession', None)
         if not profession:
-            profession = 'general'
+            profession = 'barber'
+        else:
+            profession = profession.lower()
         validated_data['profession'] = profession
-        return Employee.objects.create(**validated_data)
+        
+        employee = Employee.objects.create(**validated_data)
+        
+        # Sync business_role on user
+        if employee.user:
+            role_map = {
+                'receptionist': 'frontdesk_cashier',
+                'manager': 'manager',
+                'owner': 'owner'
+            }
+            business_role = role_map.get(profession, 'professional')
+            employee.user.business_role = business_role
+            employee.user.save(update_fields=['business_role'])
+            
+        return employee
 
     def update(self, instance, validated_data):
         if 'profession' in validated_data:
-            instance.profession = validated_data['profession']
+            instance.profession = validated_data['profession'].lower()
+            # Sync business_role on user
+            if instance.user:
+                role_map = {
+                    'receptionist': 'frontdesk_cashier',
+                    'manager': 'manager',
+                    'owner': 'owner'
+                }
+                business_role = role_map.get(instance.profession, 'professional')
+                instance.user.business_role = business_role
+                instance.user.save(update_fields=['business_role'])
+                
         for field in ['phone', 'hire_date', 'is_active', 'branch']:
             if field in validated_data:
                 setattr(instance, field, validated_data[field])

@@ -1,6 +1,6 @@
 from celery import shared_task
 from django.utils import timezone
-import pytz
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, time
 from .models import Employee, WorkSchedule, AttendanceRecord
 from apps.settings_api.models import Setting
@@ -33,9 +33,9 @@ def auto_process_daily_absences():
                 tz_name = setting.timezone
         
         try:
-            local_tz = pytz.timezone(tz_name)
+            local_tz = ZoneInfo(tz_name)
         except Exception:
-            local_tz = pytz.timezone("America/Santo_Domingo")
+            local_tz = ZoneInfo("America/Santo_Domingo")
             
         local_now = timezone.localtime(timezone.now(), local_tz)
         local_date = local_now.date()
@@ -90,9 +90,9 @@ def auto_checkout_end_of_day():
                 tz_name = setting.timezone
                 
         try:
-            local_tz = pytz.timezone(tz_name)
+            local_tz = ZoneInfo(tz_name)
         except Exception:
-            local_tz = pytz.timezone("America/Santo_Domingo")
+            local_tz = ZoneInfo("America/Santo_Domingo")
             
         work_date = record.work_date
         day_name = days_mapping[work_date.weekday()]
@@ -100,11 +100,9 @@ def auto_checkout_end_of_day():
         schedule = WorkSchedule.objects.filter(employee=employee, day_of_week=day_name).first()
         
         if schedule:
-            checkout_time = datetime.combine(work_date, schedule.end_time)
-            checkout_time = local_tz.localize(checkout_time)
+            checkout_time = datetime.combine(work_date, schedule.end_time, tzinfo=local_tz)
         else:
-            checkout_time = datetime.combine(work_date, time(20, 0))
-            checkout_time = local_tz.localize(checkout_time)
+            checkout_time = datetime.combine(work_date, time(20, 0), tzinfo=local_tz)
             
         if record.check_in_at and checkout_time <= record.check_in_at:
             checkout_time = record.check_in_at + timedelta(hours=1)

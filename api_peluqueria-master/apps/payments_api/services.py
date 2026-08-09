@@ -110,7 +110,7 @@ class PayPalService:
                 'amount': {'currency_code': 'USD', 'value': total_amount},
             }],
             'application_context': {
-                'brand_name': 'Auron Suite',
+                'brand_name': 'Beauty',
                 'landing_page': 'LOGIN',
                 'user_action': 'PAY_NOW',
                 'return_url': f"{frontend_url}/client/checkout?paypal=success",
@@ -161,8 +161,8 @@ class PayPalService:
         # 1. Crear producto si no existe
         if not plan.paypal_product_id:
             payload = {
-                "name": f"Auron Suite - {plan.get_name_display()}",
-                "description": f"Suscripción al plan {plan.get_name_display()} de Auron Suite",
+                "name": f"Beauty - {plan.get_name_display()}",
+                "description": f"Suscripción al plan {plan.get_name_display()} de Beauty",
                 "type": "SERVICE",
                 "category": "SOFTWARE"
             }
@@ -194,7 +194,7 @@ class PayPalService:
             
             payload = {
                 "product_id": plan.paypal_product_id,
-                "name": f"Auron Suite - {plan.get_name_display()} ({interval_unit})",
+                "name": f"Beauty - {plan.get_name_display()} ({interval_unit})",
                 "description": f"Plan {plan.get_name_display()} cobrado de forma {interval_unit.lower()}",
                 "status": "ACTIVE",
                 "billing_cycles": [
@@ -258,7 +258,7 @@ class PayPalService:
             "plan_id": plan_id,
             "custom_id": f"user:{user.id}|tenant:{tenant.id}|plan:{plan.id}|interval:{billing_interval}",
             "application_context": {
-                "brand_name": "Auron Suite",
+                "brand_name": "Beauty",
                 "shipping_preference": "NO_SHIPPING",
                 "user_action": "SUBSCRIBE_NOW",
                 "return_url": f"{frontend_url}/client/checkout?paypal_sub=success",
@@ -805,7 +805,7 @@ class NotificationService:
             notification = Notification.objects.create(
                 recipient=user,
                 template=template,
-                subject=template.subject or f"¡Bienvenido a Auron Suite!",
+                subject=template.subject or f"¡Bienvenido a Beauty!",
                 message=template.body,
                 metadata={'tenant_id': str(tenant.id), 'user_name': user.full_name or user.email}
             )

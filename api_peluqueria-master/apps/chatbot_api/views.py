@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Base de conocimiento estática rica para respuestas de fallback dinámicas e inteligentes
 KNOWLEDGE_BASE = {
     "saludo": (
-        "¡Hola! Bienvenido a Auron Suite. 💈✨\n\n"
+        "¡Hola! Bienvenido a Beauty. 💈✨\n\n"
         "Soy tu asistente virtual inteligente. Estoy aquí para ayudarte a explorar todas las ventajas del software de gestión "
         "definitivo para salones de belleza, barberías y centros estéticos en Latinoamérica.\n\n"
         "Puedo informarte en detalle sobre:\n"
@@ -24,7 +24,7 @@ KNOWLEDGE_BASE = {
         "¿De qué te gustaría hablar hoy?"
     ),
     "planes_precios": (
-        "Auron Suite cuenta con 4 planes comerciales altamente competitivos. Ofrecemos facturación mensual o anual (esta última incluye un **descuento del 15% al 20%**).\n\n"
+        "Beauty cuenta con 4 planes comerciales altamente competitivos. Ofrecemos facturación mensual o anual (esta última incluye un **descuento del 15% al 20%**).\n\n"
         "💵 **Planes y Tarifas Oficiales (DOP / USD):**\n"
         "1️⃣ **Plan Basic** ($29.99 USD/mes ~ 1,800 DOP):\n"
         "   - Ideal para profesionales independientes.\n"
@@ -51,7 +51,7 @@ KNOWLEDGE_BASE = {
         "Al finalizar los 7 días, tú decides si deseas suscribirte de forma definitiva para seguir operando. ¿Quieres que te envíe el enlace de registro?"
     ),
     "agenda_citas": (
-        "La **agenda y reservas online** de Auron Suite está diseñada para ahorrar tiempo y profesionalizar tu salón:\n\n"
+        "La **agenda y reservas online** de Beauty está diseñada para ahorrar tiempo y profesionalizar tu salón:\n\n"
         "• **Reservas 24/7**: Te proporcionamos un portal de reservas público para que tus clientes agenden solos desde su celular, sin interrumpir tu trabajo.\n"
         "• **Prevención de Doble Agenda**: El motor del backend bloquea los slots automáticamente basándose en la disponibilidad real del barbero y la duración del servicio.\n"
         "• **Recordatorios por WhatsApp/Email**: El sistema envía alertas automáticas previas a la cita para mitigar las inasistencias (no-shows) de forma efectiva.\n"
@@ -71,7 +71,7 @@ KNOWLEDGE_BASE = {
         "• **Trazabilidad de Movimientos**: Historial detallado de entradas, salidas, compras a proveedores y productos consumidos internamente para el lavado o tintado."
     ),
     "comisiones_nomina": (
-        "Auron Suite elimina el dolor de cabeza de calcular nóminas y comisiones a mano:\n\n"
+        "Beauty elimina el dolor de cabeza de calcular nóminas y comisiones a mano:\n\n"
         "• **Comisiones Flexibles**: Configura comisiones personalizadas (porcentaje o monto fijo) por empleado o por servicio específico.\n"
         "• **Cálculo Transaccional**: El sistema computa los montos a pagar de forma automática basándose únicamente en ventas marcadas como pagadas en el POS.\n"
         "• **Reloj Marcador de Asistencia**: Tus empleados registran sus horas de llegada y salida (Clock-In / Clock-Out) con un widget de acceso seguro, calculando horas trabajadas y faltas."
@@ -102,7 +102,7 @@ KNOWLEDGE_BASE = {
         "• **Retención de Datos**: Exportamos tus datos de clientes e historial de ventas antes de que decidas marcharte."
     ),
     "general": (
-        "Auron Suite es la plataforma SaaS todo-en-uno definitiva para salones de belleza, barberías y centros estéticos en Latinoamérica.\n\n"
+        "Beauty es la plataforma SaaS todo-en-uno definitiva para salones de belleza, barberías y centros estéticos en Latinoamérica.\n\n"
         "Centralizamos tu agenda de reservas, facturación fiscal DGII (NCF), control de inventarios, cálculo automatizado de comisiones y recordatorios por WhatsApp QR para potenciar tus ventas y ahorrarte horas de trabajo administrativo.\n\n"
         "¿De qué te gustaría recibir más información?\n"
         "• 💰 Precios y planes comerciales.\n"
@@ -191,7 +191,7 @@ class ChatBotThrottle(AnonRateThrottle):
 
 class ChatBotView(APIView):
     """
-    Endpoint público para interactuar con el chatbot inteligente de Auron Suite.
+    Endpoint público para interactuar con el chatbot inteligente de Beauty.
     No requiere autenticación ya que se expone en la landing page del sitio.
     """
     permission_classes = [AllowAny]

@@ -9,7 +9,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5435:5432"
+      - "5436:5432"
     # Puerto expuesto temporalmente para backup desde host
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-barbershop_db}"]
@@ -48,15 +48,14 @@ services:
     user: "1000:1000"
     command: sh -c "python manage.py collectstatic --noinput && gunicorn backend.wsgi:application --bind 0.0.0.0:8000 --workers=8 --threads=4 --worker-class=gthread --max-requests=1000 --timeout=120 --keep-alive=5"
     volumes:
-      - ../apps:/code/apps
-      - ../backend:/code/backend
-      - ../ops:/code/ops
+      - ./apps:/code/apps
+      - ./backend:/code/backend
+      - ./ops:/code/ops
       - static_volume:/code/staticfiles
       - media_volume:/code/media
     env_file:
       - .env
     environment:
-      DEBUG: "true"
       USE_CLOUDINARY: "false"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
@@ -68,7 +67,7 @@ services:
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       FRONTEND_URL: http://localhost:4200
     ports:
-      - "8000:8000"
+      - "8001:8000"
     deploy:
       resources:
         limits:
@@ -94,14 +93,10 @@ services:
     user: "1000:1000"
     command: celery -A backend worker --loglevel=info
     volumes:
-      - ../apps:/code/apps
-      - ../backend:/code/backend
-      - ../ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env
     environment:
-      DEBUG: "true"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
       DB_HOST: ${DB_HOST:-db}
@@ -125,14 +120,10 @@ services:
     user: "1000:1000"
     command: celery -A backend beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     volumes:
-      - ../apps:/code/apps
-      - ../backend:/code/backend
-      - ../ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env
     environment:
-      DEBUG: "true"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
       DB_HOST: ${DB_HOST:-db}
@@ -171,14 +162,10 @@ services:
     user: "1000:1000"
     command: uvicorn backend.asgi:application --host 0.0.0.0 --port 8001 --workers 1 --lifespan off
     volumes:
-      - ../apps:/code/apps
-      - ../backend:/code/backend
-      - ../ops:/code/ops
       - media_volume:/code/media
     env_file:
       - .env
     environment:
-      DEBUG: "true"
       LOG_LEVEL: INFO
       DATABASE_URL: ""
       DB_HOST: ${DB_HOST:-db}
@@ -194,7 +181,7 @@ services:
       - backend
     restart: on-failure
     ports:
-      - "8001:8001"
+      - "8002:8000"
 
   prometheus:
     build:

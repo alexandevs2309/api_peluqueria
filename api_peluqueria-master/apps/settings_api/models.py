@@ -79,7 +79,7 @@ SECRET_FIELDS = [
 class SystemSettings(models.Model):
     """Configuraciones globales del sistema SaaS"""
     # Configuracion General
-    platform_name = models.CharField(_("Nombre de la plataforma"), max_length=255, default="Auron Suite")
+    platform_name = models.CharField(_("Nombre de la plataforma"), max_length=255, default="Beauty")
     support_email = models.EmailField(_("Email de soporte"), default="soporte@auronsuite.com")
 
     # Configuracion de Clientes
@@ -219,7 +219,7 @@ class SystemSettings(models.Model):
         settings, created = cls.objects.get_or_create(
             pk=1,
             defaults={
-                'platform_name': 'Auron Suite',
+                'platform_name': 'Beauty',
                 'support_email': 'soporte@auronsuite.com',
                 'max_tenants': 100,
                 'trial_days': 7,

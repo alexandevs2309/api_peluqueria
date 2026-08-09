@@ -54,11 +54,11 @@ def send_purchase_confirmation(user, tenant, plan, amount, months, payment_metho
         f"Método de pago: {payment_method}\n\n"
         f"Ya puedes disfrutar de todas las funcionalidades de tu plan.\n\n"
         f"Inicia sesión: {login_url}\n\n"
-        f"El equipo de Auron Suite"
+        f"El equipo de Beauty"
     )
 
     html_body = EmailRenderer.render('purchase_confirmation.html', {
-        'business_name': tenant.name or 'Auron Suite',
+        'business_name': tenant.name or 'Beauty',
         'title': subject,
         'user_full_name': user.full_name or user.email,
         'plan_name': plan.get_name_display(),

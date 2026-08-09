@@ -83,7 +83,7 @@ class CardNETProvider(PaymentProvider):
             'MerchantTerminal': self.config.terminal_id,
             'Amount': str(amount_cents).zfill(12),
             'Tax': str(tax_cents).zfill(12),
-            'MerchantName': (metadata.get('business_name') or 'Auron Suite')[:40],
+            'MerchantName': (metadata.get('business_name') or 'Beauty')[:40],
             'OrdenId': str(order_id),
             'TransactionId': str(transaction_id)[:6].zfill(6),
         }

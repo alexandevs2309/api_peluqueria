@@ -54,10 +54,12 @@ class EvolutionApiProvider(WhatsAppProvider):
 
     def create_instance(self, instance_name: str, token: str = None) -> dict:
         """Crea una instancia y obtiene el QR si no está conectada"""
+        import secrets
+        actual_token = str(token) if token else secrets.token_hex(16)
         url = f"{self.base_url}/instance/create"
         payload = {
             "instanceName": instance_name,
-            "token": token,
+            "token": actual_token,
             "qrcode": True,
             "integration": "WHATSAPP-BAILEYS"
         }
@@ -65,25 +67,42 @@ class EvolutionApiProvider(WhatsAppProvider):
             logger.info("EvolutionAPI: Creating instance %s", instance_name)
             response = requests.post(url, json=payload, headers=self._get_headers(), timeout=15)
             
-            # Si la instancia ya existe, la eliminamos y reintentamos la creación
+            # Si la instancia ya existe, intentamos obtener su QR activo directamente
             if response.status_code == 403 and "already in use" in response.text:
-                logger.warning("EvolutionAPI: Instance %s already exists. Deleting and recreating...", instance_name)
-                deleted = self.delete_instance(instance_name)
-                logger.info("EvolutionAPI: Deletion result for %s: %s", instance_name, deleted)
+                logger.info("EvolutionAPI: Instance %s already exists. Fetching active QR...", instance_name)
+                connect_url = f"{self.base_url}/instance/connect/{instance_name}"
+                try:
+                    conn_resp = requests.get(connect_url, headers=self._get_headers(), timeout=5)
+                    if conn_resp.status_code == 200:
+                        conn_data = conn_resp.json()
+                        qr_b64 = conn_data.get("base64") or conn_data.get("qrcode", {}).get("base64")
+                        qr_code = conn_data.get("code") or conn_data.get("qrcode", {}).get("code")
+                        if qr_b64:
+                            return {
+                                "success": True,
+                                "instance_name": instance_name,
+                                "token": actual_token,
+                                "qrcode_base64": qr_b64,
+                                "qrcode_code": qr_code,
+                                "status": "connecting"
+                            }
+                except Exception as e:
+                    logger.warning("EvolutionAPI: Failed to fetch connect QR for %s: %s", instance_name, str(e))
+                
+                # Si no pudimos obtener QR activo, la recreamos
+                logger.warning("EvolutionAPI: Instance %s recreating...", instance_name)
+                self.delete_instance(instance_name)
                 import time
-                time.sleep(1.5)  # Evitar condiciones de carrera en base de datos
+                time.sleep(0.5)
                 response = requests.post(url, json=payload, headers=self._get_headers(), timeout=15)
 
             if response.status_code in (200, 201):
                 data = response.json()
-                # La estructura de Evolution API retorna info de qr
                 qrcode_data = data.get("qrcode", {})
-                
-                # Evolution API v2 retorna 'hash' como string con la apikey directamente
                 hash_data = data.get("hash")
-                api_key = token
+                api_key = actual_token
                 if isinstance(hash_data, dict):
-                    api_key = hash_data.get("apikey") or token
+                    api_key = hash_data.get("apikey") or actual_token
                 elif isinstance(hash_data, str):
                     api_key = hash_data
                 
@@ -97,10 +116,13 @@ class EvolutionApiProvider(WhatsAppProvider):
                 }
             logger.error("EvolutionAPI: Failed to create instance %s. Status: %s, Body: %s", 
                          instance_name, response.status_code, response.text)
-            return {"success": False, "error": f"Status code: {response.status_code}"}
+            return {"success": False, "error": f"Error del servidor de WhatsApp (Código {response.status_code})"}
+        except requests.exceptions.ConnectionError:
+            logger.error("EvolutionAPI: Connection refused when creating instance %s", instance_name)
+            return {"success": False, "error": "No se pudo establecer conexión con la pasarela de WhatsApp (Evolution API no está activa o el puerto no responde)."}
         except Exception as e:
             logger.error("EvolutionAPI: Error creating instance %s: %s", instance_name, str(e))
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error": f"Error de comunicación con WhatsApp: {str(e)}"}
 
     def get_status(self, instance_name: str) -> str:
         """Verifica si la instancia está conectada"""
@@ -108,7 +130,8 @@ class EvolutionApiProvider(WhatsAppProvider):
         try:
             response = requests.get(url, headers=self._get_headers(), timeout=10)
             if response.status_code == 200:
-                state = response.json().get("instance", {}).get("state")
+                data = response.json()
+                state = data.get("instance", {}).get("state") or data.get("state")
                 if state == "open":
                     return "connected"
                 elif state in ("connecting", "connecting_chat"):
@@ -120,14 +143,9 @@ class EvolutionApiProvider(WhatsAppProvider):
 
     def delete_instance(self, instance_name: str) -> bool:
         """Elimina la instancia de Evolution API"""
-        # Primero intentamos logout, luego delete
-        logout_url = f"{self.base_url}/instance/logout/{instance_name}"
         delete_url = f"{self.base_url}/instance/delete/{instance_name}"
         try:
-            # Logout
-            requests.post(logout_url, headers=self._get_headers(), timeout=10)
-            # Delete
-            resp = requests.delete(delete_url, headers=self._get_headers(), timeout=10)
+            resp = requests.delete(delete_url, headers=self._get_headers(), timeout=5)
             return resp.status_code in (200, 201)
         except Exception as e:
             logger.error("EvolutionAPI: Error deleting instance %s: %s", instance_name, str(e))
@@ -167,11 +185,15 @@ class EvolutionApiProvider(WhatsAppProvider):
         """Configura el webhook para recibir actualizaciones de conexión"""
         url = f"{self.base_url}/webhook/set/{instance_name}"
         payload = {
-            "enabled": True,
-            "url": webhook_url,
-            "events": [
-                "CONNECTION_UPDATE"
-            ]
+            "webhook": {
+                "enabled": True,
+                "url": webhook_url,
+                "byEvents": False,
+                "base64": False,
+                "events": [
+                    "CONNECTION_UPDATE"
+                ]
+            }
         }
         try:
             response = requests.post(url, json=payload, headers=self._get_headers(), timeout=10)

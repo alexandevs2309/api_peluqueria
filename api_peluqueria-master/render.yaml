@@ -1,10 +1,10 @@
 services:
-  # ─── Web Service (Django + Uvicorn ASGI) ───────────────────────────────────
+  # ─── Web Service (Django + Gunicorn) ────────────────────────────────────────
   - type: web
     name: auron-api
     runtime: python
     buildCommand: "./build.sh"
-    startCommand: "uvicorn backend.asgi:application --host 0.0.0.0 --port $PORT --workers 1 --loop asyncio --http httptools --lifespan off"
+    startCommand: "gunicorn backend.wsgi:application --bind 0.0.0.0:$PORT --workers 4 --threads 4 --worker-class gthread --max-requests 1000 --timeout 120 --keep-alive 5 --access-logfile - --error-logfile -"
     healthCheckPath: /api/healthz/
     envVars:
       - key: PYTHON_VERSION
@@ -13,8 +13,6 @@ services:
         value: "False"
       - key: DJANGO_SETTINGS_MODULE
         value: backend.settings
-      - key: RUNNING_SSE
-        value: "true"
       # Las siguientes variables deben setearse manualmente en el dashboard de Render:
       # SECRET_KEY, DATABASE_URL, REDIS_URL, ALLOWED_HOSTS,
       # STRIPE_SECRET_KEY, STRIPE_PUBLISHABLE_KEY, STRIPE_WEBHOOK_SECRET,

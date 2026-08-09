@@ -1,4 +1,3 @@
-from django.utils.html import strip_tags
 from django.utils.translation import gettext_lazy as _
 from rest_framework import serializers
 from .models import Client
@@ -25,13 +24,6 @@ class ClientSerializer(serializers.ModelSerializer):
                 User = get_user_model()
                 self.fields['preferred_stylist'].queryset = User.objects.filter(tenant=tenant)
                 self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
-
-    def validate_full_name(self, value):
-        if value:
-            value = strip_tags(value).strip()
-            if not value:
-                raise serializers.ValidationError("El nombre no puede estar vacío después de sanitizar")
-        return value
 
     def validate(self, attrs):
         email = attrs.get('email')

@@ -1,6 +1,5 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.utils.html import strip_tags
 from django.db.models import Q, Prefetch
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
@@ -188,7 +187,7 @@ def book_appointment(request, subdomain):
         else:
             client = Client.objects.create(
                 tenant=tenant,
-                full_name=strip_tags(data['client_name']).strip(),
+                full_name=data['client_name'],
                 email=client_email,
                 phone=client_phone or None,
                 source='Public Booking',
@@ -203,14 +202,14 @@ def book_appointment(request, subdomain):
         else:
             client = Client.objects.create(
                 tenant=tenant,
-                full_name=strip_tags(data['client_name']).strip(),
+                full_name=data['client_name'],
                 phone=client_phone,
                 source='Public Booking',
             )
     else:
         client = Client.objects.create(
             tenant=tenant,
-            full_name=strip_tags(data['client_name']).strip(),
+            full_name=data['client_name'],
             source='Public Booking',
         )
 

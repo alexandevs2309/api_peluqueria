@@ -50,7 +50,7 @@ class PayrollCalculationService:
             date_time__lte=end_dt,
             status='confirmed',
             commission_amount_snapshot__isnull=False,
-            tenant=period.employee.tenant  # CORREGIDO: Usar campo tenant directo en lugar de user__tenant
+            user__tenant=period.employee.tenant  # FIX 4: Filtro explícito por tenant
         ).aggregate(
             total=Sum('commission_amount_snapshot')
         )['total'] or Decimal('0.00')
@@ -62,8 +62,8 @@ class PayrollCalculationService:
             total=Sum('amount')
         )['total'] or Decimal('0.00')
         
-        # 3. Obtener tipo de pago del empleado (usar snapshot si existe)
-        payment_type = period.payment_type_snapshot or period.employee.payment_type
+        # 3. Obtener tipo de pago del empleado
+        payment_type = period.employee.payment_type
 
         # 4. Total de comisiones (solo commission/mixed reciben comisión de ventas)
         if payment_type in ['commission', 'mixed']:

@@ -49,6 +49,7 @@ class ServiceSerializer(serializers.ModelSerializer):
         allow_null=True
     )
     categories = ServiceCategoryIdsField(required=False)
+    image = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     image_url = serializers.SerializerMethodField()
 
     class Meta:
@@ -109,14 +110,31 @@ class ServiceSerializer(serializers.ModelSerializer):
         return instance
 
     def _save_image(self, instance, image_file):
+        if not image_file:
+            return
         try:
-            original_name = getattr(image_file, 'name', '')
-            if len(original_name) > 80:
-                import os
-                name, ext = os.path.splitext(original_name)
-                image_file.name = name[:75] + ext
-            instance.image = image_file
-            instance.save(update_fields=['image'])
+            if isinstance(image_file, str):
+                image_str = image_file.strip()
+                if image_str.startswith('data:image'):
+                    import base64
+                    from django.core.files.base import ContentFile
+                    header, imgstr = image_str.split(';base64,')
+                    ext = header.split('/')[-1].split('+')[0]
+                    if ext == 'jpeg': ext = 'jpg'
+                    file_name = f"service_{instance.id}.{ext}"
+                    data = ContentFile(base64.b64decode(imgstr), name=file_name)
+                    instance.image.save(file_name, data, save=True)
+                elif image_str.startswith('http://') or image_str.startswith('https://'):
+                    instance.image = image_str
+                    instance.save(update_fields=['image'])
+            else:
+                original_name = getattr(image_file, 'name', '')
+                if len(original_name) > 80:
+                    import os
+                    name, ext = os.path.splitext(original_name)
+                    image_file.name = name[:75] + ext
+                instance.image = image_file
+                instance.save(update_fields=['image'])
         except Exception as e:
             logger.warning("No se pudo guardar la imagen del servicio %s: %s", instance.id, e)
 

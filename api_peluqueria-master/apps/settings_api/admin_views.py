@@ -557,7 +557,7 @@ def _test_email_service(request):
     try:
         IntegrationService.send_email(
             request.user.email,
-            'Test Email - Auron Suite',
+            'Test Email - Beauty',
             'Email service is working correctly.'
         )
         return response.Response({

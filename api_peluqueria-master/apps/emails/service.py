@@ -13,7 +13,7 @@ class EmailRenderer:
     def render(cls, template_name, context=None):
         context = context or {}
         safe_context = {
-            'business_name': 'Auron Suite',
+            'business_name': 'Beauty',
             'logo_url': '',
             'title': '',
             'content': '',

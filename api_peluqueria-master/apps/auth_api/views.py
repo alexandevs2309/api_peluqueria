@@ -115,7 +115,7 @@ def issue_refresh_for_user(user, tenant=None):
     return refresh, access_token
 
 def _resolve_business_branding(user, request=None):
-    business_name = 'Auron Suite'
+    business_name = 'Beauty'
     logo_url = ''
 
     if getattr(user, 'tenant', None):
@@ -134,7 +134,7 @@ def _resolve_business_branding(user, request=None):
         except Exception:
             pass
 
-        if user.tenant.name and business_name == 'Auron Suite':
+        if user.tenant.name and business_name == 'Beauty':
             business_name = user.tenant.name
 
     return business_name, logo_url
@@ -375,15 +375,19 @@ class LoginView(generics.GenericAPIView):
 
         user_role = get_effective_role_api(user, tenant=tenant)
         
+        from .role_utils import get_effective_business_role, get_effective_business_role_display
+        
         response_data = {
             'user': {
                 'id': user.id,
                 'email': user.email,
                 'full_name': user.full_name,
                 'role': user_role,
+                'business_role': get_effective_business_role(user, tenant=tenant),
+                'business_role_display': get_effective_business_role_display(user, tenant=tenant),
+                'avatar_url': user.avatar.url if user.avatar else None,
             },
-        }
-        
+        }        
         if tenant:
             response_data['tenant'] = {
                 'id': tenant.id,
@@ -457,13 +461,9 @@ class LogoutView(APIView):
 class ChangePasswordView(generics.UpdateAPIView):
     serializer_class = PasswordChangeSerializer
     permission_classes = [IsAuthenticated]
-    http_method_names = ['put', 'patch', 'post']
 
     def get_object(self):
         return self.request.user
-
-    def post(self, request, *args, **kwargs):
-        return self.update(request, *args, **kwargs)
 
     def update(self, request, *args, **kwargs):
         user = self.get_object()
@@ -962,6 +962,7 @@ class UserViewSet(viewsets.ModelViewSet):
         'available_for_employee': 'auth_api.view_user',
         'bulk_delete': 'auth_api.delete_user',
         'upload_avatar': 'auth_api.change_user',
+        'assign_role': 'auth_api.change_user',
     }
     serializer_class = UserListSerializer
     http_method_names = ['get', 'post', 'put', 'patch', 'delete']
@@ -1340,6 +1341,64 @@ class UserViewSet(viewsets.ModelViewSet):
         count = users.count()
         users.delete()
         return Response({'deleted': count})
+
+    @action(detail=True, methods=['post', 'delete'], url_path='assign-role')
+    def assign_role(self, request, pk=None):
+        """
+        POST  /auth/users/{id}/assign-role/  → asigna un rol al usuario
+        DELETE /auth/users/{id}/assign-role/ → quita el rol actual del usuario
+
+        Body (POST): { "role": "Cajera" }
+        """
+        if not self._is_tenant_admin_or_superuser(request):
+            return Response(
+                {'error': 'Solo Client-Admin puede gestionar roles de usuarios'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        target_user = self.get_object()
+        tenant = self._get_request_tenant() or getattr(target_user, 'tenant', None)
+
+        if request.method == 'DELETE':
+            deleted, _ = UserRole.objects.filter(user=target_user, tenant=tenant).delete()
+            target_user.role = ''
+            target_user.save(update_fields=['role'])
+            return Response({'detail': f'Rol eliminado ({deleted} registro/s).'})
+
+        # POST — asignar rol
+        role_name = request.data.get('role', '').strip()
+        if not role_name:
+            return Response({'error': 'El campo "role" es obligatorio.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validar jerarquía
+        from apps.auth_api.role_utils import validate_role_assignment, get_effective_role_name
+        actor_role = get_effective_role_name(request.user, tenant=tenant) or 'Client-Staff'
+        is_valid, error_msg = validate_role_assignment(
+            creator_role=actor_role,
+            target_role=role_name,
+            creator_is_superuser=request.user.is_superuser
+        )
+        if not is_valid:
+            return Response({'error': error_msg}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            role = Role.objects.get(name=role_name)
+        except Role.DoesNotExist:
+            return Response({'error': f'Rol "{role_name}" no existe.'}, status=status.HTTP_404_NOT_FOUND)
+
+        ensure_role_default_permissions(role)
+
+        # Reemplazar rol existente
+        UserRole.objects.filter(user=target_user, tenant=tenant).delete()
+        UserRole.objects.create(user=target_user, role=role, tenant=tenant)
+
+        target_user.role = role_name
+        target_user.save(update_fields=['role'])
+
+        return Response({
+            'detail': f'Rol "{role_name}" asignado correctamente.',
+            'user': UserListSerializer(target_user).data
+        })
 
 
 class VerifyAuthView(APIView):

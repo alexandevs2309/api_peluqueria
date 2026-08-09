@@ -578,10 +578,7 @@ else:
     _smtp_host = env('EMAIL_HOST', default='')
     _smtp_password = env('EMAIL_HOST_PASSWORD', default='')
 
-    if DEBUG:
-        # En desarrollo: emails visibles en los logs del contenedor, sin SMTP real.
-        EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
-    elif _smtp_host and _smtp_password:
+    if _smtp_host and _smtp_password:
         EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
         EMAIL_HOST = _smtp_host
         EMAIL_PORT = env.int('EMAIL_PORT', default=587)
@@ -601,17 +598,17 @@ else:
         EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
 
 # Security settings
-SECURE_SSL_REDIRECT = not DEBUG
-SESSION_COOKIE_SECURE = not DEBUG
-CSRF_COOKIE_SECURE = not DEBUG
+SECURE_SSL_REDIRECT = env.bool('SECURE_SSL_REDIRECT', default=not DEBUG)
+SESSION_COOKIE_SECURE = env.bool('SESSION_COOKIE_SECURE', default=not DEBUG)
+CSRF_COOKIE_SECURE = env.bool('CSRF_COOKIE_SECURE', default=not DEBUG)
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
 SECURE_HSTS_PRELOAD = not DEBUG
 
 # Sesiones Django y CSRF pueden seguir estrictas; los JWT cross-origin usan
 # configuración específica en auth_api.cookie_utils.
-SESSION_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
-CSRF_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+SESSION_COOKIE_SAMESITE = env('SESSION_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
+CSRF_COOKIE_SAMESITE = env('CSRF_COOKIE_SAMESITE', default='None' if not DEBUG else 'Lax')
 SESSION_COOKIE_HTTPONLY = True
 CSRF_COOKIE_HTTPONLY = False  # JS necesita leerlo
 

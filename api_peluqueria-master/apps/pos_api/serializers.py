@@ -33,14 +33,13 @@ class SaleSerializer(serializers.ModelSerializer):
     employee_name = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
     coupon = serializers.PrimaryKeyRelatedField(queryset=Coupon.objects.none(), required=False, allow_null=True)
-    cash_register = serializers.PrimaryKeyRelatedField(queryset=CashRegister.objects.none(), required=False, allow_null=True)
 
     class Meta:
         model = Sale
         fields = [
-            'id', 'branch', 'client', 'client_name', 'employee_name', 'user', 'user_name', 
+            'id', 'branch', 'client', 'client_name', 'employee', 'employee_name', 'user', 'user_name', 
             'date_time', 'total', 'discount', 'paid', 'payment_method', 'closed', 'details', 
-            'payments', 'cash_register', 'appointment', 'points_earned', 'points_redeemed',
+            'payments', 'appointment', 'points_earned', 'points_redeemed',
             'ncf', 'ncf_type', 'rnc', 'company_name',
             'promotion', 'promotion_name',
             'coupon', 'coupon_code',
@@ -54,7 +53,7 @@ class SaleSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get('request')
         if request:
-            tenant = getattr(request, 'tenant', None)
+            tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
             if tenant:
                 # Scoped: only appointments belonging to this tenant
                 from django.db.models import Q
@@ -63,31 +62,34 @@ class SaleSerializer(serializers.ModelSerializer):
                 )
                 from apps.clients_api.models import Client
                 from apps.settings_api.models import Branch
+                from apps.employees_api.models import Employee
                 self.fields['client'].queryset = Client.objects.filter(tenant=tenant)
+                self.fields['employee'].queryset = Employee.objects.filter(tenant=tenant)
                 self.fields['branch'].queryset = Branch.objects.filter(tenant=tenant)
                 self.fields['promotion'].queryset = Promotion.objects.filter(tenant=tenant)
                 self.fields['coupon'].queryset = Coupon.objects.filter(tenant=tenant)
-                self.fields['cash_register'].queryset = CashRegister.objects.filter(tenant=tenant)
             elif request.user.is_superuser:
                 # Superuser without tenant scope sees all (admin/global context)
                 self.fields['appointment'].queryset = Appointment.objects.all()
                 from apps.clients_api.models import Client
                 from apps.settings_api.models import Branch
+                from apps.employees_api.models import Employee
                 self.fields['client'].queryset = Client.objects.all()
+                self.fields['employee'].queryset = Employee.objects.all()
                 self.fields['branch'].queryset = Branch.objects.all()
                 self.fields['promotion'].queryset = Promotion.objects.all()
                 self.fields['coupon'].queryset = Coupon.objects.all()
-                self.fields['cash_register'].queryset = CashRegister.objects.all()
             else:
                 # No tenant - no access
                 self.fields['appointment'].queryset = Appointment.objects.none()
                 from apps.clients_api.models import Client
                 from apps.settings_api.models import Branch
+                from apps.employees_api.models import Employee
                 self.fields['client'].queryset = Client.objects.none()
+                self.fields['employee'].queryset = Employee.objects.none()
                 self.fields['branch'].queryset = Branch.objects.none()
                 self.fields['promotion'].queryset = Promotion.objects.none()
                 self.fields['coupon'].queryset = Coupon.objects.none()
-                self.fields['cash_register'].queryset = CashRegister.objects.none()
 
     def get_employee_name(self, obj):
         employee_user = getattr(getattr(obj, 'employee', None), 'user', None)
@@ -140,15 +142,7 @@ class SaleSerializer(serializers.ModelSerializer):
         if not request:
             return data
         
-        tenant = getattr(request, 'tenant', None)
-
-        # Validar cash_register está abierta (aplica a TODOS, incluido superuser)
-        cash_register = data.get('cash_register')
-        if cash_register is not None:
-            if hasattr(cash_register, 'is_open') and not cash_register.is_open:
-                raise serializers.ValidationError({
-                    'cash_register': _('Cash register is not open')
-                })
+        tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
         
         # SuperAdmin puede relacionar cualquier objeto
         if request.user.is_superuser:
@@ -187,14 +181,6 @@ class SaleSerializer(serializers.ModelSerializer):
             if coupon.tenant_id != tenant.id:
                 raise serializers.ValidationError({
                     'coupon': _('Coupon does not belong to your tenant')
-                })
-
-        # Validar cash_register pertenece al tenant (is_open ya validado arriba)
-        cash_register = data.get('cash_register')
-        if cash_register is not None:
-            if hasattr(cash_register, 'tenant_id') and cash_register.tenant_id != tenant.id:
-                raise serializers.ValidationError({
-                    'cash_register': _('Cash register does not belong to your tenant')
                 })
             
         return data
@@ -249,7 +235,7 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         super().__init__(*args, **kwargs)
         request = self.context.get('request')
         if request:
-            tenant = getattr(request, 'tenant', None)
+            tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
             if tenant:
                 from apps.settings_api.models import Branch
                 from django.contrib.auth import get_user_model

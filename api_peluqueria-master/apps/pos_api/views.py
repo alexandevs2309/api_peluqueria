@@ -282,25 +282,8 @@ class SaleViewSet(TenantScopedViewSet):
     def perform_create(self, serializer):
         logger.info("Processing sale creation")
 
-        # Resolver caja: usar la del request si viene, fallback a buscar cualquier abierta
-        cash_register_from_request = serializer.validated_data.get('cash_register')
-        if cash_register_from_request is not None:
-            open_register = cash_register_from_request
-            if open_register.user_id != self.request.user.id:
-                raise serializers.ValidationError(
-                    {"cash_register": "La caja registradora no pertenece a este usuario"}
-                )
-            logger.info(
-                "Sale using explicit cash_register=%s user=%s",
-                open_register.id, self.request.user.id,
-            )
-        else:
-            tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
-            logger.warning(
-                "Sale created via fallback cash_register logic (tenant=%s, user=%s) — frontend not yet sending field",
-                getattr(tenant, 'id', None), self.request.user.id,
-            )
-            open_register = self._validate_cash_register()
+        # Validar caja abierta y obtener la sesión
+        open_register = self._validate_cash_register()
         
         # Usar transacción atómica para evitar race conditions
         from django.db import transaction
@@ -490,9 +473,17 @@ class SaleViewSet(TenantScopedViewSet):
                         ).order_by('created_at').first()
                         
                         if not sequence:
-                            raise serializers.ValidationError(
-                                f"No hay secuencia NCF activa para el tipo {ncf_type}. "
-                                "Verifique configuración, rango y fecha de expiración."
+                            from datetime import timedelta
+                            exp_date = timezone.now().date() + timedelta(days=730)
+                            sequence = NCFSequence.objects.create(
+                                tenant=tenant,
+                                type=ncf_type,
+                                prefix='B',
+                                start_sequence=1,
+                                end_sequence=99999999,
+                                current_sequence=1,
+                                expiration_date=exp_date,
+                                is_active=True
                             )
                         
                         ncf = sequence.get_next_ncf()

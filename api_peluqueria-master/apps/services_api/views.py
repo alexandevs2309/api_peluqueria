@@ -52,6 +52,20 @@ class ServiceViewSet(AuditLoggingMixin, TenantScopedViewSet):
                           e, list(request.data.keys()), bool(request.FILES), request.method)
             raise
 
+    def perform_create(self, serializer):
+        service = serializer.save()
+        # Auto-asignar el nuevo servicio a todos los empleados activos del tenant
+        try:
+            from apps.employees_api.models import Employee
+            from .models import ServiceEmployee
+            tenant = getattr(self.request, 'tenant', None) or getattr(service, 'tenant', None)
+            if tenant:
+                employees = Employee.objects.filter(tenant=tenant, is_active=True)
+                for emp in employees:
+                    ServiceEmployee.objects.get_or_create(service=service, employee=emp)
+        except Exception as e:
+            logger.warning("Error auto-assigning service to employees: %s", e)
+
     def create(self, request, *args, **kwargs):
         try:
             return super().create(request, *args, **kwargs)

@@ -78,8 +78,8 @@ class BarbershopAdminSerializer(serializers.ModelSerializer):
 
 
 class BarbershopWriteSerializer(serializers.ModelSerializer):
-    name = serializers.CharField(required=True, allow_blank=False)
-    business_name = serializers.CharField(required=False, write_only=True, allow_blank=False)
+    name = serializers.CharField(required=False, allow_blank=True, default='')
+    business_name = serializers.CharField(required=False, write_only=True, allow_blank=True)
 
     def validate(self, attrs):
         # Allow 'business_name' as an alias for 'name'

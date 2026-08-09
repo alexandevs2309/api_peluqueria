@@ -15,7 +15,7 @@ stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 logger = logging.getLogger(__name__)
 
 def _email_branding_for_tenant(tenant):
-    business_name = tenant.name or 'Auron Suite'
+    business_name = tenant.name or 'Beauty'
     logo_url = ''
     try:
         from apps.settings_api.barbershop_models import BarbershopSettings
@@ -271,16 +271,16 @@ def _send_subscription_expiry_email(tenant, days_remaining):
 
     Fecha de expiración: {expiry_date}
 
-    Para renovar tu suscripción y seguir usando Auron Suite sin interrupción:
+    Para renovar tu suscripción y seguir usando Beauty sin interrupción:
     1. Inicia sesión en tu cuenta
     2. Ve a Configuración > Suscripción o haz clic en el enlace de abajo
     3. Renueva tu plan
 
     Enlace directo: https://auronsuite.com/client/payment
 
-    ¡No pierdas el acceso a tus datos y sigue disfrutando de Auron Suite!
+    ¡No pierdas el acceso a tus datos y sigue disfrutando de Beauty!
 
-    El equipo de Auron Suite
+    El equipo de Beauty
     """
 
     try:
@@ -346,21 +346,21 @@ def send_trial_expired_email(tenant):
     
     Tu prueba gratuita de 7 días para {tenant.name} ha expirado.
     
-    Para continuar usando Auron Suite:
+    Para continuar usando Beauty:
     1. Inicia sesión en tu cuenta
     2. Ve a Configuración > Suscripción
     3. Selecciona un plan de pago
     
     ¡No pierdas tus datos! Reactiva tu cuenta hoy.
     
-    El equipo de Auron Suite
+    El equipo de Beauty
     """
     
     try:
         html_message = _build_html_email(tenant, subject, [
             f"Hola {owner_name},",
             f"Tu prueba gratuita de 7 días para {tenant.name} ha expirado.",
-            "Para continuar usando Auron Suite inicia sesión y selecciona un plan de pago.",
+            "Para continuar usando Beauty inicia sesión y selecciona un plan de pago.",
             '<a href="https://auronsuite.com/client/payment" style="display:inline-block;padding:12px 24px;background-color:#3B82F6;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:bold;">Ver planes</a>',
             "No pierdas tus datos. Reactiva tu cuenta hoy.",
         ])
@@ -404,7 +404,7 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
         )
         return
 
-    # FIX: branding corregido a "Auron Suite"
+    # FIX: branding corregido a "Beauty"
     subject = f"Tu prueba gratuita expira en {days_remaining} días - {tenant.name}"
     message = f"""
     Hola {owner.full_name or owner.email},
@@ -418,7 +418,7 @@ def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_lef
     
     ¡No esperes hasta el último momento!
     
-    El equipo de Auron Suite
+    El equipo de Beauty
     """
     
     try:
@@ -480,7 +480,7 @@ def send_cancellation_confirmation_email(user, tenant, subscription):
     ¿Cambiaste de opinión? Puedes reactivar tu suscripción en cualquier momento desde tu perfil:
     {reactivate_url}
 
-    El equipo de Auron Suite
+    El equipo de Beauty
     """
 
     try:

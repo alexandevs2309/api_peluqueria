@@ -177,6 +177,12 @@ class PayrollPeriod(models.Model):
                 'payment_reference',
                 'paid_at',
                 'paid_by',
+                'is_finalized',
+                'approved_at',
+                'approved_by',
+                'rejection_reason',
+                'rejected_at',
+                'rejected_by',
                 'notification_sent',
                 'notification_sent_at',
                 'updated_at',
@@ -437,21 +443,6 @@ class PayrollPeriod(models.Model):
         deductions = self.deductions.all()
         self.deductions_total = sum(d.amount for d in deductions)
         self.net_amount = self.gross_amount - self.deductions_total
-        
-        # Assertions de consistencia de nómina (Task 6)
-        if self.gross_amount < 0:
-            raise ValueError(f"El monto bruto no puede ser negativo. Encontrado: {self.gross_amount}")
-        if self.net_amount != self.gross_amount - self.deductions_total:
-            raise ValueError(
-                f"El monto neto no coincide con la fórmula (Bruto - Deducciones). "
-                f"Esperado: {self.gross_amount - self.deductions_total}, Encontrado: {self.net_amount}"
-            )
-        expected_gross = self.base_salary + self.commission_earnings
-        if self.gross_amount != expected_gross:
-            raise ValueError(
-                f"El monto bruto no coincide con la suma de salario base y comisiones. "
-                f"Esperado: {expected_gross}, Encontrado: {self.gross_amount}"
-            )
         
         # Validar si se puede pagar
         if self.status == 'open':

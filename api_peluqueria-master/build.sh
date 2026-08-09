@@ -10,8 +10,8 @@ pip --version
 echo "[build] Instalando dependencias..."
 pip install -r requirements.txt --no-cache-dir
 
-echo "[build] Verificando uvicorn..."
-which uvicorn && echo "[build] uvicorn OK" || echo "[build] uvicorn NOT FOUND"
+echo "[build] Verificando gunicorn..."
+which gunicorn && echo "[build] gunicorn OK" || echo "[build] gunicorn NOT FOUND"
 
 echo "[build] Static files..."
 python manage.py collectstatic --noinput || echo "[build] collectstatic ignorado"

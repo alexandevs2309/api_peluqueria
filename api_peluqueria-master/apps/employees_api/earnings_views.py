@@ -27,6 +27,7 @@ class PayrollViewSet(viewsets.ViewSet):
         'approve_period': 'employees_api.approve_payroll',
         'reject_period': 'employees_api.approve_payroll',
         'history': 'employees_api.view_employee_payroll',
+        'tenant_config': 'employees_api.view_employee_payroll',
     }
     
     def _require_admin_role(self, request):
@@ -75,6 +76,8 @@ class PayrollViewSet(viewsets.ViewSet):
             
             periods_data.append({
                 'id': period.id,
+                'employee': period.employee_id,
+                'employee_id': period.employee_id,
                 'employee_name': period.employee.user.full_name or period.employee.user.email,
                 'period_display': period.period_display,
                 'status': status,
@@ -192,28 +195,54 @@ class PayrollViewSet(viewsets.ViewSet):
         self._require_admin_role(request)
         
         period_id = request.data.get('period_id')
-        payment_method = request.data.get('payment_method')
-        payment_reference = request.data.get('payment_reference', '')
+        employee_id = request.data.get('employee_id')
+        payment_method = request.data.get('payment_method', 'cash')
+        payment_reference = request.data.get('payment_reference', 'Pago Manual')
         
-        if not period_id or not payment_method:
-            return Response({'error': 'period_id y payment_method son requeridos'}, status=400)
+        if not period_id and not employee_id:
+            return Response({'error': 'period_id o employee_id es requerido'}, status=400)
         
         try:
             with transaction.atomic():
-                # 🔒 BLOQUEO REAL DE FILA
-                period = PayrollPeriod.objects.select_for_update().get(id=period_id)
+                tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+                if period_id:
+                    period = PayrollPeriod.objects.select_for_update().get(id=period_id)
+                else:
+                    from apps.employees_api.models import Employee
+                    employee = Employee.objects.get(id=employee_id, tenant=tenant)
+                    period = PayrollPeriod.objects.select_for_update().filter(
+                        employee=employee
+                    ).order_by('-period_start', '-id').first()
+                    
+                    if period and period.status == 'paid':
+                        return Response({
+                            'payment_id': str(period.id),
+                            'message': 'Este período ya se encuentra pagado',
+                            'amount_paid': float(period.net_amount),
+                            'paid_at': period.paid_at.isoformat() if period.paid_at else None
+                        }, status=200)
+
+                    if not period:
+                        today = timezone.localdate()
+                        period = PayrollPeriod.objects.create(
+                            employee=employee,
+                            period_type='biweekly',
+                            period_start=today.replace(day=1),
+                            period_end=today,
+                            status='open'
+                        )
                 
-                if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
+                if period.employee.tenant != tenant:
                     return Response({'error': 'No tienes permiso'}, status=403)
                 
                 if period.status == 'paid':
                     return Response({'error': 'Ya fue pagado'}, status=400)
                 
                 if period.status != 'approved':
-                    return Response({'error': 'El período debe estar aprobado antes de pagar'}, status=400)
-                
-                if not period.can_pay:
-                    return Response({'error': period.pay_block_reason}, status=400)
+                    period.status = 'approved'
+                    period.approved_at = timezone.now()
+                    period.approved_by = request.user
+                    period.save(update_fields=['status', 'approved_at', 'approved_by'])
                 
                 period.mark_as_paid(payment_method, payment_reference, request.user)
                 self._send_payment_notification(period)
@@ -226,7 +255,7 @@ class PayrollViewSet(viewsets.ViewSet):
             })
         except PayrollPeriod.DoesNotExist:
             return Response({'error': 'Período no encontrado'}, status=404)
-        except ValueError as e:
+        except Exception as e:
             return Response({'error': str(e)}, status=400)
     
     @action(detail=False, methods=['post'], url_path='client/payroll/(?P<period_id>[^/.]+)/recalculate')
@@ -339,7 +368,7 @@ class PayrollViewSet(viewsets.ViewSet):
             employee_name = period.employee.user.full_name or employee_email
 
             tenant = period.employee.tenant
-            business_name = tenant.name if tenant else 'Auron Suite'
+            business_name = tenant.name if tenant else 'Beauty'
 
             subject = f'Pago Procesado - {period.period_display}'
             message = f'''Hola {employee_name},
@@ -398,7 +427,7 @@ Equipo de Nómina'''
             employee_name = period.employee.user.full_name or employee_email
 
             tenant = period.employee.tenant
-            business_name = tenant.name if tenant else 'Auron Suite'
+            business_name = tenant.name if tenant else 'Beauty'
 
             subject = f'Período Aprobado - {period.period_display}'
             message = f'''Hola {employee_name},
@@ -443,7 +472,7 @@ Equipo de Nómina'''
             employee_name = period.employee.user.full_name or employee_email
 
             tenant = period.employee.tenant
-            business_name = tenant.name if tenant else 'Auron Suite'
+            business_name = tenant.name if tenant else 'Beauty'
 
             subject = f'Período Rechazado - {period.period_display}'
             message = f'''Hola {employee_name},
@@ -499,3 +528,37 @@ Equipo de Nómina'''
             })
         except PayrollPeriod.DoesNotExist:
             return Response({'error': 'Recibo no encontrado'}, status=404)
+
+    @action(detail=False, methods=['get', 'put'], url_path='config')
+    def tenant_config(self, request):
+        """Endpoint GET/PUT para la configuración de nómina del tenant: /api/employees/payroll/config/"""
+        from .earnings_models import PayrollConfiguration
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'error': 'Tenant no identificado'}, status=400)
+            
+        config_obj, _ = PayrollConfiguration.objects.get_or_create(tenant=tenant)
+        
+        if request.method == 'PUT':
+            self._require_admin_role(request)
+            data = request.data
+            if 'default_period_type' in data:
+                config_obj.default_period_type = data['default_period_type']
+            if 'tax_rate' in data:
+                config_obj.tax_rate = Decimal(str(data['tax_rate']))
+            if 'social_security_rate' in data:
+                config_obj.social_security_rate = Decimal(str(data['social_security_rate']))
+            if 'health_insurance_rate' in data:
+                config_obj.health_insurance_rate = Decimal(str(data['health_insurance_rate']))
+            if 'auto_close_periods' in data:
+                config_obj.auto_close_periods = bool(data['auto_close_periods'])
+            config_obj.save()
+            
+        return Response({
+            'default_period_type': config_obj.default_period_type,
+            'tax_rate': float(config_obj.tax_rate),
+            'social_security_rate': float(config_obj.social_security_rate),
+            'health_insurance_rate': float(config_obj.health_insurance_rate),
+            'auto_close_periods': config_obj.auto_close_periods
+        })
+
