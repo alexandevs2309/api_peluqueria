@@ -21,14 +21,18 @@ try:
     if db_url:
         conn = psycopg2.connect(db_url, connect_timeout=3)
     else:
-        conn = psycopg2.connect(
-            dbname=os.environ.get('DB_NAME', 'postgres'),
-            user=os.environ.get('DB_USER', 'postgres'),
-            password=os.environ.get('DB_PASSWORD', ''),
-            host=os.environ.get('DB_HOST', 'db'),
-            port=os.environ.get('DB_PORT', '5432'),
-            connect_timeout=3,
-        )
+        conn_kwargs = {
+            'dbname': os.environ.get('DB_NAME', 'postgres'),
+            'user': os.environ.get('DB_USER', 'postgres'),
+            'password': os.environ.get('DB_PASSWORD', ''),
+            'host': os.environ.get('DB_HOST', 'db'),
+            'port': os.environ.get('DB_PORT', '5432'),
+            'connect_timeout': 3,
+        }
+        sslmode = os.environ.get('DB_SSLMODE')
+        if sslmode:
+            conn_kwargs['sslmode'] = sslmode
+        conn = psycopg2.connect(**conn_kwargs)
     conn.close()
     sys.exit(0)
 except Exception as e:

@@ -335,6 +335,13 @@ if _database_url:
     DATABASES = {'default': _db_config}
 else:
     _db_schema_opts = f'-c search_path={_db_schema},public -c statement_timeout=30000' if _db_schema else '-c statement_timeout=30000'
+    _db_options = {
+        'connect_timeout': 10,
+        'options': _db_schema_opts,
+    }
+    _sslmode = env('DB_SSLMODE', default=None)
+    if _sslmode:
+        _db_options['sslmode'] = _sslmode
     DATABASES = {
         'default': {
             'ENGINE': 'django_prometheus.db.backends.postgresql',
@@ -344,10 +351,7 @@ else:
             'HOST': env('DB_HOST', default='db'),
             'PORT': env('DB_PORT', default='5432'),
             'CONN_MAX_AGE': _conn_max_age,
-            'OPTIONS': {
-                'connect_timeout': 10,
-                'options': _db_schema_opts,
-            },
+            'OPTIONS': _db_options,
         }
     }
 

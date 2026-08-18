@@ -1,24 +1,4 @@
-
 services:
-  db:
-    image: postgres:16
-    environment:
-      POSTGRES_DB: ${DB_NAME:-barbershop_db}
-      POSTGRES_USER: ${DB_USER:-postgres}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5435:5432"
-    # Puerto expuesto temporalmente para backup desde host
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-barbershop_db}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - backend
-
   redis:
     image: redis:7-alpine
     user: "999:999"
@@ -30,16 +10,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    networks:
-      - backend
-
-  pgbouncer:
-    build: ./pgbouncer
-    ports:
-      - "6432:6432"
-    depends_on:
-      db:
-        condition: service_healthy
     networks:
       - backend
 
@@ -59,9 +29,10 @@ services:
       DEBUG: "true"
       USE_CLOUDINARY: "false"
       LOG_LEVEL: INFO
-      DATABASE_URL: ""
-      DB_HOST: ${DB_HOST:-db}
-      DB_PORT: ${DB_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_HOST: ${DB_HOST:-pg-1ac1db44-alexanderdelrosarioperez-b7e6.f.aivencloud.com}
+      DB_PORT: ${DB_PORT:-27724}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
       PGBOUNCER_ENABLED: ${PGBOUNCER_ENABLED:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
@@ -76,8 +47,6 @@ services:
         reservations:
           memory: 1G
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
@@ -102,16 +71,15 @@ services:
     environment:
       DEBUG: "true"
       LOG_LEVEL: INFO
-      DATABASE_URL: ""
-      DB_HOST: ${DB_HOST:-db}
-      DB_PORT: ${DB_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_HOST: ${DB_HOST:-pg-1ac1db44-alexanderdelrosarioperez-b7e6.f.aivencloud.com}
+      DB_PORT: ${DB_PORT:-27724}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
       PGBOUNCER_ENABLED: ${PGBOUNCER_ENABLED:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
       web:
@@ -130,16 +98,15 @@ services:
     environment:
       DEBUG: "true"
       LOG_LEVEL: INFO
-      DATABASE_URL: ""
-      DB_HOST: ${DB_HOST:-db}
-      DB_PORT: ${DB_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_HOST: ${DB_HOST:-pg-1ac1db44-alexanderdelrosarioperez-b7e6.f.aivencloud.com}
+      DB_PORT: ${DB_PORT:-27724}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
       PGBOUNCER_ENABLED: ${PGBOUNCER_ENABLED:-false}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_BROKER_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
       web:
@@ -176,14 +143,13 @@ services:
     environment:
       DEBUG: "true"
       LOG_LEVEL: INFO
-      DATABASE_URL: ""
-      DB_HOST: ${DB_HOST:-db}
-      DB_PORT: ${DB_PORT:-5432}
+      DATABASE_URL: ${DATABASE_URL:-}
+      DB_HOST: ${DB_HOST:-pg-1ac1db44-alexanderdelrosarioperez-b7e6.f.aivencloud.com}
+      DB_PORT: ${DB_PORT:-27724}
+      DB_SSLMODE: ${DB_SSLMODE:-require}
       REDIS_URL: redis://:${REDIS_PASSWORD:-dev_redis_pass}@redis:6379/0
       RUNNING_SSE: "true"
     depends_on:
-      db:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks:
@@ -206,6 +172,7 @@ services:
       - "9090:9090"
     networks:
       - backend
+
   grafana:
     image: grafana/grafana:latest
     environment:
@@ -233,9 +200,7 @@ services:
     environment:
       - AUTHENTICATION_TYPE=apikey
       - AUTHENTICATION_API_KEY=${EVOLUTION_API_TOKEN:-dev_evolution_token_secret}
-      - DATABASE_ENABLED=true
-      - DATABASE_PROVIDER=postgresql
-      - DATABASE_CONNECTION_URI=${EVOLUTION_DB_URI:-postgresql://postgres:dev_password@db:5432/barbershop_db?schema=evolution_api}
+      - DATABASE_ENABLED=false
       - CACHE_REDIS_ENABLED=false
     volumes:
       - evolution_instances:/evolution/instances
@@ -243,7 +208,6 @@ services:
       - backend
 
 volumes:
-  postgres_data:
   redis_data:
   evolution_instances:
   static_volume:
