@@ -43,12 +43,7 @@ class AuditLogSerializer(serializers.ModelSerializer):
         return None
     
     def get_object_repr(self, obj):
-        """Retorna una representación string del objeto relacionado"""
-        try:
-            if obj.content_type and obj.content_type.model_class() and obj.content_object:
-                return str(obj.content_object)
-        except (AttributeError, ValueError):
-            pass
+        """Retorna representación string sin lazy load del GenericForeignKey"""
         return None
 
 class AuditLogCreateSerializer(serializers.ModelSerializer):

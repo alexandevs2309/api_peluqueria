@@ -2,8 +2,7 @@ from rest_framework import viewsets, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
-from django.db.models import Q
-from django.db.models import Count
+from django.db.models import Q, Count, Case, When, IntegerField
 from django.utils import timezone
 from .models import AuditLog
 from .serializers import AuditLogSerializer, AuditLogCreateSerializer
@@ -16,7 +15,11 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     """
     ViewSet para acceder a todos los logs de auditoria unificados
     """
-    queryset = AuditLog.objects.all().select_related('user', 'content_type')
+    queryset = AuditLog.objects.all().select_related('user', 'content_type').only(
+        'id', 'user__id', 'user__email', 'user__full_name',
+        'action', 'description', 'content_type__id', 'content_type__model',
+        'object_id', 'ip_address', 'user_agent', 'extra_data', 'timestamp', 'source', 'tenant_id'
+    )
     serializer_class = AuditLogSerializer
     permission_classes = [TenantPermissionByAction]
     permission_map = {
@@ -75,31 +78,43 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     
     @action(detail=False, methods=['get'])
     def summary(self, request):
-        """Retorna un resumen de actividad reciente"""
+        """Retorna un resumen de actividad reciente — optimizado a 3 queries"""
         queryset = self.get_queryset()
-        recent_logs = queryset[:10]
-        serializer = self.get_serializer(recent_logs, many=True)
-        total_logs = queryset.count()
-        error_logs = queryset.filter(action__icontains='ERROR').count()
-        warning_logs = queryset.filter(action='PERFORMANCE_ALERT').count()
-        last_24h = queryset.filter(timestamp__gte=timezone.now() - timezone.timedelta(hours=24)).count()
+        now = timezone.now()
+        last_24h = now - timezone.timedelta(hours=24)
+
+        # Query 1: counts (total, errors, warnings, last_24h) en una sola query
+        stats = queryset.aggregate(
+            total_logs=Count('id'),
+            error_logs=Count('id', filter=Q(action__icontains='ERROR')),
+            warning_logs=Count('id', filter=Q(action='PERFORMANCE_ALERT')),
+            last_24h=Count('id', filter=Q(timestamp__gte=last_24h)),
+        )
+
+        # Query 2: actions breakdown
         actions_breakdown = list(
             queryset.values('action')
             .annotate(count=Count('id'))
             .order_by('-count', 'action')[:8]
         )
+
+        # Query 3: sources breakdown
         sources_breakdown = list(
             queryset.values('source')
             .annotate(count=Count('id'))
             .order_by('-count', 'source')[:8]
         )
 
+        # Recent logs: only 5 (not 10) to reduce payload
+        recent_logs = queryset[:5]
+        serializer = self.get_serializer(recent_logs, many=True)
+
         return Response({
             'recent_activity': serializer.data,
-            'total_logs': total_logs,
-            'error_logs': error_logs,
-            'warning_logs': warning_logs,
-            'last_24h': last_24h,
+            'total_logs': stats['total_logs'],
+            'error_logs': stats['error_logs'],
+            'warning_logs': stats['warning_logs'],
+            'last_24h': stats['last_24h'],
             'actions_breakdown': actions_breakdown,
             'sources_breakdown': sources_breakdown
         })
