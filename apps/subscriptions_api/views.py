@@ -115,12 +115,10 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     def update(self, request, *args, **kwargs):
         logger.debug("Subscription plan update requested by user_id=%s", request.user.id)
         
-        # Bloquear solo las características
-        blocked_fields = ['features', 'name']
+        blocked_fields = ['name']
         if hasattr(request.data, '_mutable'):
             request.data._mutable = True
         
-        # Filtrar campos bloqueados
         for field in blocked_fields:
             if field in request.data:
                 del request.data[field]
@@ -139,12 +137,10 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
             }, status=400)
     
     def partial_update(self, request, *args, **kwargs):
-        # Bloquear solo las características
-        blocked_fields = ['features', 'name']
+        blocked_fields = ['name']
         if hasattr(request.data, '_mutable'):
             request.data._mutable = True
             
-        # Filtrar campos bloqueados
         for field in blocked_fields:
             if field in request.data:
                 del request.data[field]
