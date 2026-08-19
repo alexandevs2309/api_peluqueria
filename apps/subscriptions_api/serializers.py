@@ -9,14 +9,46 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
     features_list = serializers.SerializerMethodField()
     display_name = serializers.CharField(source='get_name_display', read_only=True)
     
+    # camelCase aliases for frontend compatibility
+    maxEmployees = serializers.SerializerMethodField()
+    maxUsers = serializers.SerializerMethodField()
+    allowsMultipleBranches = serializers.SerializerMethodField()
+    hasInventory = serializers.SerializerMethodField()
+    hasAdvancedReports = serializers.SerializerMethodField()
+    customBranding = serializers.SerializerMethodField()
+    popular = serializers.SerializerMethodField()
+    
     class Meta:
         model = SubscriptionPlan
         fields = [
             'id', 'name', 'display_name', 'description', 'price', 'annual_price', 'duration_month', 'stripe_price_id', 'stripe_annual_price_id', 'is_active', 'is_public',
             'max_employees', 'max_users', 'allows_multiple_branches', 'features', 'commercial_benefits',
-            'features_list', 'created_at', 'updated_at'
+            'features_list', 'created_at', 'updated_at',
+            'maxEmployees', 'maxUsers', 'allowsMultipleBranches',
+            'hasInventory', 'hasAdvancedReports', 'customBranding', 'popular'
         ]
         read_only_fields = ['id', 'name', 'display_name', 'created_at', 'updated_at']
+    
+    def get_maxEmployees(self, obj):
+        return obj.max_employees
+    
+    def get_maxUsers(self, obj):
+        return obj.max_users
+    
+    def get_allowsMultipleBranches(self, obj):
+        return obj.allows_multiple_branches
+    
+    def get_hasInventory(self, obj):
+        return get_feature_value(obj.features, 'inventory', default=False)
+    
+    def get_hasAdvancedReports(self, obj):
+        return get_feature_value(obj.features, 'reports', default=False)
+    
+    def get_customBranding(self, obj):
+        return get_feature_value(obj.features, 'custom_branding', default=False)
+    
+    def get_popular(self, obj):
+        return get_feature_value(obj.features, 'popular', default=False)
     
     def get_features_list(self, obj):
         """Convert features dict to list for frontend"""
