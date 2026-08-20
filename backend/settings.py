@@ -152,6 +152,7 @@ INSTALLED_APPS = [
     'apps.booking_api',
     'apps.chatbot_api',
     'apps.telemetry_api',
+    'apps.mcp_api',
 ]
 
 MIDDLEWARE = [
