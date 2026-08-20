@@ -250,6 +250,18 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['email', 'full_name', 'phone', 'password', 'tenant', 'role', 'business_role', 'is_active']
 
+    def validate_email(self, value):
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) or (request.user.tenant if hasattr(request, 'user') and request.user.tenant else None)
+
+        if tenant:
+            exists = User.objects.filter(email__iexact=value, tenant=tenant)
+            if self.instance:
+                exists = exists.exclude(pk=self.instance.pk)
+            if exists.exists():
+                raise serializers.ValidationError('Ya existe un usuario con este correo en el mismo negocio.')
+        return value
+
     def validate_password(self, value):
         return validate_password_policy(value)
 

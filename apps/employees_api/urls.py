@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import EmployeeViewSet, WorkScheduleViewSet, AttendanceRecordViewSet
-from .earnings_views import PayrollViewSet
+from .earnings_views import PayrollViewSet, PayrollConfigurationViewSet
 from .notifications_views import recent_earnings_notifications, mark_notification_read
 
 router = DefaultRouter()
@@ -9,6 +9,7 @@ router.register(r'employees', EmployeeViewSet , basename='employee')
 router.register(r'schedules', WorkScheduleViewSet , basename='work_schedule')
 router.register(r'attendance', AttendanceRecordViewSet, basename='attendance_record')
 router.register(r'payroll', PayrollViewSet, basename='payroll')
+router.register(r'payroll-config', PayrollConfigurationViewSet, basename='payroll-config')
 
 urlpatterns = [
     path('', include(router.urls)),

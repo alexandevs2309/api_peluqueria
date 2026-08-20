@@ -81,12 +81,6 @@ class SaleViewSet(TenantScopedViewSet):
             'email': email or ''
         }
     
-    def _create_employee_earning(self, sale, employee_user):
-        """Crea ganancia automática para el empleado - DEPRECATED"""
-        # Esta función ya no es necesaria porque las comisiones se calculan
-        # automáticamente desde los snapshots de Sale en PayrollPeriod
-        pass
-
     def create(self, request, *args, **kwargs):
         logger.info("Creating sale request")
         logger.debug("Sale create payload received")
@@ -611,18 +605,9 @@ class SaleViewSet(TenantScopedViewSet):
                     if appointment.client:
                         appointment.client.last_visit = timezone.now()
                         appointment.client.save()
-                        
-                    # Crear ganancia automática para el empleado
-                    if sale_employee:
-                        self._create_employee_earning(sale, sale_employee.user)
-                        
+
                 except Appointment.DoesNotExist:
                     pass
-            
-            # Si no hay cita pero hay empleado asignado, crear ganancia
-            elif sale_employee:
-                self._create_employee_earning(sale, sale_employee.user)
-       
             
 
     def get_queryset(self):

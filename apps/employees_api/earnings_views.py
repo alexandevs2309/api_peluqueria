@@ -8,8 +8,11 @@ from django.core.exceptions import ValidationError
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
+from django.db.models import Q
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.auth_api.role_utils import get_effective_role_name
+from datetime import date, timedelta
+from calendar import monthrange
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +69,48 @@ class PayrollViewSet(viewsets.ViewSet):
             ).prefetch_related('deductions').filter(employee__tenant=tenant)
         return PayrollPeriod.objects.none()
     
+    def _ensure_open_periods(self, tenant):
+        """Auto-generar períodos abiertos para empleados activos sin período vigente"""
+        from .models import Employee
+        today = date.today()
+        
+        # Determinar período actual
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            end_date = today.replace(day=monthrange(today.year, today.month)[1])
+        
+        active_employees = Employee.objects.filter(
+            tenant=tenant,
+            is_active=True
+        )
+        
+        created = 0
+        for employee in active_employees:
+            _, was_created = PayrollPeriod.objects.get_or_create(
+                employee=employee,
+                period_start=start_date,
+                period_end=end_date,
+                defaults={
+                    'period_type': 'biweekly',
+                    'status': 'open',
+                }
+            )
+            if was_created:
+                created += 1
+                # Calcular montos iniciales
+                period = PayrollPeriod.objects.get(
+                    employee=employee,
+                    period_start=start_date,
+                    period_end=end_date
+                )
+                period.calculate_amounts()
+                period.save()
+        
+        return created
+
     @action(detail=False, methods=['get'], url_path='client/payroll')
     def list_periods(self, request):
         """Endpoint compatible con frontend: GET /payroll/client/payroll/"""
@@ -101,6 +146,9 @@ class PayrollViewSet(viewsets.ViewSet):
                     ])
 
         status_filter = request.query_params.get('status')
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if tenant:
+            self._ensure_open_periods(tenant)
         periods = self.get_queryset().select_related('employee__user')
         
         if status_filter:
@@ -609,3 +657,35 @@ Equipo de Nómina'''
             })
         except PayrollPeriod.DoesNotExist:
             return Response({'error': 'Recibo no encontrado'}, status=404)
+
+
+class PayrollConfigurationViewSet(viewsets.GenericViewSet):
+    """ViewSet para gestionar configuración global de nómina del tenant"""
+    permission_classes = [TenantPermissionByAction]
+    permission_map = {
+        'retrieve': 'employees_api.view_employee_payroll',
+        'update': 'employees_api.manage_employee_loans',
+        'partial_update': 'employees_api.manage_employee_loans',
+    }
+    serializer_class = PayrollConfigurationSerializer
+
+    def get_object(self):
+        tenant = getattr(self.request, 'tenant', getattr(self.request.user, 'tenant', None))
+        obj, _ = PayrollConfiguration.objects.get_or_create(tenant=tenant)
+        return obj
+
+    def retrieve(self, request):
+        serializer = self.get_serializer(self.get_object())
+        return Response(serializer.data)
+
+    def update(self, request):
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def partial_update(self, request):
+        serializer = self.get_serializer(self.get_object(), data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
