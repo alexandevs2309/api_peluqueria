@@ -27,8 +27,10 @@ class IntegrationTestView(views.APIView):
         try:
             if integration_type in ('twilio', 'sms'):
                 if IntegrationService.is_twilio_enabled():
-                    IntegrationService.send_sms('+1234567890', 'Test SMS from Auron Suite')
-                    return response.Response({'success': True, 'message': 'SMS de prueba enviado'})
+                    system_settings = IntegrationService.get_system_settings()
+                    test_phone = request.data.get('test_phone') or system_settings.twilio_phone_number or '+1234567890'
+                    IntegrationService.send_sms(test_phone, 'Test SMS from Auron Suite')
+                    return response.Response({'success': True, 'message': f'SMS de prueba enviado a {test_phone}'})
                 return response.Response({'success': False, 'message': 'Twilio no esta habilitado'})
 
             if integration_type == 'whatsapp':
