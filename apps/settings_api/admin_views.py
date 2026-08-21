@@ -128,12 +128,12 @@ class SaasMetricsView(views.APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class SystemMonitorView(views.APIView):
-    """Vista para monitoreo del sistema"""
+    """Vista para monitoreo del sistema con semántica de estados extendida"""
     permission_classes = [IsSuperAdmin]
     
     def get(self, request):
         try:
-            # Estado de servicios
+            # Estado de servicios con nueva semántica
             services = {
                 'database': self._check_database(),
                 'email': self._check_email(),
@@ -143,17 +143,17 @@ class SystemMonitorView(views.APIView):
                 'storage': self._check_storage()
             }
             
-            # Calcular estado general
+            # Calcular estado general (solo UP/DOWN/DEGRADED afectan)
             overall_status = self._calculate_overall_status(services)
             
-            # Métricas de rendimiento
+            # Métricas de rendimiento (solo servicios UP/DEGRADED)
             metrics = {
                 'response_time': self._calculate_avg_response_time(services),
                 'error_rate': self._calculate_error_rate(services),
                 'uptime': self._calculate_uptime(services)
             }
             
-            # Alertas del sistema
+            # Alertas del sistema (solo DOWN real genera alertas críticas)
             alerts = self._generate_system_alerts(services)
             
             return response.Response({
@@ -184,7 +184,7 @@ class SystemMonitorView(views.APIView):
                 'status': 'down',
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': str(e)
+                'error_message': 'Error de conexión a base de datos'
             }
     
     def _check_email(self):
@@ -198,7 +198,7 @@ class SystemMonitorView(views.APIView):
                     'last_check': timezone.now().isoformat(),
                     'response_time': self._elapsed_ms(started),
                     'details': 'SMTP responde, pero existe un error reciente de entrega/configuración',
-                    'error_message': recent_error.description
+                    'error_message': self._sanitize_error(recent_error.description)
                 }
             return {
                 'status': 'up',
@@ -207,20 +207,31 @@ class SystemMonitorView(views.APIView):
                 'details': 'SMTP/Email configurado y validado'
             }
         return {
-            'status': 'down',
+            'status': 'not_configured',
             'last_check': timezone.now().isoformat(),
             'response_time': self._elapsed_ms(started),
-            'error_message': 'Servicio de email no configurado o invalidado por verificación'
+            'details': 'Email no configurado'
         }
     
     def _check_payments(self):
+        """Stripe: DISABLED si deshabilitado, NOT_CONFIGURED si sin credenciales, UP/DOWN/DEGRADED si habilitado+configurado"""
         started = time.perf_counter()
-        if not IntegrationService.is_stripe_enabled():
+        system_settings = IntegrationService.get_system_settings()
+        
+        if not system_settings.stripe_enabled:
             return {
-                'status': 'down',
+                'status': 'disabled',
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': 'Stripe no configurado'
+                'details': 'Stripe deshabilitado'
+            }
+        
+        if not IntegrationService.is_stripe_configured():
+            return {
+                'status': 'not_configured',
+                'last_check': timezone.now().isoformat(),
+                'response_time': self._elapsed_ms(started),
+                'details': 'Stripe no configurado'
             }
 
         stripe_status = self._verify_stripe_connectivity(started)
@@ -234,7 +245,7 @@ class SystemMonitorView(views.APIView):
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
                 'details': 'Stripe configurado, pero con incidencias recientes',
-                'error_message': recent_error.description
+                'error_message': self._sanitize_error(recent_error.description)
             }
 
         return {
@@ -245,13 +256,14 @@ class SystemMonitorView(views.APIView):
         }
     
     def _check_paypal(self):
+        """PayPal: mantener lógica actual (solo UP/DOWN/DEGRADED si habilitado+configurado)"""
         started = time.perf_counter()
         if not IntegrationService.is_paypal_enabled():
             return {
-                'status': 'down',
+                'status': 'not_configured',
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': 'PayPal no configurado'
+                'details': 'PayPal no configurado'
             }
 
         paypal_status = self._verify_paypal_connectivity(started)
@@ -265,7 +277,7 @@ class SystemMonitorView(views.APIView):
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
                 'details': 'PayPal configurado, pero con incidencias recientes',
-                'error_message': recent_error.description
+                'error_message': self._sanitize_error(recent_error.description)
             }
         return {
             'status': 'degraded',
@@ -275,13 +287,24 @@ class SystemMonitorView(views.APIView):
         }
     
     def _check_twilio(self):
+        """Twilio: DISABLED si deshabilitado, NOT_CONFIGURED si sin credenciales, UP/DOWN/DEGRADED si habilitado+configurado"""
         started = time.perf_counter()
-        if not IntegrationService.is_twilio_enabled():
+        system_settings = IntegrationService.get_system_settings()
+        
+        if not system_settings.twilio_enabled:
             return {
-                'status': 'down',
+                'status': 'disabled',
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': 'Twilio no configurado'
+                'details': 'Twilio deshabilitado'
+            }
+        
+        if not IntegrationService.is_twilio_configured():
+            return {
+                'status': 'not_configured',
+                'last_check': timezone.now().isoformat(),
+                'response_time': self._elapsed_ms(started),
+                'details': 'Twilio no configurado'
             }
 
         twilio_status = self._verify_twilio_connectivity(started)
@@ -295,7 +318,7 @@ class SystemMonitorView(views.APIView):
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
                 'details': 'Twilio configurado, pero con incidencias recientes',
-                'error_message': recent_error.description
+                'error_message': self._sanitize_error(recent_error.description)
             }
         return {
             'status': 'degraded',
@@ -329,10 +352,10 @@ class SystemMonitorView(views.APIView):
                     'details': f'S3 configurado sobre bucket {bucket_name}; falta verificación activa de escritura/lectura'
                 }
             return {
-                'status': 'degraded',
+                'status': 'not_configured',
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': 'AWS S3 habilitado, pero falta AWS_STORAGE_BUCKET_NAME'
+                'details': 'AWS S3 habilitado, pero falta AWS_STORAGE_BUCKET_NAME'
             }
 
         if media_root and os.path.isdir(media_root):
@@ -347,7 +370,7 @@ class SystemMonitorView(views.APIView):
             'status': 'down',
             'last_check': timezone.now().isoformat(),
             'response_time': self._elapsed_ms(started),
-            'error_message': f'No se encontro almacenamiento local disponible en {media_root}'
+            'error_message': 'No se encontro almacenamiento disponible'
         }
 
     def _elapsed_ms(self, started):
@@ -386,7 +409,7 @@ class SystemMonitorView(views.APIView):
                 'status': severity,
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': f'No se pudo validar Stripe en vivo: {str(e)}'
+                'error_message': self._sanitize_error(f'No se pudo validar Stripe en vivo: {str(e)}')
             }
 
     def _verify_paypal_connectivity(self, started):
@@ -419,7 +442,7 @@ class SystemMonitorView(views.APIView):
                 'status': severity,
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': f'PayPal respondió {auth_response.status_code} durante la validación'
+                'error_message': self._sanitize_error(f'PayPal respondió {auth_response.status_code} durante la validación')
             }
         except Exception as e:
             severity = 'down' if self._is_credentials_error(str(e)) else 'degraded'
@@ -427,7 +450,7 @@ class SystemMonitorView(views.APIView):
                 'status': severity,
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': f'No se pudo validar PayPal en vivo: {str(e)}'
+                'error_message': self._sanitize_error(f'No se pudo validar PayPal en vivo: {str(e)}')
             }
 
     def _verify_twilio_connectivity(self, started):
@@ -457,7 +480,7 @@ class SystemMonitorView(views.APIView):
                 'status': severity,
                 'last_check': timezone.now().isoformat(),
                 'response_time': self._elapsed_ms(started),
-                'error_message': f'No se pudo validar Twilio en vivo: {str(e)}'
+                'error_message': self._sanitize_error(f'No se pudo validar Twilio en vivo: {str(e)}')
             }
 
     def _is_credentials_error(self, error_message):
@@ -472,42 +495,64 @@ class SystemMonitorView(views.APIView):
             'forbidden',
             'token'
         ])
-    
+
+    def _sanitize_error(self, message):
+        """Sanitizar mensajes de error para no exponer secretos"""
+        if not message:
+            return message
+        lowered = str(message).lower()
+        # Patrones de secretos a filtrar
+        secret_patterns = [
+            'sk_live_', 'sk_test_', 'rk_live_', 'rk_test_',  # Stripe
+            'client_secret', 'client_id',  # PayPal
+            'auth_token', 'account_sid',  # Twilio
+            'api_key', 'secret_key', 'password', 'token',  # Genéricos
+        ]
+        for pattern in secret_patterns:
+            if pattern in lowered:
+                return 'Error de configuración o autenticación'
+        return message
+
     def _calculate_overall_status(self, services):
         statuses = [s['status'] for s in services.values()]
-        if 'down' in statuses:
+        # Solo UP, DOWN, DEGRADED afectan el estado general
+        active_statuses = [s for s in statuses if s in ('up', 'down', 'degraded')]
+        if 'down' in active_statuses:
             return 'critical'
-        elif 'degraded' in statuses:
+        elif 'degraded' in active_statuses:
             return 'warning'
         return 'healthy'
     
     def _calculate_avg_response_time(self, services):
-        times = [s.get('response_time', 0) for s in services.values() if 'response_time' in s]
-        return sum(times) / len(times) if times else 0
+        times = [s.get('response_time', 0) for s in services.values() if s.get('status') in ('up', 'degraded') and 'response_time' in s]
+        return round(sum(times) / len(times), 2) if times else 0
     
     def _calculate_error_rate(self, services):
-        total = len(services)
-        errors = sum(1 for s in services.values() if s['status'] == 'down')
-        return (errors / total) * 100
+        # Solo contar servicios que están realmente habilitados y configurados
+        active_services = [s for s in services.values() if s.get('status') in ('up', 'down', 'degraded')]
+        if not active_services:
+            return 0
+        errors = sum(1 for s in active_services if s['status'] == 'down')
+        return round((errors / len(active_services)) * 100, 2)
 
     def _calculate_uptime(self, services):
-        total = len(services)
-        available = sum(1 for s in services.values() if s['status'] in ('up', 'degraded'))
-        return round((available / total) * 100, 2) if total else 0
+        active_services = [s for s in services.values() if s.get('status') in ('up', 'down', 'degraded')]
+        if not active_services:
+            return 100.0
+        available = sum(1 for s in active_services if s['status'] in ('up', 'degraded'))
+        return round((available / len(active_services)) * 100, 2)
     
     def _generate_system_alerts(self, services):
         alerts = []
         for service_name, service in services.items():
+            # Solo alertar para DOWN real (servicios habilitados+configurados que fallan)
             if service['status'] == 'down':
                 error_message = service.get('error_message', '')
-                is_not_configured = isinstance(error_message, str) and 'no configurado' in error_message.lower()
-                alert_type = 'info' if settings.DEBUG and is_not_configured else 'critical'
-                alert_title = f'{service_name.title()} no configurado' if settings.DEBUG and is_not_configured else f'{service_name.title()} fuera de servicio'
                 alerts.append({
                     'id': f'{service_name}-down',
-                    'type': alert_type,
-                    'title': alert_title,
-                    'message': error_message or f'{service_name} no está respondiendo',
+                    'type': 'critical',
+                    'title': f'{service_name.title()} fuera de servicio',
+                    'message': self._sanitize_error(error_message or f'{service_name} no está respondiendo'),
                     'created_at': service['last_check'],
                     'resolved': False
                 })

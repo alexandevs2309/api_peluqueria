@@ -26,41 +26,48 @@ class IntegrationService:
         return SystemSettings.get_settings()
 
     @staticmethod
-    def is_stripe_enabled():
-        """Verificar si Stripe esta habilitado y configurado correctamente"""
+    def is_stripe_configured():
+        """Verificar si Stripe tiene credenciales configuradas (sin considerar toggle enabled)"""
         system_settings = IntegrationService.get_system_settings()
         secret_key = system_settings.stripe_secret_key or os.getenv('STRIPE_SECRET_KEY')
         public_key = system_settings.stripe_public_key or os.getenv('STRIPE_PUBLISHABLE_KEY')
+        return bool(secret_key and public_key and secret_key.startswith('sk_') and public_key.startswith('pk_'))
 
+    @staticmethod
+    def is_stripe_enabled():
+        """Verificar si Stripe esta habilitado y configurado correctamente"""
+        system_settings = IntegrationService.get_system_settings()
         if not system_settings.stripe_enabled:
             return False
+        return IntegrationService.is_stripe_configured()
 
-        if not secret_key or not public_key:
-            return False
-
-        if not secret_key.startswith('sk_'):
-            return False
-
-        if not public_key.startswith('pk_'):
-            return False
-
-        return True
+    @staticmethod
+    def is_paypal_configured():
+        """Verificar si PayPal tiene credenciales configuradas (sin considerar toggle enabled)"""
+        system_settings = IntegrationService.get_system_settings()
+        client_id = system_settings.paypal_client_id or os.getenv('PAYPAL_CLIENT_ID')
+        client_secret = system_settings.paypal_client_secret or os.getenv('PAYPAL_SECRET')
+        return bool(client_id and client_secret)
 
     @staticmethod
     def is_paypal_enabled():
         """Verificar si PayPal esta habilitado"""
         system_settings = IntegrationService.get_system_settings()
-        client_id = system_settings.paypal_client_id or os.getenv('PAYPAL_CLIENT_ID')
-        client_secret = system_settings.paypal_client_secret or os.getenv('PAYPAL_SECRET')
-        return system_settings.paypal_enabled and bool(client_id) and bool(client_secret)
+        return system_settings.paypal_enabled and IntegrationService.is_paypal_configured()
+
+    @staticmethod
+    def is_twilio_configured():
+        """Verificar si Twilio (SMS) tiene credenciales configuradas (sin considerar toggle enabled)"""
+        system_settings = IntegrationService.get_system_settings()
+        account_sid = system_settings.twilio_account_sid or os.getenv('TWILIO_ACCOUNT_SID')
+        auth_token = system_settings.twilio_auth_token or os.getenv('TWILIO_AUTH_TOKEN')
+        return bool(account_sid and auth_token)
 
     @staticmethod
     def is_twilio_enabled():
         """Verificar si Twilio (SMS) esta habilitado"""
         system_settings = IntegrationService.get_system_settings()
-        account_sid = system_settings.twilio_account_sid or os.getenv('TWILIO_ACCOUNT_SID')
-        auth_token = system_settings.twilio_auth_token or os.getenv('TWILIO_AUTH_TOKEN')
-        return system_settings.twilio_enabled and bool(account_sid) and bool(auth_token)
+        return system_settings.twilio_enabled and IntegrationService.is_twilio_configured()
 
     @staticmethod
     def is_sendgrid_enabled():
@@ -97,6 +104,11 @@ class IntegrationService:
         )
 
     @staticmethod
+    def is_email_configured():
+        """Alias for is_email_enabled - email is considered configured if enabled"""
+        return IntegrationService.is_email_enabled()
+
+    @staticmethod
     def get_integration_status():
         """Obtener estado de todas las integraciones"""
         return {
@@ -106,6 +118,36 @@ class IntegrationService:
             'email': IntegrationService.is_email_enabled(),
             'aws_s3': IntegrationService.is_aws_s3_enabled(),
             'cloudinary': IntegrationService.is_cloudinary_enabled(),
+        }
+
+    @staticmethod
+    def get_integration_config_status():
+        """Obtener estado de configuración de todas las integraciones (enabled vs configured)"""
+        return {
+            'stripe': {
+                'enabled': IntegrationService.is_stripe_enabled(),
+                'configured': IntegrationService.is_stripe_configured(),
+            },
+            'paypal': {
+                'enabled': IntegrationService.is_paypal_enabled(),
+                'configured': IntegrationService.is_paypal_configured(),
+            },
+            'twilio': {
+                'enabled': IntegrationService.is_twilio_enabled(),
+                'configured': IntegrationService.is_twilio_configured(),
+            },
+            'email': {
+                'enabled': IntegrationService.is_email_enabled(),
+                'configured': IntegrationService.is_email_configured(),
+            },
+            'aws_s3': {
+                'enabled': IntegrationService.is_aws_s3_enabled(),
+                'configured': IntegrationService.is_aws_s3_enabled(),
+            },
+            'cloudinary': {
+                'enabled': IntegrationService.is_cloudinary_enabled(),
+                'configured': IntegrationService.is_cloudinary_enabled(),
+            },
         }
 
     @staticmethod
