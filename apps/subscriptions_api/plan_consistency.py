@@ -10,6 +10,8 @@ FEATURE_ALIASES = {
     "cash_register": ("pos", "pos_system"),
     "pos": ("cash_register", "pos_system"),
     "pos_system": ("cash_register", "pos"),
+    "promotions": ("promotions_enabled",),
+    "promotions_enabled": ("promotions",),
 }
 
 

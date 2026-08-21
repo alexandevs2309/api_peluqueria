@@ -48,9 +48,9 @@ def get_user_feature_flag(user, feature_name):
 
     plan_features = {
         'basic': ['pos_enabled', 'appointments_enabled'],
-        'standard': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled'],
-        'premium': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled'],
-        'enterprise': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'export_enabled']
+        'standard': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'promotions_enabled'],
+        'premium': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'promotions_enabled'],
+        'enterprise': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'export_enabled', 'promotions_enabled']
     }
 
     plan_type = getattr(subscription.plan, 'name', 'basic').lower()

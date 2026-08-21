@@ -737,7 +737,7 @@ DEFAULT_PLANS = [
         "max_employees": 10,
         "max_users": 15,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True},
+        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "promotions": True, "reports_advanced": True},
     },
     {
         "name": "premium",
@@ -747,7 +747,7 @@ DEFAULT_PLANS = [
         "max_employees": 25,
         "max_users": 30,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "reports_advanced": True},
+        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "reports_advanced": True, "promotions": True, "custom_branding": True},
     },
     {
         "name": "enterprise",
@@ -764,10 +764,12 @@ DEFAULT_PLANS = [
 
 def ensure_subscription_plans():
     for p_data in DEFAULT_PLANS:
-        SubscriptionPlan.objects.get_or_create(
+        plan, created = SubscriptionPlan.objects.update_or_create(
             name=p_data["name"],
             defaults=p_data,
         )
+        if not created:
+            print(f"  [PLAN] Actualizado: {plan.get_name_display()} - features: {plan.features}")
 
 
 def ensure_superuser():
