@@ -533,7 +533,7 @@ class PasswordResetRequestView(APIView):
                 return Response({"detail": "Correo enviado si el usuario existe."}, status=status.HTTP_200_OK)
 
             # Use environment variable for frontend URL
-            frontend_url = settings.FRONTEND_URL if hasattr(settings, 'FRONTEND_URL') else 'http://localhost:4200'
+            frontend_url = getattr(settings, 'ADMIN_FRONTEND_URL', '') or getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')
 
             for user in target_users:
                 uid = urlsafe_base64_encode(force_bytes(user.pk))

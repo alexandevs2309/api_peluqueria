@@ -67,6 +67,11 @@ FRONTEND_URL = env(
     default=''
 ).strip()
 
+ADMIN_FRONTEND_URL = env(
+    'ADMIN_FRONTEND_URL',
+    default=''
+).strip()
+
 
 def _frontend_origin_defaults():
     if not FRONTEND_URL:
