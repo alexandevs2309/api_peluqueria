@@ -12,7 +12,32 @@ DEFAULT_PLANS = [
         "max_employees": 3,
         "max_users": 5,
         "allows_multiple_branches": False,
-        "features": {"pos": True, "appointments": True, "inventory": True},
+        "features": {
+            "cash_register": True,
+            "appointments": True,
+            "inventory": True,
+            "reports": True,
+            "basic_reports": True,
+            "client_history": True,
+            "promotions": False,
+            "multi_location": False,
+            "advanced_reports": False,
+            "payroll": False,
+            "custom_branding": False,
+            "whatsapp_notifications": False,
+            "export_reports": False,
+            "priority_support": False,
+        },
+        "commercial_benefits": [
+            "1 Sucursal Principal",
+            "Hasta 3 Empleados",
+            "Punto de Venta (POS) y Caja Diaria",
+            "Agenda de Citas en Tiempo Real",
+            "Inventario de Productos",
+            "Reportes Básicos",
+            "Soporte por Correo",
+        ],
+        "is_active": True,
     },
     {
         "name": "standard",
@@ -22,7 +47,32 @@ DEFAULT_PLANS = [
         "max_employees": 10,
         "max_users": 15,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "promotions": True, "reports_advanced": True},
+        "features": {
+            "cash_register": True,
+            "appointments": True,
+            "inventory": True,
+            "reports": True,
+            "basic_reports": True,
+            "client_history": True,
+            "promotions": True,
+            "multi_location": True,
+            "advanced_reports": True,
+            "payroll": True,
+            "custom_branding": False,
+            "whatsapp_notifications": False,
+            "export_reports": False,
+            "priority_support": False,
+        },
+        "commercial_benefits": [
+            "Sucursales Ilimitadas",
+            "Hasta 10 Empleados y 15 Usuarios",
+            "Multi-Sucursal",
+            "Promociones y Cupones",
+            "Reportes Avanzados y BI",
+            "Comisiones y Nómina TSS",
+            "Soporte Prioritario por Correo",
+        ],
+        "is_active": True,
     },
     {
         "name": "premium",
@@ -32,7 +82,31 @@ DEFAULT_PLANS = [
         "max_employees": 25,
         "max_users": 30,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "reports_advanced": True, "promotions": True, "custom_branding": True},
+        "features": {
+            "cash_register": True,
+            "appointments": True,
+            "inventory": True,
+            "reports": True,
+            "basic_reports": True,
+            "client_history": True,
+            "promotions": True,
+            "multi_location": True,
+            "advanced_reports": True,
+            "payroll": True,
+            "custom_branding": True,
+            "whatsapp_notifications": True,
+            "export_reports": False,
+            "priority_support": False,
+        },
+        "commercial_benefits": [
+            "Todo lo del Plan Pro",
+            "Sucursales Ilimitadas",
+            "Hasta 25 Empleados y 30 Usuarios",
+            "Conexión WhatsApp mediante QR",
+            "Branding Personalizado (Logo y Colores)",
+            "Soporte Prioritario por Correo y WhatsApp",
+        ],
+        "is_active": True,
     },
     {
         "name": "enterprise",
@@ -42,13 +116,36 @@ DEFAULT_PLANS = [
         "max_employees": 0,
         "max_users": 0,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "api_access": True, "promotions": True, "reports_advanced": True, "custom_branding": True},
+        "features": {
+            "cash_register": True,
+            "appointments": True,
+            "inventory": True,
+            "reports": True,
+            "basic_reports": True,
+            "client_history": True,
+            "promotions": True,
+            "multi_location": True,
+            "advanced_reports": True,
+            "payroll": True,
+            "custom_branding": True,
+            "whatsapp_notifications": True,
+            "export_reports": True,
+            "priority_support": True,
+        },
+        "commercial_benefits": [
+            "Todo lo del Plan Business",
+            "Sucursales y Empleados Ilimitados",
+            "Exportación Excel de Reportes",
+            "Auditoría Avanzada",
+            "Soporte Dedicado con Seguimiento Personalizado",
+        ],
+        "is_active": True,
     },
 ]
 
 
 class Command(BaseCommand):
-    help = "Sincroniza planes de suscripción (idempotente)"
+    help = "Sincroniza planes de suscripción (idempotente). Fuente de verdad única."
 
     def handle(self, *args, **options):
         for p_data in DEFAULT_PLANS:
@@ -57,6 +154,9 @@ class Command(BaseCommand):
                 defaults=p_data,
             )
             action = "CREADO" if created else "ACTUALIZADO"
-            self.stdout.write(f"  [PLAN] {action}: {plan.get_name_display()} - features: {plan.features}")
+            self.stdout.write(
+                f"  [PLAN] {action}: {plan.get_name_display()} "
+                f"features: {plan.features}"
+            )
 
-        self.stdout.write(self.style.SUCCESS("✅ Planes sincronizados correctamente"))
+        self.stdout.write(self.style.SUCCESS("Planes sincronizados correctamente"))

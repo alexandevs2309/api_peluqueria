@@ -521,29 +521,50 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
     def whatsapp_webhook(self, request):
         """
         POST /api/settings/barbershop/whatsapp_webhook/
-        Webhook público llamado por la pasarela para notificar cambios de conexión
+        Webhook público llamado por Evolution API para notificar cambios de conexión.
+        Verifica firma HMAC si el tenant tiene webhook_secret configurado.
         """
+        import hmac
+        import hashlib
+
         data = request.data
         logger.info("WhatsApp Webhook received: %s", json.dumps(data)[:300])
-        
+
         event_type = (data.get("event") or "").lower()
         instance_name = data.get("instance")
-        
+
         if event_type in ("connection.update", "connection_update") and instance_name:
-            status_data = data.get("data", {})
-            status_state = status_data.get("state")
-            
-            settings = BarbershopSettings.objects.filter(whatsapp_instance_name=instance_name).first()
-            if settings:
+            settings_obj = BarbershopSettings.objects.filter(
+                whatsapp_instance_name=instance_name
+            ).first()
+            if settings_obj:
+                # Verify webhook signature if secret is configured
+                if settings_obj.whatsapp_webhook_secret:
+                    signature = request.headers.get('X-Webhook-Signature') or request.headers.get('x-webhook-signature')
+                    if not signature:
+                        logger.warning("WhatsApp webhook missing signature for instance %s", instance_name)
+                        return Response({'success': False, 'error': 'Missing signature'}, status=401)
+                    expected = hmac.new(
+                        settings_obj.whatsapp_webhook_secret.encode(),
+                        request.body,
+                        hashlib.sha256
+                    ).hexdigest()
+                    if not hmac.compare_digest(signature, expected):
+                        logger.warning("WhatsApp webhook invalid signature for instance %s", instance_name)
+                        return Response({'success': False, 'error': 'Invalid signature'}, status=401)
+
+                status_data = data.get("data", {})
+                status_state = status_data.get("state")
+
                 if status_state == "open":
-                    settings.whatsapp_status = "connected"
-                    settings.whatsapp_enabled = True
-                    settings.whatsapp_phone = status_data.get("phone") or status_data.get("number") or settings.whatsapp_phone
+                    settings_obj.whatsapp_status = "connected"
+                    settings_obj.whatsapp_enabled = True
+                    settings_obj.whatsapp_phone = status_data.get("phone") or status_data.get("number") or settings_obj.whatsapp_phone
                 elif status_state == "close":
-                    settings.whatsapp_status = "disconnected"
-                    settings.whatsapp_enabled = False
+                    settings_obj.whatsapp_status = "disconnected"
+                    settings_obj.whatsapp_enabled = False
                 elif status_state == "connecting":
-                    settings.whatsapp_status = "connecting"
-                settings.save(update_fields=['whatsapp_status', 'whatsapp_enabled', 'whatsapp_phone'])
-                
+                    settings_obj.whatsapp_status = "connecting"
+                settings_obj.save(update_fields=['whatsapp_status', 'whatsapp_enabled', 'whatsapp_phone'])
+
         return Response({'success': True})

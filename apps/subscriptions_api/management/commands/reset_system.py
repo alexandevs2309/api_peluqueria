@@ -38,94 +38,76 @@ class Command(BaseCommand):
         plans = [
             {
                 'name': 'basic',
-                'description': 'Entrada seria para barberias pequenas',
-                'price': 29.00,
-                'duration_month': 1,
-                'max_employees': 5,
-                'max_users': 10,
+                'description': 'Plan básico para barberías individuales',
+                'price': 29.99,
+                'annual_price': 299.99,
+                'max_employees': 3,
+                'max_users': 5,
                 'allows_multiple_branches': False,
                 'features': {
-                    'appointments': True,
-                    'reports': True,
-                    'cash_register': True,
-                    'client_history': True,
-                    'inventory': False,
-                    
-                    'multi_location': False,
-                    'custom_branding': False
+                    'cash_register': True, 'appointments': True, 'inventory': True,
+                    'reports': True, 'basic_reports': True, 'client_history': True,
+                    'promotions': False, 'multi_location': False, 'advanced_reports': False,
+                    'payroll': False, 'custom_branding': False, 'whatsapp_notifications': False,
+                    'export_reports': False, 'priority_support': False,
                 },
                 'commercial_benefits': [],
-                'is_active': True
+                'is_active': True,
             },
             {
                 'name': 'standard',
-                'description': 'Plan Pro recomendado para barberias en crecimiento',
-                'price': 59.00,
-                'duration_month': 1,
-                'max_employees': 15,
-                'max_users': 30,
-                'allows_multiple_branches': False,
+                'description': 'Plan Pro para negocios en crecimiento',
+                'price': 59.99,
+                'annual_price': 599.99,
+                'max_employees': 10,
+                'max_users': 15,
+                'allows_multiple_branches': True,
                 'features': {
-                    'appointments': True,
-                    'reports': True,
-                    'cash_register': True,
-                    'client_history': True,
-                    'inventory': True,
-                    
-                    'multi_location': False,
-                    'custom_branding': False
+                    'cash_register': True, 'appointments': True, 'inventory': True,
+                    'reports': True, 'basic_reports': True, 'client_history': True,
+                    'promotions': True, 'multi_location': True, 'advanced_reports': True,
+                    'payroll': True, 'custom_branding': False, 'whatsapp_notifications': False,
+                    'export_reports': False, 'priority_support': False,
                 },
                 'commercial_benefits': [],
-                'is_active': True
+                'is_active': True,
             },
             {
                 'name': 'premium',
-                'description': 'Plan Business para equipos grandes',
-                'price': 99.00,
-                'duration_month': 1,
-                'max_employees': 50,
-                'max_users': 100,
+                'description': 'Plan Business para spas y salones consolidados',
+                'price': 99.99,
+                'annual_price': 999.99,
+                'max_employees': 25,
+                'max_users': 30,
                 'allows_multiple_branches': True,
                 'features': {
-                    'appointments': True,
-                    'reports': True,
-                    'cash_register': True,
-                    'client_history': True,
-                    'inventory': True,
-                    
-                    'multi_location': True,
-                    'custom_branding': True
+                    'cash_register': True, 'appointments': True, 'inventory': True,
+                    'reports': True, 'basic_reports': True, 'client_history': True,
+                    'promotions': True, 'multi_location': True, 'advanced_reports': True,
+                    'payroll': True, 'custom_branding': True, 'whatsapp_notifications': True,
+                    'export_reports': False, 'priority_support': False,
                 },
-                'commercial_benefits': [
-                    'Branding y multi-sucursal'
-                ],
-                'is_active': True
+                'commercial_benefits': [],
+                'is_active': True,
             },
             {
                 'name': 'enterprise',
-                'description': 'Plan Enterprise para cadenas y operaciones custom',
-                'price': 149.00,
-                'duration_month': 1,
+                'description': 'Plan Enterprise ilimitado para cadenas y franquicias',
+                'price': 199.99,
+                'annual_price': 1999.99,
                 'max_employees': 0,
                 'max_users': 0,
                 'allows_multiple_branches': True,
                 'features': {
-                    'appointments': True,
-                    'reports': True,
-                    'cash_register': True,
-                    'client_history': True,
-                    'inventory': True,
-                    
-                    'multi_location': True,
-                    'custom_branding': True,
-                    'priority_support': True
+                    'cash_register': True, 'appointments': True, 'inventory': True,
+                    'reports': True, 'basic_reports': True, 'client_history': True,
+                    'promotions': True, 'multi_location': True, 'advanced_reports': True,
+                    'payroll': True, 'custom_branding': True, 'whatsapp_notifications': True,
+                    'export_reports': True, 'priority_support': True,
                 },
-                'commercial_benefits': [
-                    'Escala ilimitada',
-                    'Soporte prioritario'
-                ],
-                'is_active': True
-            }
+                'commercial_benefits': [],
+                'is_active': True,
+            },
         ]
 
         for plan_data in plans:

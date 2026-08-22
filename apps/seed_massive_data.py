@@ -727,7 +727,13 @@ DEFAULT_PLANS = [
         "max_employees": 3,
         "max_users": 5,
         "allows_multiple_branches": False,
-        "features": {"pos": True, "appointments": True, "inventory": True},
+        "features": {
+            "cash_register": True, "appointments": True, "inventory": True,
+            "reports": True, "basic_reports": True, "client_history": True,
+            "promotions": False, "multi_location": False, "advanced_reports": False,
+            "payroll": False, "custom_branding": False, "whatsapp_notifications": False,
+            "export_reports": False, "priority_support": False,
+        },
     },
     {
         "name": "standard",
@@ -737,7 +743,13 @@ DEFAULT_PLANS = [
         "max_employees": 10,
         "max_users": 15,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "promotions": True, "reports_advanced": True},
+        "features": {
+            "cash_register": True, "appointments": True, "inventory": True,
+            "reports": True, "basic_reports": True, "client_history": True,
+            "promotions": True, "multi_location": True, "advanced_reports": True,
+            "payroll": True, "custom_branding": False, "whatsapp_notifications": False,
+            "export_reports": False, "priority_support": False,
+        },
     },
     {
         "name": "premium",
@@ -747,7 +759,13 @@ DEFAULT_PLANS = [
         "max_employees": 25,
         "max_users": 30,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "reports_advanced": True, "promotions": True, "custom_branding": True},
+        "features": {
+            "cash_register": True, "appointments": True, "inventory": True,
+            "reports": True, "basic_reports": True, "client_history": True,
+            "promotions": True, "multi_location": True, "advanced_reports": True,
+            "payroll": True, "custom_branding": True, "whatsapp_notifications": True,
+            "export_reports": False, "priority_support": False,
+        },
     },
     {
         "name": "enterprise",
@@ -757,7 +775,13 @@ DEFAULT_PLANS = [
         "max_employees": 0,
         "max_users": 0,
         "allows_multiple_branches": True,
-        "features": {"pos": True, "appointments": True, "inventory": True, "multi_branch": True, "api_access": True},
+        "features": {
+            "cash_register": True, "appointments": True, "inventory": True,
+            "reports": True, "basic_reports": True, "client_history": True,
+            "promotions": True, "multi_location": True, "advanced_reports": True,
+            "payroll": True, "custom_branding": True, "whatsapp_notifications": True,
+            "export_reports": True, "priority_support": True,
+        },
     },
 ]
 

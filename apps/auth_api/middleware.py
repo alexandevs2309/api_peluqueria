@@ -30,6 +30,9 @@ class CSRFProtectionMiddleware(MiddlewareMixin):
         # Skip para webhooks y pagos (llamados por servicios externos)
         if request.path.startswith('/api/billing/webhooks/') or request.path.startswith('/api/payments/'):
             return None
+        # Skip para WhatsApp webhook (Evolution API callback)
+        if request.path.startswith('/api/settings/barbershop/whatsapp_webhook/'):
+            return None
         # Skip para registro público (POST sin AJAX)
         if request.path.startswith('/api/subscriptions/register/'):
             return None

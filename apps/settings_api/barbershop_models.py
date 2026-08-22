@@ -16,6 +16,7 @@ class BarbershopSettings(models.Model):
     whatsapp_enabled = models.BooleanField(default=False)
     whatsapp_instance_name = models.CharField(max_length=100, blank=True)
     whatsapp_token = models.CharField(max_length=255, blank=True)
+    whatsapp_webhook_secret = models.CharField(max_length=255, blank=True, help_text="Secret for Evolution API webhook signature verification")
     whatsapp_status = models.CharField(
         max_length=50,
         choices=[

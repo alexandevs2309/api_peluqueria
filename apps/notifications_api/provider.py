@@ -3,7 +3,7 @@
 
 Two providers are defined:
 - TwilioInternalProvider: for internal platform notifications (SMS, internal WhatsApp if required).
-- EvolutionClientProvider: for tenant‑scoped WhatsApp messages using Evolution API.
+- EvolutionClientProvider: for tenant-scoped WhatsApp messages using Evolution API.
 
 The get_notification_provider function decides which implementation to return based on the
 requested context and the tenant configuration.
@@ -48,36 +48,34 @@ class TwilioInternalProvider:
         self.client.messages.create(body=body, from_=self.from_number, to=to)
 
     def send_whatsapp(self, to: str, template: str, data: dict) -> None:
-        # In internal context we might still need WhatsApp (e.g., alerts). Use classic Twilio API.
         logger.info("TwilioInternalProvider: Sending WhatsApp to %s via template %s", to, template)
-        # Simple interpolation – real implementation would map template IDs.
         body = template.format(**data)
         self.client.messages.create(body=body, from_=f"whatsapp:{self.from_number}", to=f"whatsapp:{to}")
 
 
 # ---------------------------------------------------------------------------
-# Evolution Client Provider (tenant‑scoped WhatsApp)
+# Evolution Client Provider (tenant-scoped WhatsApp)
 # ---------------------------------------------------------------------------
 
 class EvolutionClientProvider:
-    def __init__(self, tenant):
-        # tenant is a Django model instance that has evolution_api_enabled and evolution_api_token fields.
-        self.tenant = tenant
+    def __init__(self, barbershop_settings):
+        """Initialize with BarbershopSettings instance, not Tenant."""
+        self.barbershop_settings = barbershop_settings
+        self.tenant = barbershop_settings.tenant
         self.base_url = os.getenv("EVOLUTION_API_URL", "http://localhost:8080").rstrip('/')
-        self.token = tenant.evolution_api_token
+        self.token = barbershop_settings.whatsapp_token
         if not self.token:
             raise ImproperlyConfigured("Evolution API token missing for tenant.")
 
     def _request(self, method: str, path: str, json: dict = None):
         import requests
-        url = f"{self.base_url}/{path.lstrip('/') }"
+        url = f"{self.base_url}/{path.lstrip('/')}"
         headers = {"Authorization": f"Bearer {self.token}"}
         response = requests.request(method, url, json=json, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
 
     def send_sms(self, to: str, body: str) -> None:
-        # Evolution API does not support SMS – raise to keep contract.
         raise NotImplementedError("Evolution API does not support SMS.")
 
     def send_whatsapp(self, to: str, template: str, data: dict) -> None:
@@ -105,14 +103,24 @@ def get_notification_provider(context: str, tenant=None) -> NotificationProvider
     elif context == "client":
         if tenant is None:
             raise ValueError("Tenant must be provided for client context.")
-        if not getattr(tenant, "evolution_api_enabled", False):
-            # Log integration error – avoid circular import by lazy import.
+        # Read from BarbershopSettings, not from Tenant directly
+        from apps.settings_api.models import BarbershopSettings
+        try:
+            barbershop_settings = tenant.barbershop_settings
+        except BarbershopSettings.DoesNotExist:
+            barbershop_settings = None
+
+        if not barbershop_settings or not barbershop_settings.whatsapp_enabled:
             from apps.audit_api.views import AuditLogViewSet
             AuditLogViewSet.log_integration_error(
                 "Evolution",
                 f"Tenant {tenant.id} attempted WhatsApp send without Evolution enabled",
             )
             raise Exception("EVOLUTION_NOT_CONFIGURED")
-        return EvolutionClientProvider(tenant)
+
+        if not barbershop_settings.whatsapp_token:
+            raise Exception("EVOLUTION_NOT_CONFIGURED")
+
+        return EvolutionClientProvider(barbershop_settings)
     else:
         raise ValueError(f"Unknown notification context: {context}")

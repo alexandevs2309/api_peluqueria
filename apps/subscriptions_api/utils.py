@@ -47,10 +47,10 @@ def get_user_feature_flag(user, feature_name):
         return get_feature_value(features, feature_name, default=False)
 
     plan_features = {
-        'basic': ['pos_enabled', 'appointments_enabled'],
-        'standard': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'promotions_enabled'],
-        'premium': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'promotions_enabled'],
-        'enterprise': ['pos_enabled', 'appointments_enabled', 'reports_enabled', 'inventory_enabled', 'export_enabled', 'promotions_enabled']
+        'basic': ['cash_register', 'appointments', 'inventory', 'reports', 'basic_reports', 'client_history'],
+        'standard': ['cash_register', 'appointments', 'inventory', 'reports', 'basic_reports', 'client_history', 'promotions', 'multi_location', 'advanced_reports', 'payroll'],
+        'premium': ['cash_register', 'appointments', 'inventory', 'reports', 'basic_reports', 'client_history', 'promotions', 'multi_location', 'advanced_reports', 'payroll', 'custom_branding', 'whatsapp_notifications'],
+        'enterprise': ['cash_register', 'appointments', 'inventory', 'reports', 'basic_reports', 'client_history', 'promotions', 'multi_location', 'advanced_reports', 'payroll', 'custom_branding', 'whatsapp_notifications', 'export_reports', 'priority_support'],
     }
 
     plan_type = getattr(subscription.plan, 'name', 'basic').lower()

@@ -1,121 +1,141 @@
 from django.core.management.base import BaseCommand
 from apps.subscriptions_api.models import SubscriptionPlan
 
+
 class Command(BaseCommand):
-    help = 'Update existing subscription plans to balanced structure'
+    help = 'Update existing subscription plans (idempotent)'
 
     def handle(self, *args, **options):
         updates = {
             'basic': {
-                'description': 'Ideal para salones y barberías que inician y necesitan citas, caja, clientes y facturación sin complicarse.',
+                'description': 'Plan básico para barberías individuales',
                 'price': 29.99,
-                'annual_price': 299.88,
-                'max_employees': 4,
-                'max_users': 8,
+                'annual_price': 299.99,
+                'max_employees': 3,
+                'max_users': 5,
                 'allows_multiple_branches': False,
                 'features': {
-                    'appointments': True,
-                    'reports': False,
                     'cash_register': True,
+                    'appointments': True,
+                    'inventory': True,
+                    'reports': True,
+                    'basic_reports': True,
                     'client_history': True,
-                    'inventory': False,
-                    'payroll': False,
+                    'promotions': False,
                     'multi_location': False,
+                    'advanced_reports': False,
+                    'payroll': False,
                     'custom_branding': False,
-                    'whatsapp_notifications': False
+                    'whatsapp_notifications': False,
+                    'export_reports': False,
+                    'priority_support': False,
                 },
                 'commercial_benefits': [
                     '1 Sucursal Principal',
-                    'Hasta 4 Barberos/Estilistas',
-                    'Agenda de Citas y Clientes',
+                    'Hasta 3 Empleados',
                     'Punto de Venta (POS) y Caja Diaria',
-                    'Soporte por Correo'
-                ]
+                    'Agenda de Citas en Tiempo Real',
+                    'Inventario de Productos',
+                    'Reportes Básicos',
+                    'Soporte por Correo',
+                ],
             },
             'standard': {
-                'description': 'El plan más recomendado para negocios establecidos que necesitan control total de inventario, nómina con comisiones y métricas.',
-                'price': 69.99,
-                'annual_price': 699.88,
-                'max_employees': 15,
-                'max_users': 30,
-                'allows_multiple_branches': False,
-                'features': {
-                    'appointments': True,
-                    'reports': True,
-                    'cash_register': True,
-                    'client_history': True,
-                    'inventory': True,
-                    'payroll': True,
-                    'multi_location': False,
-                    'custom_branding': False,
-                    'whatsapp_notifications': False
-                },
-                'commercial_benefits': [
-                    '1 Sucursal Principal',
-                    'Hasta 15 Barberos/Estilistas',
-                    'Control Total de Inventario y Stock',
-                    'Comisiones de Equipo y Nómina con TSS',
-                    'Reportes Financieros y Rendimiento',
-                    'Soporte Prioritario'
-                ]
-            },
-            'premium': {
-                'description': 'Para negocios en expansión con múltiples sucursales, recordatorios automáticos por WhatsApp y personalización de marca.',
-                'price': 129.99,
-                'annual_price': 1299.88,
-                'max_employees': 35,
-                'max_users': 70,
+                'description': 'Plan Pro para negocios en crecimiento',
+                'price': 59.99,
+                'annual_price': 599.99,
+                'max_employees': 10,
+                'max_users': 15,
                 'allows_multiple_branches': True,
                 'features': {
-                    'appointments': True,
-                    'reports': True,
                     'cash_register': True,
-                    'client_history': True,
+                    'appointments': True,
                     'inventory': True,
-                    'payroll': True,
+                    'reports': True,
+                    'basic_reports': True,
+                    'client_history': True,
+                    'promotions': True,
                     'multi_location': True,
-                    'custom_branding': True,
+                    'advanced_reports': True,
+                    'payroll': True,
+                    'custom_branding': False,
+                    'whatsapp_notifications': False,
                     'export_reports': False,
-                    'whatsapp_notifications': True
+                    'priority_support': False,
                 },
                 'commercial_benefits': [
-                    'Hasta 3 Sucursales Incluidas',
-                    'Hasta 35 Barberos/Estilistas',
+                    'Sucursales Ilimitadas',
+                    'Hasta 10 Empleados y 15 Usuarios',
+                    'Multi-Sucursal',
+                    'Promociones y Cupones',
+                    'Reportes Avanzados y BI',
+                    'Comisiones y Nómina TSS',
+                    'Soporte Prioritario por Correo',
+                ],
+            },
+            'premium': {
+                'description': 'Plan Business para spas y salones consolidados',
+                'price': 99.99,
+                'annual_price': 999.99,
+                'max_employees': 25,
+                'max_users': 30,
+                'allows_multiple_branches': True,
+                'features': {
+                    'cash_register': True,
+                    'appointments': True,
+                    'inventory': True,
+                    'reports': True,
+                    'basic_reports': True,
+                    'client_history': True,
+                    'promotions': True,
+                    'multi_location': True,
+                    'advanced_reports': True,
+                    'payroll': True,
+                    'custom_branding': True,
+                    'whatsapp_notifications': True,
+                    'export_reports': False,
+                    'priority_support': False,
+                },
+                'commercial_benefits': [
                     'Todo lo del Plan Pro',
-                    'Notificaciones y Recordatorios por WhatsApp',
-                    'Personalización de Marca y Logo en Tickets',
-                    'Soporte VIP por WhatsApp y Chat'
-                ]
+                    'Sucursales Ilimitadas',
+                    'Hasta 25 Empleados y 30 Usuarios',
+                    'Conexión WhatsApp mediante QR',
+                    'Branding Personalizado (Logo y Colores)',
+                    'Soporte Prioritario por Correo y WhatsApp',
+                ],
             },
             'enterprise': {
-                'description': 'Para cadenas grandes y franquicias que requieren capacidad ilimitada, acceso a API/Webhooks y soporte dedicado 24/7.',
-                'price': 199.00,
-                'annual_price': 1990.00,
+                'description': 'Plan Enterprise ilimitado para cadenas y franquicias',
+                'price': 199.99,
+                'annual_price': 1999.99,
                 'max_employees': 0,
                 'max_users': 0,
                 'allows_multiple_branches': True,
                 'features': {
-                    'appointments': True,
-                    'reports': True,
                     'cash_register': True,
-                    'client_history': True,
+                    'appointments': True,
                     'inventory': True,
-                    'payroll': True,
+                    'reports': True,
+                    'basic_reports': True,
+                    'client_history': True,
+                    'promotions': True,
                     'multi_location': True,
+                    'advanced_reports': True,
+                    'payroll': True,
                     'custom_branding': True,
-                    'priority_support': True,
-                    'export_reports': True,
                     'whatsapp_notifications': True,
-                    'api_access': True
+                    'export_reports': True,
+                    'priority_support': True,
                 },
                 'commercial_benefits': [
-                    'Sucursales y Barberos Ilimitados',
                     'Todo lo del Plan Business',
-                    'Auditoría Avanzada y Acceso a API / Webhooks',
-                    'Exportación Masiva de Datos Financieros',
-                    'Acompañamiento y Soporte Dedicado 24/7'
-                ]
-            }
+                    'Sucursales y Empleados Ilimitados',
+                    'Exportación Excel de Reportes',
+                    'Auditoría Avanzada',
+                    'Soporte Dedicado con Seguimiento Personalizado',
+                ],
+            },
         }
 
         for plan_name, plan_data in updates.items():
@@ -124,7 +144,13 @@ class Command(BaseCommand):
                 for key, value in plan_data.items():
                     setattr(plan, key, value)
                 plan.save()
-                self.stdout.write(self.style.SUCCESS(f'Updated {plan.get_name_display()} with balanced packaging'))
+                self.stdout.write(self.style.SUCCESS(
+                    f'Updated {plan.get_name_display()}'
+                ))
             except SubscriptionPlan.DoesNotExist:
-                plan = SubscriptionPlan.objects.create(name=plan_name, is_active=True, **plan_data)
-                self.stdout.write(self.style.SUCCESS(f'Created {plan.get_name_display()} with balanced packaging'))
+                plan = SubscriptionPlan.objects.create(
+                    name=plan_name, is_active=True, **plan_data
+                )
+                self.stdout.write(self.style.SUCCESS(
+                    f'Created {plan.get_name_display()}'
+                ))

@@ -1275,7 +1275,7 @@ class PromotionViewSet(TenantScopedViewSet):
     queryset = Promotion.objects.all()
     serializer_class = PromotionSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
-    required_feature = 'cash_register'
+    required_feature = 'promotions'
     permission_map = {
         'list': 'pos_api.view_promotion',
         'retrieve': 'pos_api.view_promotion',
@@ -1465,7 +1465,7 @@ class CouponViewSet(TenantScopedViewSet):
     queryset = Coupon.objects.all()
     serializer_class = CouponSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
-    required_feature = 'cash_register'
+    required_feature = 'promotions'
     permission_map = {
         'list': 'pos_api.view_coupon',
         'retrieve': 'pos_api.view_coupon',
