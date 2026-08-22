@@ -399,6 +399,22 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
             'message': 'Logo uploaded successfully'
         })
 
+    @action(detail=False, methods=['post'])
+    @requires_feature('custom_branding')
+    def delete_logo(self, request):
+        """Delete logo"""
+        tenant = getattr(request.user, 'tenant', None)
+        if not has_feature(tenant, 'custom_branding'):
+            raise PermissionDenied('Tu plan no incluye branding personalizado.')
+
+        settings, created = BarbershopSettings.objects.get_or_create(tenant=tenant)
+        if settings.logo:
+            settings.logo.delete(save=False)
+        settings.logo = None
+        settings.save()
+
+        return Response({'message': 'Logo eliminado correctamente', 'logo_url': None})
+
     @action(detail=False, methods=['get'])
     def whatsapp_status(self, request):
         """
