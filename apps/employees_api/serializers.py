@@ -71,45 +71,46 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if not tenant and request and getattr(request, 'user', None) and getattr(request.user, 'tenant', None):
             tenant = request.user.tenant
 
-        user_id = attrs.pop('user_id', None) or self.initial_data.get('user_id')
+        if self.instance is None:
+            user_id = attrs.pop('user_id', None) or self.initial_data.get('user_id')
 
-        if user_id:
-            try:
-                user_obj = User.objects.get(id=user_id)
-                if tenant and user_obj.tenant_id != tenant.id:
-                    raise serializers.ValidationError({"user_id": ["El usuario seleccionado no pertenece a este negocio."]})
-                attrs['user'] = user_obj
-            except User.DoesNotExist:
-                raise serializers.ValidationError({"user_id": ["Usuario no encontrado."]})
-        elif 'user' not in attrs:
-            user_data = self.initial_data.get('user')
-            if isinstance(user_data, dict) and user_data.get('email'):
-                email = user_data['email'].strip().lower()
-                full_name = user_data.get('full_name', '').strip()
-                password = user_data.get('password') or 'Auron123!'
-                
-                user_obj = User.objects.filter(email=email, tenant=tenant).first() if tenant else User.objects.filter(email=email).first()
-                if user_obj:
-                    if Employee.objects.filter(user=user_obj).exists():
-                        raise serializers.ValidationError({"email": ["Ya existe un empleado registrado con este correo electrónico."]})
+            if user_id:
+                try:
+                    user_obj = User.objects.get(id=user_id)
+                    if tenant and user_obj.tenant_id != tenant.id:
+                        raise serializers.ValidationError({"user_id": ["El usuario seleccionado no pertenece a este negocio."]})
+                    attrs['user'] = user_obj
+                except User.DoesNotExist:
+                    raise serializers.ValidationError({"user_id": ["Usuario no encontrado."]})
+            elif 'user' not in attrs:
+                user_data = self.initial_data.get('user')
+                if isinstance(user_data, dict) and user_data.get('email'):
+                    email = user_data['email'].strip().lower()
+                    full_name = user_data.get('full_name', '').strip()
+                    password = user_data.get('password') or 'Auron123!'
+                    
+                    user_obj = User.objects.filter(email=email, tenant=tenant).first() if tenant else User.objects.filter(email=email).first()
+                    if user_obj:
+                        if Employee.objects.filter(user=user_obj).exists():
+                            raise serializers.ValidationError({"email": ["Ya existe un empleado registrado con este correo electrónico."]})
+                        else:
+                            if getattr(user_obj, 'role', '') != 'CLIENT_STAFF':
+                                user_obj.role = 'CLIENT_STAFF'
+                                user_obj.save(update_fields=['role'])
                     else:
-                        if getattr(user_obj, 'role', '') != 'CLIENT_STAFF':
-                            user_obj.role = 'CLIENT_STAFF'
-                            user_obj.save(update_fields=['role'])
+                        try:
+                            user_obj = User.objects.create_user(
+                                email=email,
+                                password=password,
+                                full_name=full_name,
+                                tenant=tenant,
+                                role='CLIENT_STAFF'
+                            )
+                        except Exception as exc:
+                            raise serializers.ValidationError({"user": [f"Error al crear la cuenta del usuario: {str(exc)}"]})
+                    attrs['user'] = user_obj
                 else:
-                    try:
-                        user_obj = User.objects.create_user(
-                            email=email,
-                            password=password,
-                            full_name=full_name,
-                            tenant=tenant,
-                            role='CLIENT_STAFF'
-                        )
-                    except Exception as exc:
-                        raise serializers.ValidationError({"user": [f"Error al crear la cuenta del usuario: {str(exc)}"]})
-                attrs['user'] = user_obj
-            else:
-                raise serializers.ValidationError({"user": ["Debe proporcionar el correo electrónico del empleado."]})
+                    raise serializers.ValidationError({"user": ["Debe proporcionar el correo electrónico del empleado."]})
                 
         return super().validate(attrs)
 
