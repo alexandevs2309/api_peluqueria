@@ -31,4 +31,7 @@ print('[build] DB_HOST:', settings.DATABASES['default']['HOST'])
 print('[build] Django import OK')
 " || echo "[build] Django import fallo (build continua)"
 
+echo "[build] Sincronizando planes..."
+python manage.py sync_plans || echo "[build] sync_plans fallo (build continua)"
+
 echo "[build] Done."
