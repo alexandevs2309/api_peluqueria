@@ -31,15 +31,4 @@ print('[build] DB_HOST:', settings.DATABASES['default']['HOST'])
 print('[build] Django import OK')
 " || echo "[build] Django import fallo (build continua)"
 
-echo "[build] Running seed_massive_data..."
-python manage.py shell -c "
-import os
-os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
-import django
-django.setup()
-from apps.seed_massive_data import seed_all
-seed_all()
-print('[build] Seed completed')
-" || echo "[build] Seed fallo (build continua)"
-
 echo "[build] Done."
