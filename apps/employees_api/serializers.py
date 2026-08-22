@@ -13,13 +13,18 @@ class UserBasicSerializer(serializers.ModelSerializer):
     first_name = serializers.SerializerMethodField()
     last_name = serializers.SerializerMethodField()
     role = serializers.SerializerMethodField()
+    business_role = serializers.SerializerMethodField()
     
     class Meta:
         model = User
-        fields = ['id', 'email', 'full_name', 'first_name', 'last_name', 'role']
+        fields = ['id', 'email', 'full_name', 'first_name', 'last_name', 'role', 'business_role']
 
     def get_role(self, obj):
         return get_effective_role_api(obj, tenant=getattr(obj, 'tenant', None))
+    
+    def get_business_role(self, obj):
+        from apps.auth_api.role_utils import get_effective_business_role
+        return get_effective_business_role(obj, tenant=getattr(obj, 'tenant', None))
     
     def get_first_name(self, obj):
         if obj.full_name:
