@@ -222,7 +222,7 @@ class PayrollViewSet(viewsets.ViewSet):
                 # Nuevos campos para el frontend
                 'employee_payment_type': period.employee.payment_type,
                 'employee_commission_rate': float(period.employee.commission_rate or 0),
-                'employee_profession': period.employee.profession_display or period.employee.profession,
+                'employee_profession': period.employee.get_profession_display() or period.employee.profession,
                 'services_count': sales_data['services_count'],
                 'gross_sales': sales_data['gross_sales'],
             })
