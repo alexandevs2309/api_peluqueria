@@ -169,22 +169,21 @@ class PayrollViewSet(viewsets.ViewSet):
                     period.save(update_fields=['base_salary', 'commission_earnings', 'gross_amount', 'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason'])
         
         # Pre-calcular ventas por empleado en el rango de cada período
-        # Para evitar N+1 queries, hacer una query agregada
-        period_date_ranges = [(p.employee_id, p.period_start, p.period_end) for p in periods]
-        
+        # Para evitar N+1 queries, hacer una query agregada con filtro por tenant y fechas
         sales_agg = {}
-        if period_date_ranges and tenant:
-            # Construir query OR para todos los rangos
-            q_objects = Q()
-            for emp_id, p_start, p_end in period_date_ranges:
-                q_objects |= Q(
-                    tenant=tenant,
-                    employee_id=emp_id,
-                    date_time__date__gte=p_start,
-                    date_time__date__lte=p_end
-                )
+        if periods and tenant:
+            # Query única: ventas del tenant en rango global, agrupar por employee_id
+            p_starts = [p.period_start for p in periods]
+            p_ends = [p.period_end for p in periods]
+            global_start = min(p_starts)
+            global_end = max(p_ends)
             
-            sales_in_periods = Sale.objects.filter(q_objects).values('employee_id').annotate(
+            sales_in_periods = Sale.objects.filter(
+                tenant=tenant,
+                employee__isnull=False,
+                date_time__date__gte=global_start,
+                date_time__date__lte=global_end
+            ).values('employee_id').annotate(
                 services_count=Count('id'),
                 gross_sales=Sum('total')
             )
