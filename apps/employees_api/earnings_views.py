@@ -115,7 +115,9 @@ class PayrollViewSet(viewsets.ViewSet):
     def list_periods(self, request):
         """Endpoint compatible con frontend: GET /payroll/client/payroll/"""
         from apps.employees_api.models import Employee
+        from apps.pos_api.models import Sale
         from calendar import monthrange
+        from django.db.models import Count, Sum, Q
 
         tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
 
@@ -166,12 +168,42 @@ class PayrollViewSet(viewsets.ViewSet):
                     period.calculate_amounts()
                     period.save(update_fields=['base_salary', 'commission_earnings', 'gross_amount', 'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason'])
         
+        # Pre-calcular ventas por empleado en el rango de cada período
+        # Para evitar N+1 queries, hacer una query agregada
+        period_date_ranges = [(p.employee_id, p.period_start, p.period_end) for p in periods]
+        
+        sales_agg = {}
+        if period_date_ranges and tenant:
+            # Construir query OR para todos los rangos
+            q_objects = Q()
+            for emp_id, p_start, p_end in period_date_ranges:
+                q_objects |= Q(
+                    tenant=tenant,
+                    employee_id=emp_id,
+                    date_time__date__gte=p_start,
+                    date_time__date__lte=p_end
+                )
+            
+            sales_in_periods = Sale.objects.filter(q_objects).values('employee_id').annotate(
+                services_count=Count('id'),
+                gross_sales=Sum('total')
+            )
+            
+            for s in sales_in_periods:
+                sales_agg[s['employee_id']] = {
+                    'services_count': s['services_count'] or 0,
+                    'gross_sales': float(s['gross_sales'] or 0)
+                }
+        
         periods_data = []
         for period in periods:
             # Mapear estados legacy
             status = period.status
             if status == 'ready':
                 status = 'approved'
+            
+            # Obtener datos de ventas agregados para este empleado en este período
+            sales_data = sales_agg.get(period.employee_id, {'services_count': 0, 'gross_sales': 0.0})
             
             periods_data.append({
                 'id': period.id,
@@ -187,7 +219,13 @@ class PayrollViewSet(viewsets.ViewSet):
                 'period_start': period.period_start.isoformat(),
                 'period_end': period.period_end.isoformat(),
                 'can_pay': period.can_pay,
-                'pay_block_reason': period.pay_block_reason
+                'pay_block_reason': period.pay_block_reason,
+                # Nuevos campos para el frontend
+                'employee_payment_type': period.employee.payment_type,
+                'employee_commission_rate': float(period.employee.commission_rate or 0),
+                'employee_profession': period.employee.profession_display or period.employee.profession,
+                'services_count': sales_data['services_count'],
+                'gross_sales': sales_data['gross_sales'],
             })
         
         return Response({'periods': periods_data})
