@@ -393,7 +393,7 @@ class PayrollPeriod(models.Model):
             payroll_config = None
 
         if payroll_config and self.gross_amount > 0:
-            base_for_rates = self.base_salary  # rates apply to base salary only
+            base_for_rates = self.gross_amount  # AFP/SFS/ISR se calculan sobre ingreso total (gross)
 
             if payroll_config.tax_rate > 0:
                 tax_amount = (base_for_rates * payroll_config.tax_rate / 100).quantize(
@@ -454,9 +454,6 @@ class PayrollPeriod(models.Model):
                 f"Esperado: {expected_gross}, Encontrado: {self.gross_amount}"
             )
         
-        # 3. Calcular deducciones legales (AFP/SFS/ISR) según configuración del tenant
-        self._apply_legal_deductions()
-
         # Validar si se puede pagar
         if self.status == 'open':
             self.can_pay = False
@@ -471,50 +468,6 @@ class PayrollPeriod(models.Model):
             self.can_pay = True
             self.pay_block_reason = None
     
-    def _apply_legal_deductions(self):
-        """Calcula y crea deducciones legales (AFP/SFS/ISR) según PayrollConfiguration del tenant"""
-        try:
-            config = PayrollConfiguration.objects.get(tenant=self.employee.tenant)
-        except PayrollConfiguration.DoesNotExist:
-            return
-
-        gross = self.gross_amount
-        if gross <= 0:
-            return
-
-        if config.social_security_rate > 0:
-            afp_amount = (gross * config.social_security_rate / Decimal('100')).quantize(Decimal('0.01'))
-            if afp_amount > 0:
-                PayrollDeduction.objects.create(
-                    period=self,
-                    deduction_type='social_security',
-                    amount=afp_amount,
-                    description=f'AFP ({config.social_security_rate}%)',
-                    is_automatic=True
-                )
-
-        if config.health_insurance_rate > 0:
-            sfs_amount = (gross * config.health_insurance_rate / Decimal('100')).quantize(Decimal('0.01'))
-            if sfs_amount > 0:
-                PayrollDeduction.objects.create(
-                    period=self,
-                    deduction_type='health_insurance',
-                    amount=sfs_amount,
-                    description=f'SFS ({config.health_insurance_rate}%)',
-                    is_automatic=True
-                )
-
-        if config.tax_rate > 0:
-            isr_amount = (gross * config.tax_rate / Decimal('100')).quantize(Decimal('0.01'))
-            if isr_amount > 0:
-                PayrollDeduction.objects.create(
-                    period=self,
-                    deduction_type='tax',
-                    amount=isr_amount,
-                    description=f'ISR ({config.tax_rate}%)',
-                    is_automatic=True
-                )
-
     def _create_calculation_snapshot(self):
         """Crea snapshot inmutable del cálculo al aprobar"""
         from apps.pos_api.models import Sale

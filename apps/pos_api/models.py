@@ -131,15 +131,29 @@ class Sale(models.Model):
             
             return super().save(*args, **kwargs)
         
-        # Si es partial update (update_fields), permitir cambios específicos
-        update_fields = kwargs.get('update_fields')
-        if update_fields:
-            return super().save(*args, **kwargs)
-        
-        # Venta existente: verificar inmutabilidad
+        # FIX POS-004: Para updates, siempre cargar el estado anterior
         try:
             old_instance = Sale.objects.get(pk=self.pk)
         except Sale.DoesNotExist:
+            return super().save(*args, **kwargs)
+        
+        # FIX POS-004: Whitelist para update_fields — bloquear campos financieros en ventas confirmadas
+        update_fields = kwargs.get('update_fields')
+        if update_fields and old_instance.status != 'draft':
+            # Campos que NUNCA pueden modificarse via update_fields en ventas no-draft
+            IMMUTABLE_FIELDS = {
+                'total', 'discount', 'paid', 'payment_method',
+                'employee', 'employee_id', 'tenant', 'tenant_id',
+                'period', 'period_id',
+                'commission_rate_snapshot', 'commission_amount_snapshot',
+                'client', 'client_id', 'branch', 'branch_id',
+            }
+            blocked = IMMUTABLE_FIELDS & set(update_fields)
+            if blocked:
+                raise ValidationError(
+                    f"No se pueden modificar campos protegidos en una venta "
+                    f"con status '{old_instance.status}': {', '.join(sorted(blocked))}"
+                )
             return super().save(*args, **kwargs)
         
         # PROTECCIÓN CRÍTICA: Si snapshot existe, period es INMUTABLE

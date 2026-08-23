@@ -361,7 +361,7 @@ class SaleViewSet(TenantScopedViewSet):
             if promotion_id:
                 try:
                     tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
-                    promotion_obj = Promotion.objects.get(id=promotion_id, tenant=tenant)
+                    promotion_obj = Promotion.objects.select_for_update().get(id=promotion_id, tenant=tenant)
                     if not promotion_obj.is_active:
                         raise serializers.ValidationError("La promoción no está activa")
                     if promotion_obj.max_uses and promotion_obj.current_uses >= promotion_obj.max_uses:
@@ -449,6 +449,13 @@ class SaleViewSet(TenantScopedViewSet):
                 promotion=promotion_obj if promotion_id else None,
                 coupon=coupon_obj if coupon_id else None
             )
+
+            # FIX POS-001: Aplicar snapshot de comisión usando historial
+            # (sobreescribe el snapshot calculado en Sale.save() con la tasa histórica correcta)
+            if sale_employee:
+                from apps.pos_api.services import SaleCommissionService
+                SaleCommissionService.apply_commission_snapshot(sale, sale_employee)
+                sale.save(update_fields=['commission_rate_snapshot', 'commission_amount_snapshot'])
 
             # --- Generación de NCF (Comprobante Fiscal RD) ---
             ncf_type = self.request.data.get('ncf_type')
@@ -713,10 +720,10 @@ class SaleViewSet(TenantScopedViewSet):
             close_filters['branch_id'] = branch_id
             
         # Cerrar cualquier caja abierta anterior del usuario en esta sucursal (por seguridad)
+        # FIX POS-006: NO sobrescribir final_cash — preservar datos históricos de arqueo
         CashRegister.objects.filter(**close_filters).update(
             is_open=False,
             closed_at=timezone.now(),
-            final_cash=0
         )
         
         open_filters = {

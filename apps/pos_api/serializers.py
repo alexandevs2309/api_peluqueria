@@ -191,6 +191,42 @@ class SaleSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         validated_data['user'] = user
 
+        # FIX POS-003: Obtener tenant para validación cross-tenant
+        request = self.context.get('request')
+        tenant = getattr(request, 'tenant', None) or getattr(getattr(request, 'user', None), 'tenant', None)
+
+        # FIX POS-003: Validar cross-tenant ANTES de crear la venta
+        if tenant and not user.is_superuser:
+            from apps.inventory_api.models import Product
+            from apps.services_api.models import Service
+            for detail in details_data:
+                object_id = detail.get('object_id')
+                content_type_str = detail.get('content_type')
+                if not object_id or not content_type_str:
+                    raise serializers.ValidationError(
+                        "Cada detalle debe tener content_type y object_id"
+                    )
+                try:
+                    oid = int(object_id)
+                except (TypeError, ValueError):
+                    raise serializers.ValidationError(
+                        f"object_id inválido: {object_id}"
+                    )
+                if content_type_str == 'product':
+                    if not Product.objects.filter(id=oid, tenant=tenant, is_active=True).exists():
+                        raise serializers.ValidationError(
+                            f"Producto {oid} no encontrado en tu sucursal"
+                        )
+                elif content_type_str == 'service':
+                    if not Service.objects.filter(id=oid, tenant=tenant, is_active=True).exists():
+                        raise serializers.ValidationError(
+                            f"Servicio {oid} no encontrado en tu sucursal"
+                        )
+                else:
+                    raise serializers.ValidationError(
+                        f"Tipo de contenido inválido: {content_type_str}"
+                    )
+
         appointment = validated_data.pop('appointment', None)
         sale = Sale.objects.create(**validated_data)
 
