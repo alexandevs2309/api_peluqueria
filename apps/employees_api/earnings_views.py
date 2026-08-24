@@ -140,9 +140,18 @@ class PayrollViewSet(viewsets.ViewSet):
                 period_end=end_date,
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
-            # Siempre recalcular períodos abiertos para reflejar
-            # cambios en salario/comisión desde la última vez
+            # Sincronizar snapshots de períodos abiertos con valores
+            # actuales del empleado. Esto corrige snapshots corruptos del
+            # bug anterior (quincenal guardado como mensual, payment_type
+            # incorrecto, etc). Usamos .update() para saltar la validación
+            # de inmutabilidad de PayrollPeriod.save().
             if period.status == 'open':
+                PayrollPeriod.objects.filter(pk=period.pk).update(
+                    fixed_salary_snapshot=employee.fixed_salary,
+                    commission_rate_snapshot=employee.commission_rate,
+                    payment_type_snapshot=employee.payment_type,
+                )
+                period.refresh_from_db()
                 period.calculate_amounts()
                 period.save(update_fields=[
                     'base_salary', 'commission_earnings', 'gross_amount',
