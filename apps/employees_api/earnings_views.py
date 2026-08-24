@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
-from django.db.models import Q, F
+from django.db.models import Q
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.auth_api.role_utils import get_effective_role_name
 from datetime import date, timedelta
@@ -141,23 +141,9 @@ class PayrollViewSet(viewsets.ViewSet):
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
 
-        # 1b. Sincronizar snapshots SOLO de períodos abiertos.
-        # Los períodos pagados/aprobados mantienen sus snapshots originales
-        # (integridad histórica). El cálculo on-the-fly en la respuesta
-        # usa los snapshots corregidos para mostrar montos correctos.
-        PayrollPeriod.objects.filter(
-            employee__tenant=tenant,
-            employee__is_active=True,
-            status='open',
-            period_start=start_date,
-            period_end=end_date,
-        ).update(
-            fixed_salary_snapshot=F('employee__fixed_salary'),
-            commission_rate_snapshot=F('employee__commission_rate'),
-            payment_type_snapshot=F('employee__payment_type'),
-        )
-
-        # 1c. Recalcular y guardar montos para períodos abiertos
+        # 1b+1c. Para cada empleado activo: sincronizar snapshots del
+        # período abierto Y recalcular montos. No se puede usar
+        # F('employee__xxx') en .update() con joins, así que iteramos.
         for employee in Employee.objects.filter(tenant=tenant, is_active=True):
             try:
                 period = PayrollPeriod.objects.get(
@@ -166,6 +152,11 @@ class PayrollViewSet(viewsets.ViewSet):
                     period_end=end_date,
                 )
                 if period.status == 'open':
+                    PayrollPeriod.objects.filter(pk=period.pk).update(
+                        fixed_salary_snapshot=employee.fixed_salary,
+                        commission_rate_snapshot=employee.commission_rate,
+                        payment_type_snapshot=employee.payment_type,
+                    )
                     period.refresh_from_db()
                     period.calculate_amounts()
                     period.save(update_fields=[
