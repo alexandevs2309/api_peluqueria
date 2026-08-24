@@ -388,27 +388,23 @@ class EmployeeViewSet(TenantScopedViewSet):
             _log.info('[PAYROLL_CONFIG] saved employee=%s fixed_salary=%s payment_type=%s commission_rate=%s',
                       employee.id, employee.fixed_salary, employee.payment_type, employee.commission_rate)
             
-            # FIX: Actualizar snapshot en períodos abiertos para que
-            # el próximo cálculo use el nuevo fixed_salary.
-            # Sin esto, el período sigue mostrando el salario anterior.
-            updated_snapshots = False
-            if old_fixed_salary != employee.fixed_salary:
-                from apps.employees_api.earnings_models import PayrollPeriod
-                updated = PayrollPeriod.objects.filter(
-                    employee=employee,
-                    status='open',
-                ).update(fixed_salary_snapshot=employee.fixed_salary)
-                _log.info('[PAYROLL_CONFIG] updated fixed_salary_snapshot=%s on %s open periods', employee.fixed_salary, updated)
-                updated_snapshots = True
-            
-            if old_commission_rate != employee.commission_rate:
-                from apps.employees_api.earnings_models import PayrollPeriod
-                updated = PayrollPeriod.objects.filter(
-                    employee=employee,
-                    status='open',
-                ).update(commission_rate_snapshot=employee.commission_rate)
-                _log.info('[PAYROLL_CONFIG] updated commission_rate_snapshot=%s on %s open periods', employee.commission_rate, updated)
-                updated_snapshots = True
+            # FIX: SIEMPRE sincronizar snapshots en períodos abiertos
+            # con los valores actuales del empleado.
+            # Antes solo se actualizaba si el valor cambiaba, lo que causaba
+            # que snapshots corruptos (del bug quincenal/mensual) nunca se corrigieran.
+            from apps.employees_api.earnings_models import PayrollPeriod
+            open_periods = PayrollPeriod.objects.filter(
+                employee=employee,
+                status='open',
+            )
+            updated = open_periods.update(
+                fixed_salary_snapshot=employee.fixed_salary,
+                commission_rate_snapshot=employee.commission_rate,
+                payment_type_snapshot=employee.payment_type,
+            )
+            if updated:
+                _log.info('[PAYROLL_CONFIG] sync snapshots on %s open periods: fixed_salary=%s commission_rate=%s payment_type=%s',
+                          updated, employee.fixed_salary, employee.commission_rate, employee.payment_type)
             
             # Crear registro en CompensationHistory si hubo cambios
             if (old_payment_type != employee.payment_type or 
