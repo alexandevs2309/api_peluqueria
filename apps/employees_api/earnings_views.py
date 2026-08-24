@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, F
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.auth_api.role_utils import get_effective_role_name
 from datetime import date, timedelta
@@ -140,23 +140,53 @@ class PayrollViewSet(viewsets.ViewSet):
                 period_end=end_date,
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
-            # Sincronizar snapshots de períodos abiertos con valores
-            # actuales del empleado. Esto corrige snapshots corruptos del
-            # bug anterior (quincenal guardado como mensual, payment_type
-            # incorrecto, etc). Usamos .update() para saltar la validación
-            # de inmutabilidad de PayrollPeriod.save().
-            if period.status == 'open':
-                PayrollPeriod.objects.filter(pk=period.pk).update(
-                    fixed_salary_snapshot=employee.fixed_salary,
-                    commission_rate_snapshot=employee.commission_rate,
-                    payment_type_snapshot=employee.payment_type,
+
+        # 1b. Sincronizar snapshots de TODOS los períodos (abiertos y pagados)
+        # con los valores actuales del empleado. Esto corrige snapshots
+        # corruptos del bug anterior. Usamos .update() para saltar la
+        # validación de inmutabilidad de PayrollPeriod.save().
+        PayrollPeriod.objects.filter(
+            employee__tenant=tenant,
+            employee__is_active=True,
+            status='open',
+            period_start=start_date,
+            period_end=end_date,
+        ).update(
+            fixed_salary_snapshot=F('employee__fixed_salary'),
+            commission_rate_snapshot=F('employee__commission_rate'),
+            payment_type_snapshot=F('employee__payment_type'),
+        )
+        # También sincronizar períodos pagados/aprobados (solo snapshots,
+        # NO recalcular montos guardados — inmutabilidad)
+        PayrollPeriod.objects.filter(
+            employee__tenant=tenant,
+            employee__is_active=True,
+            status__in=['approved', 'paid', 'ready'],
+        ).exclude(
+            period_start=start_date, period_end=end_date,
+        ).update(
+            fixed_salary_snapshot=F('employee__fixed_salary'),
+            commission_rate_snapshot=F('employee__commission_rate'),
+            payment_type_snapshot=F('employee__payment_type'),
+        )
+
+        # 1c. Recalcular y guardar montos para períodos abiertos
+        for employee in Employee.objects.filter(tenant=tenant, is_active=True):
+            try:
+                period = PayrollPeriod.objects.get(
+                    employee=employee,
+                    period_start=start_date,
+                    period_end=end_date,
                 )
-                period.refresh_from_db()
-                period.calculate_amounts()
-                period.save(update_fields=[
-                    'base_salary', 'commission_earnings', 'gross_amount',
-                    'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
-                ])
+                if period.status == 'open':
+                    period.refresh_from_db()
+                    period.calculate_amounts()
+                    period.save(update_fields=[
+                        'base_salary', 'commission_earnings', 'gross_amount',
+                        'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
+                    ])
+            except PayrollPeriod.DoesNotExist:
+                pass
 
         # 2. Query de períodos
         periods = self.get_queryset().select_related('employee__user')
@@ -183,7 +213,12 @@ class PayrollViewSet(viewsets.ViewSet):
                 'gross_sales': float(agg['gross_sales'] or 0),
             }
 
-        # 4. Construir respuesta
+        # 4. Construir respuesta — SIEMPRE recalcular desde snapshots
+        # corregidos en vez de usar los valores almacenados (que pueden
+        # estar corruptos por el bug anterior). Para períodos abiertos
+        # los valores ya se guardaron en 1c. Para pagados/aprobados,
+        # calculamos en memoria sin guardar (inmutabilidad).
+        from apps.employees_api.payroll_services import PayrollCalculationService
         periods_data = []
         for period in periods:
             status = period.status
@@ -197,17 +232,34 @@ class PayrollViewSet(viewsets.ViewSet):
 
             emp = period.employee
             user = emp.user
+
+            # Recalcular montos desde snapshots corregidos
+            try:
+                calc = PayrollCalculationService.calculate_from_snapshots(period)
+                display_base_salary = float(calc['base_salary'])
+                display_commission = float(calc['commission_earnings'])
+                display_gross = float(calc['gross_amount'])
+            except Exception:
+                # Fallback a valores almacenados si el recálculo falla
+                display_base_salary = float(period.base_salary)
+                display_commission = float(period.commission_earnings)
+                display_gross = float(period.gross_amount)
+
+            # Deducciones: usar las deducciones reales del período
+            display_deductions = float(period.deductions_total)
+            display_net = display_gross - display_deductions
+
             periods_data.append({
                 'id': period.id,
                 'employee_id': period.employee_id,
                 'employee_name': user.full_name or user.email,
                 'period_display': period.period_display,
                 'status': status,
-                'base_salary': float(period.base_salary),
-                'commission_earnings': float(period.commission_earnings),
-                'gross_amount': float(period.gross_amount),
-                'net_amount': float(period.net_amount),
-                'deductions_total': float(period.deductions_total),
+                'base_salary': display_base_salary,
+                'commission_earnings': display_commission,
+                'gross_amount': display_gross,
+                'net_amount': display_net,
+                'deductions_total': display_deductions,
                 'period_start': period.period_start.isoformat(),
                 'period_end': period.period_end.isoformat(),
                 'can_pay': period.can_pay,
