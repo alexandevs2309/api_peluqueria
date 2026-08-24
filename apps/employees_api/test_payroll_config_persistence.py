@@ -313,40 +313,40 @@ class TestListPeriodsEndpoint:
             assert profession != '', f"profession is empty"
 
     def test_list_periods_sales_aggregated_per_period(self):
-        """Sales must be aggregated per period, not globally across all periods"""
+        """Sales must be aggregated per period with correct period scope"""
         tenant, admin, employee = self._setup()
         client = _auth_client(admin, tenant)
 
         today = timezone.localdate()
 
-        # Create period 1: Aug 1-15
-        period1 = PayrollPeriod.objects.create(
+        # Create the current period (what list_periods would create)
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            end_date = today.replace(day=monthrange(today.year, today.month)[1])
+
+        period = PayrollPeriod.objects.create(
             employee=employee, period_type='biweekly',
-            period_start=today.replace(day=1),
-            period_end=today.replace(day=15),
+            period_start=start_date,
+            period_end=end_date,
             status='open',
         )
 
-        # Create period 2: Aug 16-31
-        period2 = PayrollPeriod.objects.create(
-            employee=employee, period_type='biweekly',
-            period_start=today.replace(day=16),
-            period_end=today.replace(day=monthrange(today.year, today.month)[1]),
-            status='open',
-        )
-
-        # Sale in period 1 range
-        sale1 = Sale.objects.create(
+        # Sale INSIDE current period range
+        sale_in = Sale.objects.create(
             employee=employee, tenant=tenant, user=admin,
-            date_time=timezone.make_aware(timezone.datetime(today.year, today.month, 5, 10, 0)),
+            date_time=timezone.make_aware(timezone.datetime.combine(start_date, timezone.datetime.min.time()) + timedelta(days=2)),
             total=Decimal('100.00'), paid=Decimal('100.00'),
             payment_method='cash', status='confirmed',
         )
 
-        # Sale in period 2 range
-        sale2 = Sale.objects.create(
+        # Sale OUTSIDE current period range (different month)
+        other_month = start_date.replace(day=1) - timedelta(days=1)
+        sale_out = Sale.objects.create(
             employee=employee, tenant=tenant, user=admin,
-            date_time=timezone.make_aware(timezone.datetime(today.year, today.month, 20, 10, 0)),
+            date_time=timezone.make_aware(timezone.datetime.combine(other_month, timezone.datetime.min.time())),
             total=Decimal('200.00'), paid=Decimal('200.00'),
             payment_method='cash', status='confirmed',
         )
@@ -354,22 +354,14 @@ class TestListPeriodsEndpoint:
         response = client.get(reverse('payroll-list-periods'))
         periods = response.json()['periods']
 
-        # Find period 1 and period 2 in response
-        p1_data = next((p for p in periods if p['id'] == period1.id), None)
-        p2_data = next((p for p in periods if p['id'] == period2.id), None)
+        # Only one period returned (the current one)
+        my_period = next((p for p in periods if p['id'] == period.id), None)
+        assert my_period is not None, "Current period not found in response"
 
-        assert p1_data is not None, "Period 1 not found in response"
-        assert p2_data is not None, "Period 2 not found in response"
-
-        # Period 1 should only have sale1's total (100), NOT sale2's (200)
-        assert p1_data['gross_sales'] == 100.0, \
-            f"Period 1 gross_sales={p1_data['gross_sales']}, expected 100.0"
-        assert p1_data['services_count'] == 1
-
-        # Period 2 should only have sale2's total (200)
-        assert p2_data['gross_sales'] == 200.0, \
-            f"Period 2 gross_sales={p2_data['gross_sales']}, expected 200.0"
-        assert p2_data['services_count'] == 1
+        # Current period should only have sale_in's total (100), NOT sale_out's (200)
+        assert my_period['gross_sales'] == 100.0, \
+            f"gross_sales={my_period['gross_sales']}, expected 100.0"
+        assert my_period['services_count'] == 1
 
     def test_list_periods_no_duplicate_periods(self):
         """Must not create duplicate periods for same employee"""

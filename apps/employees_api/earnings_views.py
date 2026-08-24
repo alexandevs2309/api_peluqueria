@@ -141,21 +141,9 @@ class PayrollViewSet(viewsets.ViewSet):
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
 
-        # 1b+1c. Para cada empleado activo: sincronizar snapshots de TODOS
-        # los períodos (abiertos y pagados) con los valores actuales del
-        # empleado. Esto asegura que la tabla muestre lo que el empleado
-        # GANÓ (valor correcto actual), no lo que se pagó (histórico corrupto).
-        # El monto real pagado se conserva en payment_history.
+        # 1b. Para cada empleado activo: sincronizar snapshot y recalcular
+        # el período abierto actual
         for employee in Employee.objects.filter(tenant=tenant, is_active=True):
-            # Sincronizar TODOS los períodos de este empleado
-            PayrollPeriod.objects.filter(
-                employee=employee,
-            ).update(
-                fixed_salary_snapshot=employee.fixed_salary,
-                commission_rate_snapshot=employee.commission_rate,
-                payment_type_snapshot=employee.payment_type,
-            )
-            # Recalcular montos solo para el período abierto actual
             try:
                 period = PayrollPeriod.objects.get(
                     employee=employee,
@@ -163,6 +151,12 @@ class PayrollViewSet(viewsets.ViewSet):
                     period_end=end_date,
                 )
                 if period.status == 'open':
+                    # Sincronizar snapshot con valores actuales del empleado
+                    PayrollPeriod.objects.filter(pk=period.pk).update(
+                        fixed_salary_snapshot=employee.fixed_salary,
+                        commission_rate_snapshot=employee.commission_rate,
+                        payment_type_snapshot=employee.payment_type,
+                    )
                     period.refresh_from_db()
                     period.calculate_amounts()
                     period.save(update_fields=[
@@ -172,15 +166,13 @@ class PayrollViewSet(viewsets.ViewSet):
             except PayrollPeriod.DoesNotExist:
                 pass
 
-        # 2. Query de períodos
+        # 2. Query de períodos — SOLO el actual por empleado
         periods = self.get_queryset().select_related('employee__user')
+        periods = periods.filter(period_start=start_date, period_end=end_date)
 
         status_filter = request.query_params.get('status')
         if status_filter:
             periods = periods.filter(status=status_filter)
-
-        # Ocultar períodos futuros abiertos
-        periods = periods.exclude(status='open', period_start__gt=today)
 
         # 3. Ventas por empleado por período (una query por período con índices)
         sales_by_period = {}
