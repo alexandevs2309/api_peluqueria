@@ -141,10 +141,21 @@ class PayrollViewSet(viewsets.ViewSet):
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
 
-        # 1b+1c. Para cada empleado activo: sincronizar snapshots del
-        # período abierto Y recalcular montos. No se puede usar
-        # F('employee__xxx') en .update() con joins, así que iteramos.
+        # 1b+1c. Para cada empleado activo: sincronizar snapshots de TODOS
+        # los períodos (abiertos y pagados) con los valores actuales del
+        # empleado. Esto asegura que la tabla muestre lo que el empleado
+        # GANÓ (valor correcto actual), no lo que se pagó (histórico corrupto).
+        # El monto real pagado se conserva en payment_history.
         for employee in Employee.objects.filter(tenant=tenant, is_active=True):
+            # Sincronizar TODOS los períodos de este empleado
+            PayrollPeriod.objects.filter(
+                employee=employee,
+            ).update(
+                fixed_salary_snapshot=employee.fixed_salary,
+                commission_rate_snapshot=employee.commission_rate,
+                payment_type_snapshot=employee.payment_type,
+            )
+            # Recalcular montos solo para el período abierto actual
             try:
                 period = PayrollPeriod.objects.get(
                     employee=employee,
@@ -152,11 +163,6 @@ class PayrollViewSet(viewsets.ViewSet):
                     period_end=end_date,
                 )
                 if period.status == 'open':
-                    PayrollPeriod.objects.filter(pk=period.pk).update(
-                        fixed_salary_snapshot=employee.fixed_salary,
-                        commission_rate_snapshot=employee.commission_rate,
-                        payment_type_snapshot=employee.payment_type,
-                    )
                     period.refresh_from_db()
                     period.calculate_amounts()
                     period.save(update_fields=[
