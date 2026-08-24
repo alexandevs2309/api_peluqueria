@@ -113,29 +113,3 @@ class EmployeeCompensationHistory(models.Model):
         ).filter(
             models.Q(end_date__isnull=True) | models.Q(end_date__gte=date)
         ).first()
-    
-    @classmethod
-    def create_from_employee(cls, employee, effective_date, created_by, change_reason=''):
-        """Crear registro de historial desde estado actual del empleado"""
-        
-        # Cerrar registro anterior si existe
-        previous = cls.objects.filter(
-            employee=employee,
-            end_date__isnull=True
-        ).first()
-        
-        if previous and previous.effective_date < effective_date:
-            # No modificar el registro, crear uno nuevo con end_date
-            # Esto mantiene inmutabilidad pero requiere lógica especial
-            pass
-        
-        # Crear nuevo registro
-        return cls.objects.create(
-            employee=employee,
-            payment_type=employee.payment_type,
-            fixed_salary=employee.fixed_salary,
-            commission_rate=employee.commission_rate,
-            effective_date=effective_date,
-            created_by=created_by,
-            change_reason=change_reason
-        )

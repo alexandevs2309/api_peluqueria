@@ -141,29 +141,16 @@ class PayrollViewSet(viewsets.ViewSet):
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
 
-        # 1b. Sincronizar snapshots de TODOS los períodos (abiertos y pagados)
-        # con los valores actuales del empleado. Esto corrige snapshots
-        # corruptos del bug anterior. Usamos .update() para saltar la
-        # validación de inmutabilidad de PayrollPeriod.save().
+        # 1b. Sincronizar snapshots SOLO de períodos abiertos.
+        # Los períodos pagados/aprobados mantienen sus snapshots originales
+        # (integridad histórica). El cálculo on-the-fly en la respuesta
+        # usa los snapshots corregidos para mostrar montos correctos.
         PayrollPeriod.objects.filter(
             employee__tenant=tenant,
             employee__is_active=True,
             status='open',
             period_start=start_date,
             period_end=end_date,
-        ).update(
-            fixed_salary_snapshot=F('employee__fixed_salary'),
-            commission_rate_snapshot=F('employee__commission_rate'),
-            payment_type_snapshot=F('employee__payment_type'),
-        )
-        # También sincronizar períodos pagados/aprobados (solo snapshots,
-        # NO recalcular montos guardados — inmutabilidad)
-        PayrollPeriod.objects.filter(
-            employee__tenant=tenant,
-            employee__is_active=True,
-            status__in=['approved', 'paid', 'ready'],
-        ).exclude(
-            period_start=start_date, period_end=end_date,
         ).update(
             fixed_salary_snapshot=F('employee__fixed_salary'),
             commission_rate_snapshot=F('employee__commission_rate'),

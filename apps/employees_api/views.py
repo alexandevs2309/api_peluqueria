@@ -354,81 +354,107 @@ class EmployeeViewSet(TenantScopedViewSet):
     @action(detail=True, methods=['get', 'put'], url_path='payroll_config')
     def payroll_config(self, request, pk=None):
         employee = self.get_object()
-        
+
         if request.method == 'GET':
             return Response({
                 'payment_type': employee.payment_type or 'commission',
-                'fixed_salary': float(employee.fixed_salary or 0),
-                'commission_rate': float(employee.commission_rate or 40)
+                'fixed_salary': float(employee.fixed_salary) if employee.fixed_salary else 0.0,
+                'commission_rate': float(employee.commission_rate) if employee.commission_rate else 0.0,
             })
-        
+
         elif request.method == 'PUT':
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(request.user, tenant=getattr(request, 'tenant', None))
+            if user_role != 'CLIENT_ADMIN' and not request.user.is_superuser:
+                return Response({'error': 'Solo administradores pueden modificar compensación'}, status=403)
+
             import logging
+            from decimal import Decimal, InvalidOperation
             _log = logging.getLogger('employees_api.payroll_config')
             _log.info('[PAYROLL_CONFIG] PUT employee=%s data=%s', pk, dict(request.data))
-            
+
             payment_type = request.data.get('payment_type')
             if payment_type and payment_type not in ['fixed', 'commission', 'mixed']:
                 return Response({'error': 'payment_type inválido'}, status=400)
-            
-            # Capturar valores anteriores
+
+            raw_fixed = request.data.get('fixed_salary')
+            raw_commission = request.data.get('commission_rate')
+
+            new_fixed_salary = None
+            new_commission_rate = None
+
+            if raw_fixed is not None:
+                try:
+                    new_fixed_salary = Decimal(str(raw_fixed))
+                except (InvalidOperation, ValueError):
+                    return Response({'error': 'fixed_salary inválido'}, status=400)
+                if new_fixed_salary < 0:
+                    return Response({'error': 'fixed_salary no puede ser negativo'}, status=400)
+
+            if raw_commission is not None:
+                try:
+                    new_commission_rate = Decimal(str(raw_commission))
+                except (InvalidOperation, ValueError):
+                    return Response({'error': 'commission_rate inválido'}, status=400)
+                if new_commission_rate < 0 or new_commission_rate > 100:
+                    return Response({'error': 'commission_rate debe estar entre 0 y 100'}, status=400)
+
             old_payment_type = employee.payment_type
-            old_fixed_salary = employee.fixed_salary
-            old_commission_rate = employee.commission_rate
-            
-            # Aplicar cambios
+            old_fixed_salary = Decimal(str(employee.fixed_salary)) if employee.fixed_salary is not None else Decimal('0.00')
+            old_commission_rate = Decimal(str(employee.commission_rate)) if employee.commission_rate is not None else Decimal('40.00')
+
             if payment_type:
                 employee.payment_type = payment_type
-            if 'fixed_salary' in request.data:
-                employee.fixed_salary = request.data['fixed_salary']
-            if 'commission_rate' in request.data:
-                employee.commission_rate = request.data['commission_rate']
-            
-            employee.save()
-            _log.info('[PAYROLL_CONFIG] saved employee=%s fixed_salary=%s payment_type=%s commission_rate=%s',
-                      employee.id, employee.fixed_salary, employee.payment_type, employee.commission_rate)
-            
-            # FIX: SIEMPRE sincronizar snapshots en períodos abiertos
-            # con los valores actuales del empleado.
-            # Antes solo se actualizaba si el valor cambiaba, lo que causaba
-            # que snapshots corruptos (del bug quincenal/mensual) nunca se corrigieran.
-            from apps.employees_api.earnings_models import PayrollPeriod
-            open_periods = PayrollPeriod.objects.filter(
-                employee=employee,
-                status='open',
-            )
-            updated = open_periods.update(
-                fixed_salary_snapshot=employee.fixed_salary,
-                commission_rate_snapshot=employee.commission_rate,
-                payment_type_snapshot=employee.payment_type,
-            )
-            if updated:
-                _log.info('[PAYROLL_CONFIG] sync snapshots on %s open periods: fixed_salary=%s commission_rate=%s payment_type=%s',
-                          updated, employee.fixed_salary, employee.commission_rate, employee.payment_type)
-            
-            # Crear registro en CompensationHistory si hubo cambios
-            if (old_payment_type != employee.payment_type or 
-                old_fixed_salary != employee.fixed_salary or 
-                old_commission_rate != employee.commission_rate):
-                
-                from apps.employees_api.compensation_models import EmployeeCompensationHistory
-                from django.utils import timezone
-                
-                EmployeeCompensationHistory.objects.create(
+            if new_fixed_salary is not None:
+                employee.fixed_salary = new_fixed_salary
+            if new_commission_rate is not None:
+                employee.commission_rate = new_commission_rate
+
+            with transaction.atomic():
+                employee.save()
+                _log.info('[PAYROLL_CONFIG] saved employee=%s fixed_salary=%s payment_type=%s commission_rate=%s',
+                          employee.id, employee.fixed_salary, employee.payment_type, employee.commission_rate)
+
+                from apps.employees_api.earnings_models import PayrollPeriod
+                open_periods = PayrollPeriod.objects.filter(
                     employee=employee,
-                    payment_type=employee.payment_type,
-                    fixed_salary=employee.fixed_salary,
-                    commission_rate=employee.commission_rate,
-                    effective_date=timezone.now().date(),
-                    created_by=request.user,
-                    change_reason='Actualización manual de configuración de nómina'
+                    status='open',
                 )
-            
+                updated = open_periods.update(
+                    fixed_salary_snapshot=employee.fixed_salary,
+                    commission_rate_snapshot=employee.commission_rate,
+                    payment_type_snapshot=employee.payment_type,
+                )
+                if updated:
+                    _log.info('[PAYROLL_CONFIG] sync snapshots on %s open periods: fixed_salary=%s commission_rate=%s payment_type=%s',
+                              updated, employee.fixed_salary, employee.commission_rate, employee.payment_type)
+
+                new_fixed_decimal = Decimal(str(employee.fixed_salary)) if employee.fixed_salary is not None else Decimal('0.00')
+                new_commission_decimal = Decimal(str(employee.commission_rate)) if employee.commission_rate is not None else Decimal('40.00')
+
+                if (old_payment_type != employee.payment_type or
+                    old_fixed_salary != new_fixed_decimal or
+                    old_commission_rate != new_commission_decimal):
+
+                    from apps.employees_api.compensation_models import EmployeeCompensationHistory
+                    from django.utils import timezone
+
+                    EmployeeCompensationHistory.objects.create(
+                        employee=employee,
+                        payment_type=employee.payment_type,
+                        fixed_salary=new_fixed_decimal,
+                        commission_rate=new_commission_decimal,
+                        effective_date=timezone.now().date(),
+                        created_by=request.user,
+                        change_reason='Actualización manual de configuración de nómina'
+                    )
+                    _log.info('[PAYROLL_CONFIG] compensation history created for employee=%s', employee.id)
+
             return Response({
                 'message': 'Configuración actualizada',
                 'payment_type': employee.payment_type,
-                'fixed_salary': float(employee.fixed_salary or 0),
-                'commission_rate': float(employee.commission_rate or 40)
+                'fixed_salary': float(employee.fixed_salary) if employee.fixed_salary else 0.0,
+                'commission_rate': float(employee.commission_rate) if employee.commission_rate else 0.0,
             })
     
     @action(detail=True, methods=['get'], url_path='payment_history')
