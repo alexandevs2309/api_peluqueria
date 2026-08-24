@@ -382,6 +382,23 @@ class EmployeeViewSet(TenantScopedViewSet):
             
             employee.save()
             
+            # FIX: Actualizar snapshot en períodos abiertos para que
+            # el próximo cálculo use el nuevo fixed_salary.
+            # Sin esto, el período sigue mostrando el salario anterior.
+            if old_fixed_salary != employee.fixed_salary:
+                from apps.employees_api.earnings_models import PayrollPeriod
+                PayrollPeriod.objects.filter(
+                    employee=employee,
+                    status='open',
+                ).update(fixed_salary_snapshot=employee.fixed_salary)
+            
+            if old_commission_rate != employee.commission_rate:
+                from apps.employees_api.earnings_models import PayrollPeriod
+                PayrollPeriod.objects.filter(
+                    employee=employee,
+                    status='open',
+                ).update(commission_rate_snapshot=employee.commission_rate)
+            
             # Crear registro en CompensationHistory si hubo cambios
             if (old_payment_type != employee.payment_type or 
                 old_fixed_salary != employee.fixed_salary or 

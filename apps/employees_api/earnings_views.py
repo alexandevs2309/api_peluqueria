@@ -140,7 +140,9 @@ class PayrollViewSet(viewsets.ViewSet):
                 period_end=end_date,
                 defaults={'period_type': 'biweekly', 'status': 'open'},
             )
-            if created:
+            # Siempre recalcular períodos abiertos para reflejar
+            # cambios en salario/comisión desde la última vez
+            if period.status == 'open':
                 period.calculate_amounts()
                 period.save(update_fields=[
                     'base_salary', 'commission_earnings', 'gross_amount',
