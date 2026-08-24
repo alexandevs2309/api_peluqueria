@@ -423,6 +423,22 @@ class TestPayrollConfigEndToEnd:
         employee = _make_employee(tenant, 'emp-e2e@test.com')
         return tenant, admin, employee
 
+    def _ensure_period(self, employee):
+        today = timezone.localdate()
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            end_date = today.replace(day=monthrange(today.year, today.month)[1])
+        period, _ = PayrollPeriod.objects.get_or_create(
+            employee=employee,
+            period_start=start_date,
+            period_end=end_date,
+            defaults={'period_type': 'biweekly', 'status': 'open'},
+        )
+        return period, start_date, end_date
+
     def test_save_config_then_period_uses_new_salary(self):
         """After updating fixed_salary, new period should use updated value"""
         tenant, admin, employee = self._setup()
@@ -437,21 +453,16 @@ class TestPayrollConfigEndToEnd:
         employee.refresh_from_db()
         assert employee.fixed_salary == Decimal('20000.00')
 
-        # Ensure a period exists
-        client.post(reverse('payroll-ensure-period'), {'employee_id': employee.id}, format='json')
+        # Create period directly in DB
+        period, start_date, end_date = self._ensure_period(employee)
 
-        # The period should have base_salary = 20000 / 2 = 10000
-        today = timezone.localdate()
-        if today.day <= 15:
-            start_date = today.replace(day=1)
-            end_date = today.replace(day=15)
-        else:
-            start_date = today.replace(day=16)
-            end_date = today.replace(day=monthrange(today.year, today.month)[1])
-
-        period = PayrollPeriod.objects.get(
-            employee=employee, period_start=start_date, period_end=end_date
+        # Sync snapshot (like list_periods does)
+        PayrollPeriod.objects.filter(pk=period.pk).update(
+            fixed_salary_snapshot=employee.fixed_salary,
+            commission_rate_snapshot=employee.commission_rate,
+            payment_type_snapshot=employee.payment_type,
         )
+        period.refresh_from_db()
         period.calculate_amounts()
         period.save()
 
@@ -464,26 +475,21 @@ class TestPayrollConfigEndToEnd:
         tenant, admin, employee = self._setup()
         client = _auth_client(admin, tenant)
 
-        # Ensure period exists with old salary
-        client.post(reverse('payroll-ensure-period'), {'employee_id': employee.id}, format='json')
+        # Create period directly
+        period, start_date, end_date = self._ensure_period(employee)
 
         # Update salary
         url = reverse('employee-payroll-config', kwargs={'pk': employee.id})
         client.put(url, {'fixed_salary': '20000.00'}, format='json')
         employee.refresh_from_db()
 
-        # Recalculate the open period
-        today = timezone.localdate()
-        if today.day <= 15:
-            start_date = today.replace(day=1)
-            end_date = today.replace(day=15)
-        else:
-            start_date = today.replace(day=16)
-            end_date = today.replace(day=monthrange(today.year, today.month)[1])
-
-        period = PayrollPeriod.objects.get(
-            employee=employee, period_start=start_date, period_end=end_date
+        # Sync snapshots (like list_periods does)
+        PayrollPeriod.objects.filter(pk=period.pk).update(
+            fixed_salary_snapshot=employee.fixed_salary,
+            commission_rate_snapshot=employee.commission_rate,
+            payment_type_snapshot=employee.payment_type,
         )
+        period.refresh_from_db()
         period.calculate_amounts()
         period.save(update_fields=[
             'base_salary', 'commission_earnings', 'gross_amount',
