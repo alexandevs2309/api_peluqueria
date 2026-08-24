@@ -363,6 +363,10 @@ class EmployeeViewSet(TenantScopedViewSet):
             })
         
         elif request.method == 'PUT':
+            import logging
+            _log = logging.getLogger('employees_api.payroll_config')
+            _log.info('[PAYROLL_CONFIG] PUT employee=%s data=%s', pk, dict(request.data))
+            
             payment_type = request.data.get('payment_type')
             if payment_type and payment_type not in ['fixed', 'commission', 'mixed']:
                 return Response({'error': 'payment_type inválido'}, status=400)
@@ -381,23 +385,30 @@ class EmployeeViewSet(TenantScopedViewSet):
                 employee.commission_rate = request.data['commission_rate']
             
             employee.save()
+            _log.info('[PAYROLL_CONFIG] saved employee=%s fixed_salary=%s payment_type=%s commission_rate=%s',
+                      employee.id, employee.fixed_salary, employee.payment_type, employee.commission_rate)
             
             # FIX: Actualizar snapshot en períodos abiertos para que
             # el próximo cálculo use el nuevo fixed_salary.
             # Sin esto, el período sigue mostrando el salario anterior.
+            updated_snapshots = False
             if old_fixed_salary != employee.fixed_salary:
                 from apps.employees_api.earnings_models import PayrollPeriod
-                PayrollPeriod.objects.filter(
+                updated = PayrollPeriod.objects.filter(
                     employee=employee,
                     status='open',
                 ).update(fixed_salary_snapshot=employee.fixed_salary)
+                _log.info('[PAYROLL_CONFIG] updated fixed_salary_snapshot=%s on %s open periods', employee.fixed_salary, updated)
+                updated_snapshots = True
             
             if old_commission_rate != employee.commission_rate:
                 from apps.employees_api.earnings_models import PayrollPeriod
-                PayrollPeriod.objects.filter(
+                updated = PayrollPeriod.objects.filter(
                     employee=employee,
                     status='open',
                 ).update(commission_rate_snapshot=employee.commission_rate)
+                _log.info('[PAYROLL_CONFIG] updated commission_rate_snapshot=%s on %s open periods', employee.commission_rate, updated)
+                updated_snapshots = True
             
             # Crear registro en CompensationHistory si hubo cambios
             if (old_payment_type != employee.payment_type or 
