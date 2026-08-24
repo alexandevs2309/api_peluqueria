@@ -117,97 +117,79 @@ class PayrollViewSet(viewsets.ViewSet):
         from apps.employees_api.models import Employee
         from apps.pos_api.models import Sale
         from calendar import monthrange
-        from django.db.models import Count, Sum, Q
+        from django.db.models import Count, Sum
 
         tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'periods': []})
 
-        # Garantizar un período del ciclo actual para cada empleado activo del
-        # tenant. Así la pantalla muestra el monto real (net) de cada empleado y
-        # el botón de pago solo aparece cuando hay algo que liquidar.
-        if tenant:
-            today = timezone.localdate()
-            if today.day <= 15:
-                start_date = today.replace(day=1)
-                end_date = today.replace(day=15)
-            else:
-                start_date = today.replace(day=16)
-                end_date = today.replace(day=monthrange(today.year, today.month)[1])
+        today = timezone.localdate()
 
-            for employee in Employee.objects.filter(tenant=tenant, is_active=True):
-                period, created = PayrollPeriod.objects.get_or_create(
-                    employee=employee,
-                    period_start=start_date,
-                    period_end=end_date,
-                    defaults={'period_type': 'biweekly', 'status': 'open'},
-                )
-                if created:
-                    period.calculate_amounts()
-                    period.save(update_fields=[
-                        'base_salary', 'commission_earnings', 'gross_amount',
-                        'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
-                    ])
+        # 1. Garantizar un período abierto para cada empleado activo del tenant
+        if today.day <= 15:
+            start_date = today.replace(day=1)
+            end_date = today.replace(day=15)
+        else:
+            start_date = today.replace(day=16)
+            end_date = today.replace(day=monthrange(today.year, today.month)[1])
+
+        for employee in Employee.objects.filter(tenant=tenant, is_active=True):
+            period, created = PayrollPeriod.objects.get_or_create(
+                employee=employee,
+                period_start=start_date,
+                period_end=end_date,
+                defaults={'period_type': 'biweekly', 'status': 'open'},
+            )
+            if created:
+                period.calculate_amounts()
+                period.save(update_fields=[
+                    'base_salary', 'commission_earnings', 'gross_amount',
+                    'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
+                ])
+
+        # 2. Query de períodos
+        periods = self.get_queryset().select_related('employee__user')
 
         status_filter = request.query_params.get('status')
-        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
-        if tenant:
-            self._ensure_open_periods(tenant)
-        periods = self.get_queryset().select_related('employee__user')
-        
         if status_filter:
             periods = periods.filter(status=status_filter)
-        
-        # Ocultar períodos abiertos que aún no han comenzado (futuros cronológicamente)
-        # para evitar confusiones en la interfaz de administración.
-        today = timezone.localdate()
+
+        # Ocultar períodos futuros abiertos
         periods = periods.exclude(status='open', period_start__gt=today)
-        
-        # Recalcular períodos abiertos si el desglose no coincide con el bruto
+
+        # 3. Ventas por empleado por período (una query por período con índices)
+        sales_by_period = {}
         for period in periods:
-            if period.status == 'open' and not period.is_finalized:
-                if period.base_salary + period.commission_earnings != period.gross_amount:
-                    period.calculate_amounts()
-                    period.save(update_fields=['base_salary', 'commission_earnings', 'gross_amount', 'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason'])
-        
-        # Pre-calcular ventas por empleado en el rango de cada período
-        # Para evitar N+1 queries, hacer una query agregada con filtro por tenant y fechas
-        sales_agg = {}
-        if periods and tenant:
-            # Query única: ventas del tenant en rango global, agrupar por employee_id
-            p_starts = [p.period_start for p in periods]
-            p_ends = [p.period_end for p in periods]
-            global_start = min(p_starts)
-            global_end = max(p_ends)
-            
-            sales_in_periods = Sale.objects.filter(
+            emp_id = period.employee_id
+            agg = Sale.objects.filter(
                 tenant=tenant,
-                employee__isnull=False,
-                date_time__date__gte=global_start,
-                date_time__date__lte=global_end
-            ).values('employee_id').annotate(
-                services_count=Count('id'),
-                gross_sales=Sum('total')
-            )
-            
-            for s in sales_in_periods:
-                sales_agg[s['employee_id']] = {
-                    'services_count': s['services_count'] or 0,
-                    'gross_sales': float(s['gross_sales'] or 0)
-                }
-        
+                employee_id=emp_id,
+                date_time__date__gte=period.period_start,
+                date_time__date__lte=period.period_end,
+            ).aggregate(services_count=Count('id'), gross_sales=Sum('total'))
+            sales_by_period[(emp_id, period.period_start, period.period_end)] = {
+                'services_count': agg['services_count'] or 0,
+                'gross_sales': float(agg['gross_sales'] or 0),
+            }
+
+        # 4. Construir respuesta
         periods_data = []
         for period in periods:
-            # Mapear estados legacy
             status = period.status
             if status == 'ready':
                 status = 'approved'
-            
-            # Obtener datos de ventas agregados para este empleado en este período
-            sales_data = sales_agg.get(period.employee_id, {'services_count': 0, 'gross_sales': 0.0})
-            
+
+            sales_data = sales_by_period.get(
+                (period.employee_id, period.period_start, period.period_end),
+                {'services_count': 0, 'gross_sales': 0.0}
+            )
+
+            emp = period.employee
+            user = emp.user
             periods_data.append({
                 'id': period.id,
                 'employee_id': period.employee_id,
-                'employee_name': period.employee.user.full_name or period.employee.user.email,
+                'employee_name': user.full_name or user.email,
                 'period_display': period.period_display,
                 'status': status,
                 'base_salary': float(period.base_salary),
@@ -219,14 +201,13 @@ class PayrollViewSet(viewsets.ViewSet):
                 'period_end': period.period_end.isoformat(),
                 'can_pay': period.can_pay,
                 'pay_block_reason': period.pay_block_reason,
-                # Nuevos campos para el frontend
-                'employee_payment_type': period.employee.payment_type,
-                'employee_commission_rate': float(period.employee.commission_rate or 0),
-                'employee_profession': period.employee.get_profession_display() or period.employee.profession,
+                'employee_payment_type': emp.payment_type,
+                'employee_commission_rate': float(emp.commission_rate or 0),
+                'employee_profession': emp.get_profession_display() or emp.profession or '',
                 'services_count': sales_data['services_count'],
-                'gross_sales': sales_data['gross_sales'],
+                'gross_sales': round(sales_data['gross_sales'], 2),
             })
-        
+
         return Response({'periods': periods_data})
 
     @action(detail=False, methods=['post'], url_path='client/payroll/ensure-period')
