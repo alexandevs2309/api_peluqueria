@@ -1213,10 +1213,10 @@ class CashRegisterViewSet(TenantScopedViewSet):
         
         # Asegurar valores no null
         if register.initial_cash is None:
-            register.initial_cash = 0.00
+            register.initial_cash = Decimal('0')
             register.save(update_fields=['initial_cash'])
         if register.final_cash is None:
-            register.final_cash = 0.00
+            register.final_cash = Decimal('0')
             register.save(update_fields=['final_cash'])
             
         return Response(CashRegisterSerializer(register).data)
@@ -1227,14 +1227,20 @@ class CashRegisterViewSet(TenantScopedViewSet):
         if not register.is_open:
             return Response({"detail": "Caja ya está cerrada."}, status=status.HTTP_400_BAD_REQUEST)
 
-        from .serializers import CashRegisterCloseSerializer
-        serializer = CashRegisterCloseSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        # Si hay arqueo, usar su total como final_cash
+        last_count = register.cash_counts.order_by('-created_at').first()
+        if last_count:
+            total_from_arqueo = sum(c.total for c in register.cash_counts.all())
+            register.final_cash = total_from_arqueo
+        else:
+            from .serializers import CashRegisterCloseSerializer
+            serializer = CashRegisterCloseSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            register.final_cash = serializer.validated_data['final_cash']
 
         register.is_open = False
         register.closed_at = timezone.now()
-        register.final_cash = serializer.validated_data['final_cash']
         register.save()
         return Response(CashRegisterSerializer(register).data)
     
@@ -1279,12 +1285,16 @@ class CashRegisterViewSet(TenantScopedViewSet):
         })
 
     def _calculate_cash_sales(self, register):
-        """Calcular ventas en efectivo confirmadas de ESTA sesión de caja"""
-        cash_sales = Sale.objects.filter(
-            cash_register=register,
-            payment_method='cash',
-            status='confirmed',
-        ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
+        """Calcular ventas en efectivo confirmadas de ESTA sesión de caja.
+        Consistente con CashRegister.sales_amount: usa Payment.method='cash'
+        y filtra sale__status='confirmed'."""
+        from .models import Payment
+        cash_sales = Payment.objects.filter(
+            sale__cash_register=register,
+            sale__tenant=register.tenant,
+            method='cash',
+            sale__status='confirmed',
+        ).aggregate(total=Sum('amount'))['total'] or Decimal('0')
         return cash_sales
 # Nuevos ViewSets
 class PromotionViewSet(TenantScopedViewSet):

@@ -303,11 +303,11 @@ class CashRegister(models.Model):
         ]
     
     def save(self, *args, **kwargs):
-        # Asegurar que nunca sean null
+        from decimal import Decimal
         if self.initial_cash is None:
-            self.initial_cash = 0.00
+            self.initial_cash = Decimal('0')
         if self.final_cash is None:
-            self.final_cash = 0.00
+            self.final_cash = Decimal('0')
         super().save(*args, **kwargs)
     
     @property
