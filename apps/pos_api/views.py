@@ -1169,8 +1169,6 @@ class CashRegisterViewSet(TenantScopedViewSet):
         )
         
         return queryset
-            
-        return queryset
     
     def perform_create(self, serializer):
         tenant = self._get_request_tenant()
@@ -1245,10 +1243,20 @@ class CashRegisterViewSet(TenantScopedViewSet):
         """Arqueo de caja - conteo físico"""
         register = self.get_object()
         counts_data = request.data.get('counts', [])
-        
+
+        # Guard: initial_cash None (datos viejos)
+        if register.initial_cash is None:
+            register.initial_cash = Decimal('0')
+            register.save(update_fields=['initial_cash'])
+
+        # Mapear quantity → count (frontend envía "quantity", modelo usa "count")
+        for cd in counts_data:
+            if 'quantity' in cd and 'count' not in cd:
+                cd['count'] = cd.pop('quantity')
+
         # Limpiar conteos anteriores
         register.cash_counts.all().delete()
-        
+
         total_counted = Decimal('0')
         for count_data in counts_data:
             count_data['cash_register'] = register.id
@@ -1258,23 +1266,24 @@ class CashRegisterViewSet(TenantScopedViewSet):
                 total_counted += count.total
             else:
                 return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
+
         # Calcular diferencia
-        expected_cash = register.initial_cash + self._calculate_cash_sales(register)
+        expected_cash = (register.initial_cash or Decimal('0')) + self._calculate_cash_sales(register)
         difference = total_counted - expected_cash
-        
+
         return Response({
             'total_counted': total_counted,
             'expected_cash': expected_cash,
             'difference': difference,
             'counts': CashCountSerializer(register.cash_counts.all(), many=True).data
         })
-    
+
     def _calculate_cash_sales(self, register):
-        """Calcular ventas en efectivo de ESTA sesión de caja"""
+        """Calcular ventas en efectivo confirmadas de ESTA sesión de caja"""
         cash_sales = Sale.objects.filter(
             cash_register=register,
-            payment_method='cash'
+            payment_method='cash',
+            status='confirmed',
         ).aggregate(total=Sum('paid'))['total'] or Decimal('0')
         return cash_sales
 # Nuevos ViewSets
