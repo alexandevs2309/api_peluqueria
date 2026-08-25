@@ -12,10 +12,27 @@ logger = logging.getLogger(__name__)
 class StripePosProvider(PaymentProvider):
     """Wrapper del Stripe existente para pagos POS (default fuera de RD)."""
 
-    def __init__(self, config: PaymentProviderConfig = None):
+    def __init__(self, config: PaymentProviderConfig = None, tenant=None):
+        self.tenant = tenant
         self.config = config or self._get_config()
 
     def _get_config(self) -> PaymentProviderConfig:
+        # 1. Intentar credenciales del tenant (per-tenant)
+        if self.tenant:
+            try:
+                from apps.settings_api.barbershop_models import BarbershopSettings
+                bs = BarbershopSettings.objects.filter(tenant=self.tenant).first()
+                if bs and bs.stripe_secret_key:
+                    api_key = bs.get_payment_credential('stripe_secret_key')
+                    return PaymentProviderConfig(
+                        api_key=api_key,
+                        sandbox=bs.payment_sandbox,
+                        currency='USD',
+                    )
+            except Exception:
+                pass
+
+        # 2. Fallback a Django settings (global)
         api_key = getattr(settings, 'STRIPE_SECRET_KEY', '')
         return PaymentProviderConfig(
             api_key=api_key,

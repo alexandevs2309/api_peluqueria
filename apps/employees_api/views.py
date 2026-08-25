@@ -371,7 +371,7 @@ class EmployeeViewSet(TenantScopedViewSet):
             import logging
             from decimal import Decimal, InvalidOperation
             _log = logging.getLogger('employees_api.payroll_config')
-            _log.info('[PAYROLL_CONFIG] PUT employee=%s data=%s', pk, dict(request.data))
+            _log.debug('[PAYROLL_CONFIG] PUT employee=%s keys=%s', pk, list(request.data.keys()))
 
             payment_type = request.data.get('payment_type')
             if payment_type and payment_type not in ['fixed', 'commission', 'mixed']:

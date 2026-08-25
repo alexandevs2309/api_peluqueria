@@ -33,6 +33,9 @@ if env_path and env_path.exists():
     environ.Env.read_env(env_path)
 SECRET_KEY = env('SECRET_KEY')
 
+# Fernet key for encrypting sensitive payment credentials per-tenant
+FERNET_KEY = env('FERNET_KEY', default='')
+
 # Sentry configuration
 SENTRY_DSN = env('SENTRY_DSN', default=None)
 if SENTRY_DSN and not env.bool('DISABLE_SENTRY', default=False):

@@ -42,10 +42,28 @@ ERROR_MESSAGES = {
 class CardNETProvider(PaymentProvider):
     """Pagos presenciales vía CardNET para República Dominicana."""
 
-    def __init__(self, config: PaymentProviderConfig = None):
+    def __init__(self, config: PaymentProviderConfig = None, tenant=None):
+        self.tenant = tenant
         self.config = config or self._load_config()
 
     def _load_config(self) -> PaymentProviderConfig:
+        # 1. Intentar credenciales del tenant (per-tenant)
+        if self.tenant:
+            try:
+                from apps.settings_api.barbershop_models import BarbershopSettings
+                bs = BarbershopSettings.objects.filter(tenant=self.tenant).first()
+                if bs and bs.cardnet_merchant_id:
+                    return PaymentProviderConfig(
+                        merchant_id=bs.get_payment_credential('cardnet_merchant_id'),
+                        terminal_id=bs.cardnet_terminal_id,
+                        api_key=bs.get_payment_credential('cardnet_api_key'),
+                        sandbox=bs.payment_sandbox,
+                        currency='DOP',
+                    )
+            except Exception:
+                pass
+
+        # 2. Fallback a env vars (global)
         return PaymentProviderConfig(
             merchant_id=os.getenv('CARDNET_MERCHANT_ID', ''),
             terminal_id=os.getenv('CARDNET_TERMINAL_ID', ''),

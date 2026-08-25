@@ -584,3 +584,105 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 settings_obj.save(update_fields=['whatsapp_status', 'whatsapp_enabled', 'whatsapp_phone'])
 
         return Response({'success': True})
+
+    @action(detail=False, methods=['get', 'put'], url_path='payment-config')
+    def payment_config(self, request):
+        """Credenciales de pasarela de pago por tenant (GET/PUT)."""
+        tenant = getattr(request, 'tenant', None)
+        if not tenant:
+            return Response({'error': 'No se pudo determinar el tenant'}, status=400)
+
+        settings_obj, _ = BarbershopSettings.objects.get_or_create(tenant=tenant)
+
+        if request.method == 'GET':
+            # Devolver estado (sin exponer secrets completos)
+            return Response({
+                'active_payment_provider': settings_obj.active_payment_provider,
+                'payment_sandbox': settings_obj.payment_sandbox,
+                'cardnet': {
+                    'merchant_id': settings_obj.cardnet_merchant_id,
+                    'terminal_id': settings_obj.cardnet_terminal_id,
+                    'api_key_configured': bool(settings_obj.cardnet_api_key),
+                },
+                'azul': {
+                    'merchant_id': settings_obj.azul_merchant_id,
+                    'store_id': settings_obj.azul_store_id,
+                    'auth1_configured': bool(settings_obj.azul_auth1),
+                    'auth2_configured': bool(settings_obj.azul_auth2),
+                },
+                'stripe': {
+                    'secret_key_configured': bool(settings_obj.stripe_secret_key),
+                    'publishable_key': settings_obj.stripe_publishable_key,
+                    'webhook_secret_configured': bool(settings_obj.stripe_webhook_secret),
+                },
+                'paypal': {
+                    'client_id': settings_obj.paypal_client_id,
+                    'client_secret_configured': bool(settings_obj.paypal_client_secret),
+                },
+            })
+
+        # PUT
+        from apps.auth_api.role_utils import get_effective_role_api
+        user_role = get_effective_role_api(request.user, tenant=tenant)
+        if user_role != 'CLIENT_ADMIN' and not request.user.is_superuser:
+            return Response({'error': 'Solo administradores pueden modificar credenciales de pago'}, status=403)
+
+        data = request.data
+
+        # Proveedor activo
+        if 'active_payment_provider' in data:
+            valid = ['cardnet', 'azul', 'stripe', 'paypal', 'manual']
+            if data['active_payment_provider'] not in valid:
+                return Response({'error': f'Proveedor inválido. Opciones: {valid}'}, status=400)
+            settings_obj.active_payment_provider = data['active_payment_provider']
+
+        if 'payment_sandbox' in data:
+            settings_obj.payment_sandbox = bool(data['payment_sandbox'])
+
+        # CardNET
+        if 'cardnet' in data:
+            cn = data['cardnet']
+            if 'merchant_id' in cn:
+                settings_obj.cardnet_merchant_id = cn['merchant_id']
+            if 'terminal_id' in cn:
+                settings_obj.cardnet_terminal_id = cn['terminal_id']
+            if 'api_key' in cn and cn['api_key']:
+                settings_obj.cardnet_api_key = cn['api_key']
+
+        # Azul
+        if 'azul' in data:
+            az = data['azul']
+            if 'merchant_id' in az:
+                settings_obj.azul_merchant_id = az['merchant_id']
+            if 'store_id' in az:
+                settings_obj.azul_store_id = az['store_id']
+            if 'auth1' in az and az['auth1']:
+                settings_obj.azul_auth1 = az['auth1']
+            if 'auth2' in az and az['auth2']:
+                settings_obj.azul_auth2 = az['auth2']
+
+        # Stripe
+        if 'stripe' in data:
+            st = data['stripe']
+            if 'secret_key' in st and st['secret_key']:
+                settings_obj.stripe_secret_key = st['secret_key']
+            if 'publishable_key' in st:
+                settings_obj.stripe_publishable_key = st['publishable_key']
+            if 'webhook_secret' in st and st['webhook_secret']:
+                settings_obj.stripe_webhook_secret = st['webhook_secret']
+
+        # PayPal
+        if 'paypal' in data:
+            pp = data['paypal']
+            if 'client_id' in pp:
+                settings_obj.paypal_client_id = pp['client_id']
+            if 'client_secret' in pp and pp['client_secret']:
+                settings_obj.paypal_client_secret = pp['client_secret']
+
+        settings_obj.save()
+
+        return Response({
+            'success': True,
+            'active_payment_provider': settings_obj.active_payment_provider,
+            'payment_sandbox': settings_obj.payment_sandbox,
+        })

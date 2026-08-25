@@ -45,26 +45,51 @@ ERROR_MAP = {
 
 
 class AzulProvider(PaymentProvider):
-    """Pagos vía Azul (azul.com.do) para República Dominicana.
+    """Pagos vía Azul (azul.com.do) para República Dominicana."""
 
-    Soporta:
-    - Sale (venta directa)
-    - Verify (verificación de transacción)
-    - Void (anulación/reembolso)
-    - Data Vault (tokenización para suscripciones)
-    """
-
-    def __init__(self, config: PaymentProviderConfig = None):
+    def __init__(self, config: PaymentProviderConfig = None, tenant=None):
+        self.tenant = tenant
         self.config = config or self._load_config()
 
     def _load_config(self) -> PaymentProviderConfig:
-        system = IntegrationService.get_system_settings()
+        # 1. Intentar credenciales del tenant (per-tenant)
+        if self.tenant:
+            try:
+                from apps.settings_api.barbershop_models import BarbershopSettings
+                bs = BarbershopSettings.objects.filter(tenant=self.tenant).first()
+                if bs and bs.azul_merchant_id:
+                    return PaymentProviderConfig(
+                        merchant_id=bs.get_payment_credential('azul_merchant_id'),
+                        terminal_id=bs.azul_store_id,
+                        api_key=bs.get_payment_credential('azul_auth1'),
+                        webhook_secret=bs.get_payment_credential('azul_auth2'),
+                        sandbox=bs.payment_sandbox,
+                        currency='DOP',
+                    )
+            except Exception:
+                pass
+
+        # 2. Fallback a SystemSettings global
+        try:
+            system = IntegrationService.get_system_settings()
+            return PaymentProviderConfig(
+                merchant_id=system.azul_merchant_id or os.getenv('AZUL_MERCHANT_ID', ''),
+                terminal_id=system.azul_store_id or os.getenv('AZUL_STORE_ID', ''),
+                api_key=system.azul_auth1 or os.getenv('AZUL_AUTH1', ''),
+                webhook_secret=system.azul_auth2 or os.getenv('AZUL_AUTH2', ''),
+                sandbox=getattr(system, 'azul_sandbox', True),
+                currency='DOP',
+            )
+        except Exception:
+            pass
+
+        # 3. Fallback a env vars
         return PaymentProviderConfig(
-            merchant_id=system.azul_merchant_id or os.getenv('AZUL_MERCHANT_ID', ''),
-            terminal_id=system.azul_store_id or os.getenv('AZUL_STORE_ID', ''),
-            api_key=system.azul_auth1 or os.getenv('AZUL_AUTH1', ''),
-            webhook_secret=system.azul_auth2 or os.getenv('AZUL_AUTH2', ''),
-            sandbox=getattr(system, 'azul_sandbox', True),
+            merchant_id=os.getenv('AZUL_MERCHANT_ID', ''),
+            terminal_id=os.getenv('AZUL_STORE_ID', ''),
+            api_key=os.getenv('AZUL_AUTH1', ''),
+            webhook_secret=os.getenv('AZUL_AUTH2', ''),
+            sandbox=True,
             currency='DOP',
         )
 
