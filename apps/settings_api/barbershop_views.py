@@ -34,6 +34,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         'whatsapp_status': 'settings_api.view_barbershopsettings',
         'whatsapp_connect': 'settings_api.change_barbershopsettings',
         'whatsapp_disconnect': 'settings_api.change_barbershopsettings',
+        'payment_config': 'settings_api.change_barbershopsettings',
     }
 
 
