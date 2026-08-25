@@ -152,7 +152,7 @@ urlpatterns = [
         path('tenants/', include('apps.tenants_api.urls')),
         path('billing/', include('apps.billing_api.urls')),
         path('payments/', include('apps.payments_api.urls')),
-        path('settings/', include('apps.settings_api.urls')),
+        path('api/settings/', include('apps.settings_api.urls')),
         path('system-settings/', SystemSettingsRetrieveUpdateView.as_view(), name='system-settings'),
         path('system-settings/reset/', SystemSettingsResetView.as_view(), name='system-settings-reset'),
         path('audit/', include('apps.audit_api.urls')),
