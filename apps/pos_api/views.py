@@ -711,38 +711,36 @@ class SaleViewSet(TenantScopedViewSet):
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
 
+        # PRIMERO: verificar si ya hay caja abierta HOY (ANTES de cerrar)
+        check_filters = {
+            'tenant': tenant,
+            'user': request.user,
+            'is_open': True,
+            'opened_at__date': today,
+        }
+        if branch_id:
+            check_filters['branch_id'] = branch_id
+
+        existing_open = CashRegister.objects.filter(**check_filters).first()
+        if existing_open:
+            return Response(
+                {'error': 'Ya tienes una caja abierta hoy'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Si no hay caja abierta hoy, cerrar cualquier caja abierta anterior (de días anteriores)
         close_filters = {
             'tenant': tenant,
-            'user': request.user, 
+            'user': request.user,
             'is_open': True
         }
         if branch_id:
             close_filters['branch_id'] = branch_id
-            
-        # Cerrar cualquier caja abierta anterior del usuario en esta sucursal (por seguridad)
-        # FIX POS-006: NO sobrescribir final_cash — preservar datos históricos de arqueo
+
         CashRegister.objects.filter(**close_filters).update(
             is_open=False,
             closed_at=timezone.now(),
         )
-        
-        open_filters = {
-            'tenant': tenant,
-            'user': request.user, 
-            'is_open': True,
-            'opened_at__date': today
-        }
-        if branch_id:
-            open_filters['branch_id'] = branch_id
-            
-        # Verificar que no hay caja abierta hoy
-        open_register = CashRegister.objects.filter(**open_filters).first()
-        
-        if open_register:
-            return Response(
-                {'error': 'Ya tienes una caja abierta hoy'}, 
-                status=status.HTTP_400_BAD_REQUEST
-            )
         
         from .serializers import CashRegisterCreateSerializer
         serializer = CashRegisterCreateSerializer(data=request.data)
