@@ -125,7 +125,6 @@ class PayrollViewSet(viewsets.ViewSet):
 
         today = timezone.localdate()
 
-        # 1. Garantizar un período abierto para cada empleado activo del tenant
         if today.day <= 15:
             start_date = today.replace(day=1)
             end_date = today.replace(day=15)
@@ -133,40 +132,51 @@ class PayrollViewSet(viewsets.ViewSet):
             start_date = today.replace(day=16)
             end_date = today.replace(day=monthrange(today.year, today.month)[1])
 
-        for employee in Employee.objects.filter(tenant=tenant, is_active=True):
-            period, created = PayrollPeriod.objects.get_or_create(
-                employee=employee,
-                period_start=start_date,
-                period_end=end_date,
-                defaults={'period_type': 'biweekly', 'status': 'open'},
+        # 1. Bulk get_or_create períodos actuales (1 query)
+        active_employees = Employee.objects.filter(tenant=tenant, is_active=True)
+        employee_ids = list(active_employees.values_list('id', flat=True))
+
+        from django.db.models import Q
+        existing = PayrollPeriod.objects.filter(
+            employee_id__in=employee_ids,
+            period_start=start_date,
+            period_end=end_date,
+        ).values_list('employee_id', flat=True)
+
+        to_create = [
+            PayrollPeriod(
+                employee_id=eid, period_type='biweekly',
+                period_start=start_date, period_end=end_date, status='open',
             )
+            for eid in employee_ids if eid not in existing
+        ]
+        if to_create:
+            PayrollPeriod.objects.bulk_create(to_create, ignore_conflicts=True)
 
-        # 1b. Para cada empleado activo: sincronizar snapshot y recalcular
-        # el período abierto actual
-        for employee in Employee.objects.filter(tenant=tenant, is_active=True):
-            try:
-                period = PayrollPeriod.objects.get(
-                    employee=employee,
-                    period_start=start_date,
-                    period_end=end_date,
-                )
-                if period.status == 'open':
-                    # Sincronizar snapshot con valores actuales del empleado
-                    PayrollPeriod.objects.filter(pk=period.pk).update(
-                        fixed_salary_snapshot=employee.fixed_salary,
-                        commission_rate_snapshot=employee.commission_rate,
-                        payment_type_snapshot=employee.payment_type,
-                    )
-                    period.refresh_from_db()
-                    period.calculate_amounts()
-                    period.save(update_fields=[
-                        'base_salary', 'commission_earnings', 'gross_amount',
-                        'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
-                    ])
-            except PayrollPeriod.DoesNotExist:
-                pass
+        # 2. Bulk sync snapshots + recalcular solo abiertos (bulk_update)
+        open_periods = list(PayrollPeriod.objects.filter(
+            employee_id__in=employee_ids,
+            period_start=start_date, period_end=end_date,
+            status='open',
+        ).select_related('employee'))
 
-        # 2. Query de períodos — SOLO el actual por empleado
+        emp_map = {e.id: e for e in active_employees}
+        for period in open_periods:
+            emp = emp_map.get(period.employee_id)
+            if emp:
+                period.fixed_salary_snapshot = emp.fixed_salary
+                period.commission_rate_snapshot = emp.commission_rate
+                period.payment_type_snapshot = emp.payment_type
+                period.calculate_amounts()
+
+        if open_periods:
+            PayrollPeriod.objects.bulk_update(open_periods, [
+                'fixed_salary_snapshot', 'commission_rate_snapshot', 'payment_type_snapshot',
+                'base_salary', 'commission_earnings', 'gross_amount',
+                'deductions_total', 'net_amount', 'can_pay', 'pay_block_reason',
+            ])
+
+        # 3. Query períodos actuales (1 query)
         periods = self.get_queryset().select_related('employee__user')
         periods = periods.filter(period_start=start_date, period_end=end_date)
 
@@ -174,54 +184,44 @@ class PayrollViewSet(viewsets.ViewSet):
         if status_filter:
             periods = periods.filter(status=status_filter)
 
-        # 3. Ventas por empleado por período (una query por período con índices)
-        sales_by_period = {}
-        for period in periods:
-            emp_id = period.employee_id
-            agg = Sale.objects.filter(
-                tenant=tenant,
-                employee_id=emp_id,
-                date_time__date__gte=period.period_start,
-                date_time__date__lte=period.period_end,
-            ).aggregate(services_count=Count('id'), gross_sales=Sum('total'))
-            sales_by_period[(emp_id, period.period_start, period.period_end)] = {
-                'services_count': agg['services_count'] or 0,
-                'gross_sales': float(agg['gross_sales'] or 0),
+        # 4. Ventas agrupadas (1 query con annotate)
+        period_ids = list(periods.values_list('id', flat=True))
+        sales_agg = Sale.objects.filter(
+            tenant=tenant,
+            employee_id__in=employee_ids,
+            date_time__date__gte=start_date,
+            date_time__date__lte=end_date,
+        ).values('employee_id').annotate(
+            services_count=Count('id'),
+            gross_sales=Sum('total'),
+        )
+        sales_by_emp = {
+            s['employee_id']: {
+                'services_count': s['services_count'] or 0,
+                'gross_sales': float(s['gross_sales'] or 0),
             }
+            for s in sales_agg
+        }
 
-        # 4. Construir respuesta — SIEMPRE recalcular desde snapshots
-        # corregidos en vez de usar los valores almacenados (que pueden
-        # estar corruptos por el bug anterior). Para períodos abiertos
-        # los valores ya se guardaron en 1c. Para pagados/aprobados,
-        # calculamos en memoria sin guardar (inmutabilidad).
+        # 5. Construir respuesta
         from apps.employees_api.payroll_services import PayrollCalculationService
         periods_data = []
         for period in periods:
-            status = period.status
-            if status == 'ready':
-                status = 'approved'
-
-            sales_data = sales_by_period.get(
-                (period.employee_id, period.period_start, period.period_end),
-                {'services_count': 0, 'gross_sales': 0.0}
-            )
-
             emp = period.employee
             user = emp.user
 
-            # Recalcular montos desde snapshots corregidos
+            sales_data = sales_by_emp.get(period.employee_id, {'services_count': 0, 'gross_sales': 0.0})
+
             try:
                 calc = PayrollCalculationService.calculate_from_snapshots(period)
                 display_base_salary = float(calc['base_salary'])
                 display_commission = float(calc['commission_earnings'])
                 display_gross = float(calc['gross_amount'])
             except Exception:
-                # Fallback a valores almacenados si el recálculo falla
                 display_base_salary = float(period.base_salary)
                 display_commission = float(period.commission_earnings)
                 display_gross = float(period.gross_amount)
 
-            # Deducciones: usar las deducciones reales del período
             display_deductions = float(period.deductions_total)
             display_net = display_gross - display_deductions
 
@@ -230,7 +230,7 @@ class PayrollViewSet(viewsets.ViewSet):
                 'employee_id': period.employee_id,
                 'employee_name': user.full_name or user.email,
                 'period_display': period.period_display,
-                'status': status,
+                'status': period.status,
                 'base_salary': display_base_salary,
                 'commission_earnings': display_commission,
                 'gross_amount': display_gross,
