@@ -23,7 +23,7 @@ class NotificationListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        return InAppNotification.objects.filter(recipient=user).select_related('recipient').order_by('-created_at')
+        return InAppNotification.objects.filter(recipient=user).order_by('-created_at')
 
 class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = InAppNotificationSerializer
