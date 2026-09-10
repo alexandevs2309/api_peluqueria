@@ -17,6 +17,7 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
     hasAdvancedReports = serializers.SerializerMethodField()
     customBranding = serializers.SerializerMethodField()
     popular = serializers.SerializerMethodField()
+    contact_sales = serializers.BooleanField(read_only=True)
     
     class Meta:
         model = SubscriptionPlan
@@ -25,7 +26,8 @@ class SubscriptionPlanSerializer(serializers.ModelSerializer):
             'max_employees', 'max_users', 'allows_multiple_branches', 'features', 'commercial_benefits',
             'features_list', 'created_at', 'updated_at',
             'maxEmployees', 'maxUsers', 'allowsMultipleBranches',
-            'hasInventory', 'hasAdvancedReports', 'customBranding', 'popular'
+            'hasInventory', 'hasAdvancedReports', 'customBranding', 'popular',
+            'contact_sales',
         ]
         read_only_fields = ['id', 'name', 'display_name', 'created_at', 'updated_at']
     
@@ -62,6 +64,7 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
     display_name = serializers.CharField(source='get_name_display', read_only=True)
     highlight_features = serializers.SerializerMethodField()
     technical_features = serializers.SerializerMethodField()
+    contact_sales = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = SubscriptionPlan
@@ -76,6 +79,7 @@ class PublicSubscriptionPlanSerializer(serializers.ModelSerializer):
             'highlight_features',
             'technical_features',
             'commercial_benefits',
+            'contact_sales',
         ]
 
     def get_highlight_features(self, obj):

@@ -69,9 +69,8 @@ class Command(BaseCommand):
                     'priority_support': False,
                 },
                 'commercial_benefits': [
-                    'Sucursales Ilimitadas',
+                    'Hasta 3 Sucursales',
                     'Hasta 10 Empleados y 15 Usuarios',
-                    'Multi-Sucursal',
                     'Promociones y Cupones',
                     'Reportes Avanzados y BI',
                     'Comisiones y Nómina TSS',
@@ -141,7 +140,7 @@ class Command(BaseCommand):
                 },
                 'commercial_benefits': [
                     'Todo lo del Plan Business',
-                    'Sucursales y Empleados Ilimitados',
+                    'Empleados Ilimitados',
                     'Exportación Excel de Reportes',
                     'Auditoría Avanzada',
                     'Soporte Dedicado con Seguimiento Personalizado',

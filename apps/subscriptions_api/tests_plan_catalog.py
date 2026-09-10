@@ -24,6 +24,14 @@ from apps.subscriptions_api.plan_consistency import (
 from apps.subscriptions_api.utils import get_user_feature_flag
 
 
+@pytest.fixture(autouse=True)
+def seeded_plans(db):
+    """Plan tests require the default plan catalog. Seed it idempotently."""
+    from django.core.management import call_command
+
+    call_command('sync_plans', verbosity=0)
+
+
 # ---------------------------------------------------------------------------
 # Sync Plans Idempotency
 # ---------------------------------------------------------------------------
@@ -301,6 +309,73 @@ class TestPlanLimits:
 
 
 # ---------------------------------------------------------------------------
+# Commercial Copy & Contact Sales
+# ---------------------------------------------------------------------------
+
+@pytest.mark.django_db
+class TestCommercialCatalog:
+    """Single source of truth: prices, names and benefit copy per plan.
+
+    Invariantes:
+    - Precios públicos: Basic 29.99, Pro 59.99, Business 99.99 (Enterprise = contact).
+    - Cada beneficio aparece una única vez por tarjeta (sin duplicados).
+    - Solo Business menciona "sucursales ilimitadas"; Enterprise hereda de Business sin repetir "sucursal".
+    """
+
+    def _plans(self):
+        from django.core.management import call_command
+        call_command('sync_plans', verbosity=0)
+        return {
+            p.name: p for p in SubscriptionPlan.objects.filter(is_active=True)
+        }
+
+    def test_public_prices(self):
+        plans = self._plans()
+        assert plans['basic'].price == Decimal('29.99')
+        assert plans['standard'].price == Decimal('59.99')
+        assert plans['premium'].price == Decimal('99.99')
+
+    def test_contact_sales_flag(self):
+        plans = self._plans()
+        assert plans['enterprise'].contact_sales is True
+        assert plans['basic'].contact_sales is False
+        assert plans['standard'].contact_sales is False
+        assert plans['premium'].contact_sales is False
+
+    def test_no_duplicate_benefits(self):
+        for plan in self._plans().values():
+            assert len(plan.commercial_benefits) == len(set(plan.commercial_benefits)), (
+                f'{plan.name} tiene beneficios duplicados'
+            )
+
+    def test_branch_copy_once_per_plan(self):
+        plans = self._plans()
+
+        basic_branch = [b for b in plans['basic'].commercial_benefits if 'sucursal' in b.lower()]
+        pro_branch = [b for b in plans['standard'].commercial_benefits if 'sucursal' in b.lower()]
+        business_branch = [b for b in plans['premium'].commercial_benefits if 'sucursal' in b.lower()]
+        enterprise_branch = [b for b in plans['enterprise'].commercial_benefits if 'sucursal' in b.lower()]
+
+        assert basic_branch == ['1 Sucursal Principal']
+        assert pro_branch == ['Hasta 3 Sucursales']
+        assert business_branch == ['Sucursales Ilimitadas']
+        assert enterprise_branch == []  # hereda de Business, no repite
+
+    def test_only_business_mentions_unlimited_branches(self):
+        plans = self._plans()
+        for name in ('basic', 'standard', 'premium'):
+            benefits = ' | '.join(plans[name].commercial_benefits).lower()
+            has_unlimited_branches = 'sucursales ilimitada' in benefits
+            assert has_unlimited_branches is (name == 'premium')
+        enterprise = ' | '.join(plans['enterprise'].commercial_benefits).lower()
+        assert 'sucursales ilimitada' not in enterprise
+
+    def test_enterprise_inherits_business(self):
+        enterprise = self._plans()['enterprise'].commercial_benefits
+        assert 'Todo lo del Plan Business' in enterprise
+
+
+# ---------------------------------------------------------------------------
 # User Feature Flag (utils.py)
 # ---------------------------------------------------------------------------
 
@@ -334,6 +409,8 @@ class TestUserFeatureFlag:
             tenant=tenant,
             role='Client-Admin',
         )
+        from apps.subscriptions_api.models import UserSubscription
+        UserSubscription.objects.create(user=user, plan=plan, is_active=True)
         # get_user_feature_flag uses subscription plan features
         assert get_user_feature_flag(user, 'cash_register') is True
         assert get_user_feature_flag(user, 'promotions') is False

@@ -121,6 +121,11 @@ class SubscriptionPlan(models.Model):
     features = JSONField(default=dict)
     commercial_benefits = JSONField(default=list, blank=True)
 
+    @property
+    def contact_sales(self):
+        """Planes sin precio público: la venta se gestiona con un asesor."""
+        return self.name == 'enterprise'
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

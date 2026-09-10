@@ -12,6 +12,8 @@ FEATURE_ALIASES = {
     "pos_system": ("cash_register", "pos"),
     "promotions": ("promotions_enabled",),
     "promotions_enabled": ("promotions",),
+    "multi_branch": ("multi_location",),
+    "multi_location": ("multi_branch",),
 }
 
 
