@@ -570,9 +570,17 @@ DEV_EMAIL_OVERRIDE = env('DEV_EMAIL_OVERRIDE', default='') if DEBUG else ''
 # En desarrollo, redirige todos los WhatsApp a este número
 DEV_WHATSAPP_OVERRIDE = env('DEV_WHATSAPP_OVERRIDE', default='') if DEBUG else ''
 
-# Configuraciones para Chatbot Inteligente (LLM)
+# Configuraciones para LLM (DeepSeek / OpenAI / Gemini)
 OPENAI_API_KEY = env('OPENAI_API_KEY', default='')
+OPENAI_MODEL = env('OPENAI_MODEL', default='gpt-4o-mini')
 GEMINI_API_KEY = env('GEMINI_API_KEY', default='')
+GEMINI_MODEL = env('GEMINI_MODEL', default='gemini-3.5-flash')
+DEEPSEEK_API_KEY = env('DEEPSEEK_API_KEY', default='')
+DEEPSEEK_MODEL = env('DEEPSEEK_MODEL', default='deepseek-chat')
+LLM_PROVIDER = env('LLM_PROVIDER', default='')          # auto: deepseek > openai > gemini
+LLM_BASE_URL = env('LLM_BASE_URL', default='')         # override para cualquier OpenAI-compatible
+LLM_MODEL = env('LLM_MODEL', default='')                # override modelo
+LLM_API_KEY = env('LLM_API_KEY', default='')            # override clave
 
 
 if "pytest" in sys.modules:

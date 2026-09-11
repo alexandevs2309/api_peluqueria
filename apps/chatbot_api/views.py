@@ -1,14 +1,18 @@
 import logging
-import requests
-import json
-from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
 from apps.chatbot_api.serializers import ChatPromptSerializer
+from apps.mcp_api.llm import ask_llm_simple
 
 logger = logging.getLogger(__name__)
+
+CHATBOT_SYSTEM_PROMPT = (
+    "Eres el asistente comercial de Auron Suite, un software de gestión para barberías, "
+    "peluquerías y salones de belleza en República Dominicana y Latinoamérica. "
+    "Responde en español, con datos oficiales y actualizados. Sé breve, claro y cordial."
+)
 
 # Base de conocimiento estática rica para respuestas de fallback dinámicas e inteligentes
 KNOWLEDGE_BASE = {
@@ -17,30 +21,28 @@ KNOWLEDGE_BASE = {
         "Soy tu asistente virtual inteligente. Estoy aquí para ayudarte a explorar todas las ventajas del software de gestión "
         "definitivo para salones de belleza, barberías y centros estéticos en Latinoamérica.\n\n"
         "Puedo informarte en detalle sobre:\n"
-        "• 💰 **Planes y precios oficiales** (y el descuento anual del 20%).\n"
+        "• 💰 **Planes y precios oficiales** (y el descuento anual del ~17%).\n"
         "• 🎁 **Prueba gratis de 7 días** (sin tarjeta de crédito).\n"
         "• ⚙️ **Funcionalidades core**: Agenda en línea, POS fiscal DGII (NCF), Control de cajas, Inventarios y Comisiones de personal.\n"
         "• 📲 **Integración QR de WhatsApp** (Evolution API modular).\n\n"
         "¿De qué te gustaría hablar hoy?"
     ),
     "planes_precios": (
-        "Auron Suite cuenta con 4 planes comerciales altamente competitivos. Ofrecemos facturación mensual o anual (esta última incluye un **descuento del 15% al 20%**).\n\n"
-        "💵 **Planes y Tarifas Oficiales (DOP / USD):**\n"
-        "1️⃣ **Plan Basic** ($29.99 USD/mes ~ 1,800 DOP):\n"
-        "   - Ideal para profesionales independientes.\n"
-        "   - Incluye: Agenda interactiva, POS básico, base de datos de clientes e historial.\n"
-        "   - Limitado a **1 sucursal activa** y 50 empleados.\n\n"
-        "2️⃣ **Plan Pro** ($69.99 USD/mes ~ 4,200 DOP) [Recomendado]:\n"
-        "   - Excelente para locales en crecimiento.\n"
-        "   - Incluye: POS completo, **Control de inventario**, alertas de bajo stock y reportes avanzados de ingresos.\n"
-        "   - Limitado a **1 sucursal activa**.\n\n"
-        "3️⃣ **Plan Business** ($129.99 USD/mes ~ 7,800 DOP):\n"
-        "   - Para locales multi-sucursal y consolidados.\n"
-        "   - Incluye: **Sucursales ilimitadas**, cálculo automático de comisiones, nóminas avanzadas, reloj marcador de asistencia y branding personalizado.\n\n"
-        "4️⃣ **Plan Enterprise** ($149.00 USD/mes ~ 9,000 DOP):\n"
-        "   - Para franquicias y grandes marcas.\n"
-        "   - Incluye: Todo lo anterior, soporte prioritario 24/7 y acceso a **API keys públicas** para integraciones a medida.\n\n"
-        "¿Te gustaría iniciar tu prueba gratuita en alguno de estos planes?"
+        "Auron Suite cuenta con 4 planes, con facturación mensual o anual (el anual incluye un **descuento del ~17%**):\n\n"
+        "💵 **Tarifas oficiales (USD / mes):**\n"
+        "1️⃣ **Basic — $29.99**: Ideal para barberías individuales.\n"
+        "   - 1 sucursal principal, hasta 3 empleados.\n"
+        "   - POS y caja diaria, agenda de citas, inventario y reportes básicos.\n\n"
+        "2️⃣ **Pro — $59.99** [Recomendado]: Para negocios en crecimiento.\n"
+        "   - Hasta 3 sucursales, 10 empleados y 15 usuarios.\n"
+        "   - Promociones y cupones, comisiones y nómina, reportes avanzados.\n\n"
+        "3️⃣ **Business — $99.99**: Para spas y salones consolidados.\n"
+        "   - Sucursales ilimitadas, hasta 25 empleados.\n"
+        "   - WhatsApp QR, branding personalizado (logo y colores).\n\n"
+        "4️⃣ **Enterprise — $199.99**: Para cadenas y franquicias.\n"
+        "   - Empleados ilimitados, auditoría avanzada, exportación Excel.\n"
+        "   - **Contactar ventas**.\n\n"
+        "Todos los planes incluyen prueba gratuita de 7 días sin tarjeta de crédito. ¿Quieres que te ayude a elegir el ideal para tu negocio?"
     ),
     "prueba_gratis": (
         "¡Iniciar es súper sencillo y sin riesgos! 🎉\n\n"
@@ -204,26 +206,13 @@ class ChatBotView(APIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
             
         prompt = serializer.validated_data['prompt']
-        
-        # 1. Intentar usar OpenAI si está configurado en settings
-        openai_key = getattr(settings, "OPENAI_API_KEY", "")
-        if openai_key:
-            try:
-                reply = query_openai(prompt, openai_key)
-                return Response({"reply": reply}, status=status.HTTP_200_OK)
-            except Exception as e:
-                logger.error(f"Error al invocar OpenAI API: {e}", exc_info=True)
-                
-        # 2. Intentar usar Gemini si está configurado en settings
-        gemini_key = getattr(settings, "GEMINI_API_KEY", "")
-        if gemini_key:
-            try:
-                reply = query_gemini(prompt, gemini_key)
-                return Response({"reply": reply}, status=status.HTTP_200_OK)
-            except Exception as e:
-                logger.error(f"Error al invocar Gemini API: {e}", exc_info=True)
-                
-        # 3. Fallback local estructurado inteligente
+
+        # 1. Intentar responder con el LLM si hay clave configurada
+        reply = ask_llm_simple(prompt, system=CHATBOT_SYSTEM_PROMPT)
+        if reply is not None:
+            return Response({"reply": reply}, status=status.HTTP_200_OK)
+
+        # 2. Fallback local estructurado inteligente
         try:
             reply = get_local_fallback_response(prompt)
             return Response({"reply": reply}, status=status.HTTP_200_OK)

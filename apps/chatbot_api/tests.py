@@ -37,8 +37,8 @@ class ChatBotTests(TestCase):
         # Precios
         response = self.client.post("/api/chatbot/", {"prompt": "cuánto cuesta la suscripción?"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertIn("Plan Pro", response.data["reply"])
-        self.assertIn("$69.99", response.data["reply"])
+        self.assertIn("Pro", response.data["reply"])
+        self.assertIn("$59.99", response.data["reply"])
 
         # NCF / Facturación
         response = self.client.post("/api/chatbot/", {"prompt": "tienen soporte NCF DGII?"}, format="json")

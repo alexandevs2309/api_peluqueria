@@ -129,6 +129,7 @@ REST_FRAMEWORK = {
         'register': '5/hour',
         'password_reset': '5/hour',
         'mfa_verify': '10/min',
+        'chatbot': '200/hour',
     },
 }
 

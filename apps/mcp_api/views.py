@@ -1,5 +1,7 @@
 import json
 import logging
+import re
+from datetime import date, timedelta
 
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
@@ -7,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import tools
+from .llm import SYSTEM_PROMPT_MCP, _resolve_provider, run_tool_chat
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +47,7 @@ TOOL_DEFINITIONS = [
     },
     {
         "name": "clients_search",
-        "description": "Buscar clientes por nombre, teléfono o email. Retorna información básica y puntos de lealtad.",
+        "description": "Buscar clientes por nombre, teléfono o email.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -117,25 +120,107 @@ class McpCallView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-KEYWORD_MAP = [
-    (["vend", "ventas", "venta", "factura", "facturado", "cobr", "ingreso"], "sales_summary"),
-    (["cita", "citas", "appointment", "reserva", "reservación"], "appointments_list"),
-    (["cliente", "clientes", "client", "buscar cliente", "phone", "teléfono"], "clients_search"),
-    (["servicio", "servicios", "service", "corte", "lavado", "tinte"], "services_list"),
-    (["inventar", "stock", "producto", "productos", "agot", "repuesto"], "inventory_alerts"),
-    (["empleado", "empleados", "employee", "estilista", "estilistas", "personal"], "employees_list"),
-    (["rendimiento", "performance", "desempeño", "comisiones"], "employee_performance"),
-]
+# ---------------------------------------------------------------------------
+# Offline intent detection (fallback when no LLM key is configured)
+# ---------------------------------------------------------------------------
+
+_ACCENT_MAP = str.maketrans('áéíóúñü', 'aeiounu')
 
 
-def _detect_tool(message):
-    msg = message.lower()
-    for keywords, tool in KEYWORD_MAP:
-        for kw in keywords:
-            if kw in msg:
-                return tool, {}
+def _normalize(text: str) -> str:
+    return text.lower().translate(_ACCENT_MAP)
+
+
+def _detect_tool_offline(message: str):
+    m = _normalize(message)
+
+    # period detection
+    period = "today"
+    if any(k in m for k in ("semana", "semanal", "weekly", "ultimos 7", "ultimas 7", "ultimos dias")):
+        period = "week"
+    elif any(k in m for k in ("mes", "mensual", "month", "ultimos 30", "ultimo mes")):
+        period = "month"
+
+    # date detection
+    day = None
+    has_tomorrow = "manana" in m
+    has_morning = any(k in m for k in ("esta manana", "por la manana", "de la manana"))
+    if has_tomorrow and not has_morning:
+        day = (date.today() + timedelta(days=1)).isoformat()
+    elif "hoy" in m:
+        day = date.today().isoformat()
+    elif "ayer" in m:
+        day = (date.today() - timedelta(days=1)).isoformat()
+
+    mdate = re.search(r'(\d{1,2})\D(\d{1,2})(?:\D(\d{2,4}))?$', m)
+    if mdate:
+        try:
+            year = int(mdate.group(3)) if mdate.group(3) else date.today().year
+            day = date(year, int(mdate.group(2)), int(mdate.group(1))).isoformat()
+        except ValueError:
+            pass
+
+    # appointment status
+    appt_status = None
+    if any(k in m for k in ("pendient", "programad", "por venir", "confirmad", "reservad", "activa")):
+        appt_status = "scheduled"
+    elif any(k in m for k in ("completad", "realizad", "cobrad", "pagad", "hech", "finalizad")):
+        appt_status = "completed"
+    elif "cancelad" in m:
+        appt_status = "cancelled"
+    elif any(k in m for k in ("ausente", "no asist", "no show", "falto", "no vino")):
+        appt_status = "no_show"
+
+    # appointments
+    if any(k in m for k in ("cita", "appointment", "reserva", "calendario")):
+        params = {"day": day} if day else {}
+        if appt_status:
+            params["status"] = appt_status
+        return "appointments_list", params
+
+    # sales
+    if any(k in m for k in ("venta", "ventas", "vend", "factura", "cobr", "ingreso", "facturado")):
+        return "sales_summary", {"period": period}
+
+    # employee performance
+    if any(k in m for k in ("rendimiento", "performance", "desempeno", "comision", "comisiones")):
+        return "employee_performance", {"period": period}
+
+    # employees list
+    if any(k in m for k in ("empleado", "empleados", "employee", "estilista", "estilistas", "personal")):
+        return "employees_list", {}
+
+    # inventory
+    if any(k in m for k in ("inventar", "stock", "producto", "productos", "agot", "repuesto")):
+        return "inventory_alerts", {}
+
+    # services
+    if any(k in m for k in ("servicio", "servicios", "service", "corte", "lavado", "tinte")):
+        return "services_list", {}
+
+    # clients search
+    if any(k in m for k in ("cliente", "clientes", "client")):
+        q = re.sub(
+            r'^(buscar|busca|busque|encontrar|encuentra|buscame|ver|mostrar|dime|quien|quienes)\s+(al|la|el|los|las|del|de|un|una|sus|tu)?\s*',
+            '', m
+        ).strip()
+        if len(q) < 2:
+            q = message.strip()
+        return "clients_search", {"query": q}
+
     return None, None
 
+
+FRIENDLY_NO_INTENT = (
+    "Puedo ayudarte con información de tu negocio: ventas, citas, clientes, servicios, "
+    "inventario, empleados o rendimiento. Prueba por ejemplo \"ventas de hoy\", "
+    "\"citas de mañana\" o \"buscar cliente Juan\"."
+)
+
+
+# ---------------------------------------------------------------------------
+# Chat endpoint
+# ---------------------------------------------------------------------------
 
 class McpChatView(APIView):
     permission_classes = [IsAuthenticated]
@@ -145,27 +230,59 @@ class McpChatView(APIView):
         if not message:
             return Response({"error": "message is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        tool_name, default_params = _detect_tool(message)
+        history = request.data.get("history") or []
+        if not isinstance(history, list):
+            history = []
 
-        if not tool_name:
-            return Response({
-                "response": "Puedo ayudarte con: ventas, citas, clientes, servicios, inventario, empleados y rendimiento. ¿Qué necesitas?",
-                "tool_called": None,
-            })
+        tenant = getattr(request, "tenant", None)
 
-        tool_fn = TOOL_MAP[tool_name]
-        params = default_params or {}
+        # --- 1. LLM path (tool-calling) ---
+        if _resolve_provider() is not None:
+            try:
+                response_text, tool_names, tool_data = run_tool_chat(
+                    tenant=tenant,
+                    history=history,
+                    user_message=message,
+                    tools=TOOL_DEFINITIONS,
+                    tool_map=TOOL_MAP,
+                    system=SYSTEM_PROMPT_MCP,
+                )
+                if response_text is not None:
+                    return Response({
+                        "response": response_text,
+                        "tool_called": tool_names[0] if tool_names else None,
+                        "data": tool_data,
+                    }, status=status.HTTP_200_OK)
+            except Exception as e:
+                logger.exception("LLM MCP failed, falling back: %s", e)
 
-        if tool_name == "clients_search":
-            params["query"] = message
-
+        # --- 2. Offline fallback ---
         try:
-            result = tool_fn(tenant=request.tenant, **params)
-            summary = _format_response(tool_name, result)
-            return Response({"response": summary, "tool_called": tool_name, "data": result})
+            tool_name, params = _detect_tool_offline(message)
+            if tool_name:
+                tool_fn = TOOL_MAP[tool_name]
+                if tool_name == "clients_search" and not params.get("query"):
+                    params["query"] = message
+                result = tool_fn(tenant=tenant, **params)
+                return Response({
+                    "response": _format_response(tool_name, result),
+                    "tool_called": tool_name,
+                    "data": result,
+                }, status=status.HTTP_200_OK)
+
+            return Response({
+                "response": FRIENDLY_NO_INTENT,
+                "tool_called": None,
+                "data": None,
+            }, status=status.HTTP_200_OK)
+
         except Exception as e:
-            logger.exception("MCP chat error: %s", tool_name)
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            logger.exception("MCP fallback error: %s", e)
+            return Response({
+                "response": "Ocurrió un error al consultarlo. Intenta de nuevo o escribe \"ayuda\".",
+                "tool_called": None,
+                "data": None,
+            }, status=status.HTTP_200_OK)
 
 
 def _format_response(tool_name, data):
@@ -178,39 +295,39 @@ def _format_response(tool_name, data):
     if tool_name == "appointments_list":
         count = data.get("count", 0)
         if count == 0:
-            return "No hay citas para esta fecha"
+            return "No hay citas para esta fecha."
         items = data.get("appointments", [])
         lines = [f"{a['time']} - {a['client']} ({a['status']})" for a in items[:10]]
         return f"{count} citas:\n" + "\n".join(lines)
 
     if tool_name == "clients_search":
         if not data:
-            return "No se encontraron clientes"
+            return "No se encontraron clientes con ese dato."
         lines = [f"{c['name']} - {c['phone']} ({c['loyalty_points']} pts)" for c in data[:5]]
-        return "Clientes encontrados:\n" + "\n".join(lines)
+        return "Clientes:\n" + "\n".join(lines)
 
     if tool_name == "services_list":
         if not data:
-            return "No hay servicios disponibles"
+            return "No hay servicios registrados."
         lines = [f"{s['name']} - RD${s['price']:.0f} ({s['duration']} min)" for s in data[:10]]
         return "Servicios:\n" + "\n".join(lines)
 
     if tool_name == "inventory_alerts":
         if not data:
-            return "No hay productos con stock bajo"
+            return "Inventario al día, no hay productos con stock bajo."
         lines = [f"{p['name']} - stock: {p['stock']} (mínimo: {p['min_stock']})" for p in data[:5]]
         return "Productos con stock bajo:\n" + "\n".join(lines)
 
     if tool_name == "employees_list":
         if not data:
-            return "No hay empleados activos"
+            return "No hay empleados activos registrados."
         lines = [f"{e['name']} - {e['specialty'] or 'General'} ({e['payment_type']})" for e in data[:10]]
         return "Empleados:\n" + "\n".join(lines)
 
     if tool_name == "employee_performance":
         emps = data.get("employees", [])
         if not emps:
-            return "No hay datos de rendimiento"
+            return "No hay datos de rendimiento para este período."
         lines = [f"{e['name']}: RD${e['sales_total']:,.2f} ({e['sales_count']} ventas)" for e in emps[:5]]
         return f"Rendimiento ({data.get('period')}):\n" + "\n".join(lines)
 
