@@ -138,7 +138,21 @@ class TestSecurityRegressions:
 
     def test_activate_subscription_is_completely_unresolved(self):
         """
-        Verify that the dead method activate_subscription is not resolved under any circumstances.
+        Verify that the dead method activate_subscription never resolves to a live
+        view of apps.subscriptions, regardless of settings.DEBUG.
+
+        With DEBUG=False resolve() must raise Resolver404. With DEBUG=True the
+        static catch-all installed only in DEBUG (MEDIA_URL='/') swallows any
+        unmatched path into django.views.static.serve, so the security property is
+        that the URL never reaches a subscriptions view either way.
         """
-        with pytest.raises(Resolver404):
-            resolve('/api/subscriptions/onboard/activate_subscription/')
+        try:
+            match = resolve('/api/subscriptions/onboard/activate_subscription/')
+        except Resolver404:
+            return
+
+        resolved_module = getattr(match.func, '__module__', '')
+        assert 'apps.subscriptions' not in resolved_module, (
+            f'activate_subscription resolvio a una vista viva: '
+            f'{match.view_name!r} ({resolved_module})'
+        )
