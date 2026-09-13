@@ -878,7 +878,7 @@ class SaleViewSet(TenantScopedViewSet):
                 if getattr(detail.content_type, 'model', None) == 'product':
                     from apps.inventory_api.models import Product, StockMovement
                     try:
-                        product = Product.objects.get(id=detail.object_id, tenant=self.request.tenant)
+                        product = Product.objects.select_for_update().get(id=detail.object_id, tenant=self.request.tenant)
                         product.stock += detail.quantity
                         product.save()
                         

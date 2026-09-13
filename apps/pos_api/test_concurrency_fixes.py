@@ -13,12 +13,22 @@ from rest_framework import status
 from decimal import Decimal
 
 from apps.tenants_api.models import Tenant
-from apps.pos_api.models import Sale, CashRegister
+from apps.pos_api.models import Sale, SaleDetail, CashRegister
 from apps.clients_api.models import Client
 from apps.inventory_api.models import Product
 from django.contrib.contenttypes.models import ContentType
 
 User = get_user_model()
+
+
+def authenticate_client(client, user):
+    client.force_authenticate(user=user)
+    from rest_framework_simplejwt.tokens import AccessToken
+    token = AccessToken.for_user(user)
+    if getattr(user, 'tenant_id', None):
+        token['tenant_id'] = user.tenant_id
+    client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(token)}")
+    client.cookies['access_token'] = str(token)
 
 
 def _create_tenant(name, subdomain):
@@ -123,3 +133,87 @@ class LoyaltyDoubleRedemptionTests(TransactionTestCase):
 
         self.client_obj.refresh_from_db()
         self.assertEqual(self.client_obj.loyalty_points, 4)
+
+
+# ==============================================================================
+# BUG 2: Refund restaura stock sin bloqueo (lost update)
+# ==============================================================================
+
+class RefundStockLockTests(TransactionTestCase):
+    """
+    Bug: refund() restaura stock con Product.objects.get() sin select_for_update().
+    Dos reembolsos concurrentes (de ventas distintas que comparten producto) pueden
+    perder una actualización de stock (lost update).
+    Fix: Product.objects.select_for_update().get(...) en el bloque "Restaurar
+    inventario" de refund() (views.py).
+    """
+
+    def setUp(self):
+        self.tenant = _create_tenant('Refund Fix', 'refundfix')
+        self.user = _create_user(self.tenant, 'refundfix@test.com')
+        _setup_plan(self.tenant)
+        _setup_rbac(self.user, self.tenant)
+        self.cash_register = CashRegister.objects.create(
+            tenant=self.tenant, user=self.user, initial_cash=Decimal('1000')
+        )
+        self.product = Product.objects.create(
+            tenant=self.tenant, name='Shampoo', price=Decimal('100'), stock=10
+        )
+        self.sale_a = Sale.objects.create(
+            tenant=self.tenant, total=Decimal('200'), status='confirmed',
+            created_by=self.user, user=self.user, cash_register=self.cash_register
+        )
+        self.sale_b = Sale.objects.create(
+            tenant=self.tenant, total=Decimal('200'), status='confirmed',
+            created_by=self.user, user=self.user, cash_register=self.cash_register
+        )
+        self.product_ct = ContentType.objects.get(app_label='inventory_api', model='product')
+        SaleDetail.objects.create(
+            sale=self.sale_a, content_type=self.product_ct, object_id=self.product.pk,
+            name='Shampoo', quantity=2, price=Decimal('100')
+        )
+        SaleDetail.objects.create(
+            sale=self.sale_b, content_type=self.product_ct, object_id=self.product.pk,
+            name='Shampoo', quantity=3, price=Decimal('100')
+        )
+
+    def test_refund_stock_restore_two_calls_before_refresh(self):
+        """Dos reembolsos concurrentes (dos transacciones antes de refrescar) sobre el
+        MISMO producto: la restauración debe sumar AMBOS reembolsos (sin lost update)."""
+        from django.db import transaction
+
+        def restore(sale, qty):
+            # Simula el bloque "Restaurar inventario" de refund()
+            with transaction.atomic():
+                product = Product.objects.select_for_update().get(id=self.product.pk)
+                product.stock += qty
+                product.save(update_fields=['stock'])
+            return sale
+
+        restore(self.sale_a, 2)
+        restore(self.sale_b, 3)
+
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 15, "Stock debe sumar 10 + 2 + 3 (sin lost update)")
+
+    def test_refund_via_api_restores_stock_and_blocks_second_refund(self):
+        """End-to-end: reembolsar una venta restaura el stock exactamente una vez y
+        el segundo reembolso de la misma venta es bloqueado."""
+        self.client = APIClient()
+        authenticate_client(self.client, self.user)
+
+        r1 = self.client.post(
+            f'/api/pos/sales/{self.sale_a.pk}/refund/',
+            {'reason': 'Devolución completa del producto'}, format='json'
+        )
+        self.assertEqual(r1.status_code, status.HTTP_200_OK)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 12)
+
+        r2 = self.client.post(
+            f'/api/pos/sales/{self.sale_a.pk}/refund/',
+            {'reason': 'Segunda devolución del mismo producto'}, format='json'
+        )
+        self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.product.refresh_from_db()
+        self.assertEqual(self.product.stock, 12, "El stock no debe restaurarse de nuevo")
