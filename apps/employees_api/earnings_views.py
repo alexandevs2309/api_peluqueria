@@ -499,12 +499,18 @@ class PayrollViewSet(viewsets.ViewSet):
         self._require_admin_role(request)
         
         try:
-            period = PayrollPeriod.objects.get(id=period_id)
+            # CONCURRENCIA: bloquear el período dentro de la transacción para que dos
+            # aprobaciones simultáneas no aprueben dos veces (check + save atómicos).
+            with transaction.atomic():
+                period = PayrollPeriod.objects.select_for_update().get(id=period_id)
+                
+                if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
+                    return Response({'error': 'No tienes permiso'}, status=403)
+                
+                period.approve(request.user)
             
-            if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
-                return Response({'error': 'No tienes permiso'}, status=403)
-            
-            period.approve(request.user)
+            # Notificación FUERA del bloque atómico: solo se envía si la aprobación
+            # realmente hizo commit, evitando duplicados.
             self._send_approval_notification(period)
             
             return Response({
