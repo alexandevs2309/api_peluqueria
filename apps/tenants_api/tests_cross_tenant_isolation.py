@@ -70,7 +70,7 @@ def make_plan():
         features={
             "appointments": True, "cash_register": True, "inventory": True,
             "basic_reports": True, "advanced_reports": True, "payroll": True,
-            "multi_branch": True, "ncf": True,
+            "multi_branch": True, "ncf": True, "promotions": True,
         },
     )
 
