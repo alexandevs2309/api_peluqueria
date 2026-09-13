@@ -66,9 +66,10 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     }
 
     def perform_create(self, serializer):
-        appointment_datetime = serializer.validated_data['date_time']
-        stylist = serializer.validated_data['stylist']
-        service = serializer.validated_data.get('service')
+        instance = serializer.instance
+        appointment_datetime = serializer.validated_data.get('date_time', getattr(instance, 'date_time', None))
+        stylist = serializer.validated_data.get('stylist', getattr(instance, 'stylist', None))
+        service = serializer.validated_data.get('service', getattr(instance, 'service', None))
         
         # Validar que el estilista tiene un perfil de empleado
         if not hasattr(stylist, 'employee_profile') or not stylist.employee_profile:

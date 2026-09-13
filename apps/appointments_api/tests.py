@@ -459,3 +459,35 @@ def test_create_appointment_service_not_offered(client_factory, service_factory,
     response = client.post(reverse("appointment-list"), data, format="json")
     assert response.status_code == 400
     assert "no ofrece este servicio" in str(response.data)
+
+
+@pytest.mark.django_db
+def test_partial_patch_appointment_without_date_time_or_stylist(authenticated_user, client_factory, stylist, stylist_role):
+    """PATCH parcial (solo is_active) debe devolver 200/204, no 500 por KeyError."""
+    user, client = authenticated_user
+    client_obj = client_factory.create()
+    stylist_user, employee = stylist
+
+    future = timezone.localtime(timezone.now() + timedelta(days=1)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
+    appointment = Appointment.objects.create(
+        tenant=user.tenant,
+        client=client_obj,
+        stylist=stylist_user,
+        date_time=future,
+        status='scheduled',
+    )
+
+    response = client.patch(
+        reverse('appointment-detail', args=[appointment.id]),
+        {'is_active': False},
+        format='json',
+    )
+
+    assert response.status_code in (status.HTTP_200_OK, status.HTTP_204_NO_CONTENT), (
+        f"PATCH parcial devolvió {response.status_code}: {response.content}"
+    )
+    appointment.refresh_from_db()
+    assert appointment.status == 'scheduled'
+    assert appointment.stylist_id == stylist_user.id
