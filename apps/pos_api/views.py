@@ -510,23 +510,31 @@ class SaleViewSet(TenantScopedViewSet):
                         sequence.save(update_fields=['current_sequence'])
 
             # Loyalty: Redimir puntos (descuento por canje)
-            from apps.clients_api.models import LoyaltyTransaction
+            from apps.clients_api.models import Client, LoyaltyTransaction
             redeem_points = int(self.request.data.get('redeem_points', 0))
             if redeem_points > 0:
                 if not sale.client:
                     raise serializers.ValidationError("Debe seleccionar un cliente para canjear puntos")
-                if sale.client.loyalty_points < redeem_points:
+                # CONCURRENCIA: `sale.client` pudo quedar obsoleto (lectura al crear la
+                # venta). Re-leer el saldo con bloqueo dentro de la transacción actual
+                # para evitar el doble canje de los mismos puntos.
+                client = Client.objects.select_for_update().get(pk=sale.client_id)
+                if client.loyalty_points < redeem_points:
                     raise serializers.ValidationError("Puntos insuficientes")
                 redeem_rate = Decimal(str(getattr(settings, 'POS_LOYALTY_REDEEM_RATE', 10)))
                 discount_from_points = Decimal(str(redeem_points)) / redeem_rate
                 discount_from_points = discount_from_points.quantize(Decimal('0.01'), rounding=ROUND_DOWN)
-                sale.client.loyalty_points -= redeem_points
-                sale.client.save(update_fields=['loyalty_points'])
+                client.loyalty_points -= redeem_points
+                client.save(update_fields=['loyalty_points'])
                 LoyaltyTransaction.objects.create(
-                    client=sale.client, sale=sale, points=redeem_points,
+                    client=client, sale=sale, points=redeem_points,
                     transaction_type='redeemed',
                     description=f'Canje en compra #{sale.id}'
                 )
+                # Sincronizar la instancia en memoria con el valor vigente para que el
+                # auto-earn posterior use el saldo actualizado.
+                sale.client = client
+                sale.client.loyalty_points = client.loyalty_points
                 sale.points_redeemed = redeem_points
                 sale.discount += discount_from_points
                 sale.total = (sale.total - discount_from_points).quantize(Decimal('0.01'), rounding=ROUND_DOWN)
