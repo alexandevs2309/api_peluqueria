@@ -33,46 +33,70 @@ class InvoiceSerializer(serializers.ModelSerializer):
     tenant_name = serializers.SerializerMethodField()
     plan_name = serializers.SerializerMethodField()
     paid_at = serializers.DateTimeField(read_only=True)
-    
+    proof = serializers.SerializerMethodField()
+
     class Meta:
         model = Invoice
         fields = [
-            "id", "user", "user_email", "user_name", "tenant_name", 
-            "subscription", "plan_name", "amount", "description", 
-            "due_date", "is_paid", "paid_at", "issued_at", "status"
+            "id", "user", "user_email", "user_name", "tenant_name",
+            "subscription", "plan_name", "amount", "description",
+            "due_date", "is_paid", "paid_at", "issued_at", "status",
+            "payment_method", "proof",
         ]
-        read_only_fields = ["id", "user", "amount", "is_paid", "issued_at", "status", "paid_at"]
-    
+        read_only_fields = [
+            "id", "user", "amount", "is_paid", "issued_at", "status", "paid_at"
+        ]
+
     def get_user_email(self, obj):
         return obj.user.email if obj.user else None
-    
+
     def get_user_name(self, obj):
         if obj.user:
             return getattr(obj.user, 'full_name', None) or f"{obj.user.first_name} {obj.user.last_name}".strip() or obj.user.email
         return None
-    
+
     def get_tenant_name(self, obj):
         if obj.user and hasattr(obj.user, 'tenant') and obj.user.tenant:
             return obj.user.tenant.name
         return None
-    
+
     def get_plan_name(self, obj):
         if obj.subscription and hasattr(obj.subscription, 'plan') and obj.subscription.plan:
             return obj.subscription.plan.get_name_display()
         return None
-    
+
+    def get_proof(self, obj):
+        payment = getattr(obj, 'payment', None)
+        if not payment:
+            return None
+        try:
+            proof = payment.proofs.select_related('reviewed_by').order_by('-created_at', '-id').first()
+        except Exception:
+            return None
+        if not proof:
+            return None
+        return {
+            'id': str(proof.id),
+            'decision': proof.decision,
+            'decision_note': proof.decision_note,
+            'reviewed_at': proof.reviewed_at,
+            'bank_reference': proof.bank_reference,
+            'amount_provided': float(proof.amount_provided) if proof.amount_provided is not None else None,
+            'created_at': proof.created_at,
+        }
+
     def validate_amount(self, value):
         """Validar que el monto sea positivo"""
         if value <= 0:
             raise serializers.ValidationError("El monto debe ser mayor a cero")
         return value
-    
+
     def validate_due_date(self, value):
         """Validar que la fecha de vencimiento sea futura"""
         if value <= timezone.now():
             raise serializers.ValidationError("La fecha de vencimiento debe ser futura")
         return value
-    
+
     def validate(self, data):
         """Validaciones adicionales"""
         # Si hay una suscripción, verificar que pertenezca al usuario
@@ -80,5 +104,5 @@ class InvoiceSerializer(serializers.ModelSerializer):
         if request and data.get('subscription'):
             if data['subscription'].user != request.user:
                 raise serializers.ValidationError("La suscripción no pertenece al usuario actual")
-        
+
         return data

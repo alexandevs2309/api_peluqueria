@@ -98,6 +98,11 @@ MIGRATION_MODULES = {app: None for app in [
 ]}
 CELERY_TASK_ALWAYS_EAGER = True
 EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
+
+# Comprobantes de pago manual: usar un directorio temporal fuera de MEDIA_ROOT.
+import tempfile
+PROOF_STORAGE_ROOT = os.path.join(tempfile.gettempdir(), 'auron_payment_proofs_tests')
+PAYMENT_PROOF_MAX_SIZE_MB = 5
 STRIPE_SECRET_KEY = 'sk_test_placeholder_for_tests'
 STRIPE_PUBLISHABLE_KEY = 'pk_test_public_key'
 STRIPE_WEBHOOK_SECRET = 'whsec_test_secret'

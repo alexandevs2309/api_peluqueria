@@ -1,7 +1,9 @@
 from django.db import models
 from django.conf import settings
 from django.core import signing
+from django.db.models import Q
 from apps.subscriptions_api.models import UserSubscription
+from apps.payments_api.storage import PaymentProofStorage
 import uuid
 
 class EncryptedFieldMixin:
@@ -119,6 +121,101 @@ class Payment(models.Model):
     
     def __str__(self):
         return f"Payment {self.id} - {self.user.email} - {self.status}"
+
+
+class PaymentProof(models.Model):
+    """Comprobante de pago manual (transferencia/depósito) presentado por el
+    cliente y revisado por un administrador.
+
+    Reglas de negocio:
+      - Un pago puede tener a lo sumo UN comprobante 'pending' a la vez
+        (restricción UniqueConstraint condicional): evita colas de revisiones
+        y obliga a resolver cada comprobante antes de presentar otro.
+      - Un pago nunca puede tener más de un comprobante 'approved'
+        (UniqueConstraint condicional): garantiza que la aprobación es única.
+      - Tras un rechazo el cliente puede volver a presentar un comprobante
+        para el mismo Payment (folio de transferencia distinto o corregido).
+      - El archivo se guarda FUERA de MEDIA_ROOT (PaymentProofStorage) y se
+        sirve solo vía el endpoint protegido manual_proof_download.
+    """
+
+    DECISION_CHOICES = [
+        ('pending', 'Pendiente de revisión'),
+        ('approved', 'Aprobado'),
+        ('rejected', 'Rechazado'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    payment = models.ForeignKey(
+        'Payment',
+        on_delete=models.CASCADE,
+        related_name='proofs',
+        db_index=True,
+        help_text="Pago manual al que corresponde este comprobante"
+    )
+    file = models.FileField(
+        storage=PaymentProofStorage(),
+        upload_to='proofs',
+        help_text="Archivo del comprobante (PDF, JPG, PNG o WebP)"
+    )
+    file_name = models.CharField(
+        max_length=255, blank=True,
+        help_text="Nombre de archivo original saneado (sin ruta)"
+    )
+    bank_reference = models.CharField(
+        max_length=255, db_index=True,
+        help_text="Referencia bancaria normalizada de la transferencia/depósito"
+    )
+    amount_provided = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        help_text="Importe declarado por el cliente en el comprobante"
+    )
+    decision = models.CharField(
+        max_length=20,
+        choices=DECISION_CHOICES,
+        default='pending',
+        db_index=True,
+        help_text="Decisión administrativa sobre este comprobante"
+    )
+    decision_note = models.TextField(
+        blank=True,
+        help_text="Motivo/nota del administrador (obligatorio en el rechazo)"
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='reviewed_payment_proofs',
+        help_text="Administrador que revisó este comprobante"
+    )
+    reviewed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fecha/hora de la revisión (aprobación o rechazo)"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Comprobante de pago manual'
+        verbose_name_plural = 'Comprobantes de pago manual'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['payment'],
+                condition=Q(decision='pending'),
+                name='one_pending_proof_per_payment'
+            ),
+            models.UniqueConstraint(
+                fields=['payment'],
+                condition=Q(decision='approved'),
+                name='one_approved_proof_per_payment'
+            ),
+        ]
+
+    def __str__(self):
+        return f"PaymentProof {self.id} - Payment {self.payment_id} - {self.decision}"
+
 
 class WebhookEvent(models.Model):
     provider = models.ForeignKey(PaymentProvider, on_delete=models.CASCADE, db_index=True)

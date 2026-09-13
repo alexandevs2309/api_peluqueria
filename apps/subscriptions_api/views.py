@@ -1184,7 +1184,7 @@ class RenewSubscriptionView(APIView):
         auto_renew_raw = request.data.get('auto_renew', False)
         auto_renew = str(auto_renew_raw).lower() in {'1', 'true', 'yes', 'on'}
 
-        if payment_provider not in {'stripe', 'paypal'}:
+        if payment_provider not in {'stripe', 'paypal', 'manual'}:
             return Response({
                 'error': 'Unsupported payment provider',
                 'message': f'Proveedor no soportado: {payment_provider}'
@@ -1230,6 +1230,76 @@ class RenewSubscriptionView(APIView):
                 paypal_action,
             )
             return self._create_paypal_order(request, tenant, plan, months, auto_renew, billing_interval=billing_interval)
+
+        if payment_provider == 'manual':
+            if auto_renew:
+                return Response({
+                    'error': 'Auto-renew is not supported for manual bank transfers'
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            from apps.billing_api.models import Invoice
+            from apps.payments_api.models import Payment, PaymentProvider
+
+            provider, _ = PaymentProvider.objects.get_or_create(
+                name='manual', defaults={'is_active': True}
+            )
+            price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
+            if billing_interval == 'year' and not price_per_cycle:
+                price_per_cycle = plan.price * 12 * Decimal('0.8')
+            if billing_interval == 'year':
+                total_amount = price_per_cycle * months / 12
+            else:
+                total_amount = price_per_cycle * months
+
+            with transaction.atomic():
+                invoice = Invoice.objects.create(
+                    user=request.user,
+                    tenant=tenant,
+                    amount=total_amount,
+                    due_date=timezone.now(),
+                    is_paid=False,
+                    payment_method='transfer',
+                    status='pending',
+                    description=(
+                        f"Subscription renewal (transferencia) - "
+                        f"{plan.get_name_display()} x{months}m"
+                    )
+                )
+                payment = Payment.objects.create(
+                    tenant=tenant,
+                    user=request.user,
+                    subscription=invoice.subscription,
+                    provider=provider,
+                    amount=total_amount,
+                    currency='USD',
+                    status='pending',
+                    metadata={
+                        'invoice_id': str(invoice.id),
+                        'plan_id': str(plan.id),
+                        'months': str(months),
+                        'billing_interval': billing_interval,
+                        'payment_provider': 'manual'
+                    }
+                )
+                invoice.payment = payment
+                invoice.save(update_fields=['payment'])
+
+            return Response({
+                'message': (
+                    'Solicitud de renovación por transferencia registrada. '
+                    'Tu pago queda pendiente de verificación.'
+                ),
+                'plan': plan.name,
+                'months': months,
+                'amount': str(total_amount),
+                'payment_method': 'transfer',
+                'payment_provider': 'manual',
+                'invoice_id': str(invoice.id),
+                'payment_id': str(payment.id),
+                'invoice_status': 'pending',
+                'payment_status': 'pending',
+                'payment_mode': 'manual_pending'
+            }, status=status.HTTP_201_CREATED)
 
         if not payment_method_id and not payment_intent_id:
             return Response({'error': 'Payment method or payment intent required'}, status=400)

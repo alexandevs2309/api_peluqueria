@@ -11,8 +11,13 @@ from django.utils import timezone
 from datetime import timedelta
 from apps.tenants_api.models import Tenant
 from apps.subscriptions_api.models import UserSubscription
+from apps.audit_api.utils import create_audit_log
+from apps.subscriptions_api.utils import log_subscription_event
+from apps.payments_api import manual as manual_payments
+from apps.payments_api import emails as manual_emails
+from django.db import transaction
+from dateutil import parser
 import logging
-
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,9 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         'destroy': 'billing_api.delete_invoice',
         'mark_as_paid': 'billing_api.change_invoice',
         'pay': 'billing_api.change_invoice',
+        'me': 'billing_api.view_invoice',
+        'approve_manual_payment': 'billing_api.change_invoice',
+        'reject_manual_payment': 'billing_api.change_invoice',
     }
     http_method_names = ['get', 'post', 'head', 'options']
 
@@ -48,25 +56,25 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         if not tenant:
             return Invoice.objects.none()
         return queryset.filter(tenant=tenant)
-    
+
     def update(self, request, *args, **kwargs):
         return Response(
             {'error': 'No se permite modificar ni eliminar facturas.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
-    
+
     def partial_update(self, request, *args, **kwargs):
         return Response(
             {'error': 'No se permite modificar ni eliminar facturas.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
-    
+
     def destroy(self, request, *args, **kwargs):
         return Response(
             {'error': 'No se permite modificar ni eliminar facturas.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
-    
+
     @action(detail=True, methods=['post'])
     def mark_as_paid(self, request, pk=None):
         """Deshabilitado: el estado paid solo puede venir de webhooks verificados."""
@@ -83,35 +91,35 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
             },
             status=status.HTTP_403_FORBIDDEN
         )
-    
+
     def perform_create(self, serializer):
         from rest_framework.exceptions import ValidationError
-        
+
         subscription = serializer.validated_data.get('subscription')
-        
+
         if not subscription:
             raise ValidationError("La factura debe estar asociada a una suscripción válida.")
-        
+
         # Validar multi-tenant: subscription debe pertenecer al usuario o su tenant
         if subscription.user != self.request.user:
-            if not (hasattr(self.request.user, 'tenant') and 
-                    hasattr(subscription.user, 'tenant') and 
+            if not (hasattr(self.request.user, 'tenant') and
+                    hasattr(subscription.user, 'tenant') and
                     getattr(self.request, 'tenant', self.request.user.tenant) == subscription.user.tenant):
                 raise ValidationError("No tiene permiso para crear facturas para esta suscripción.")
-        
+
         plan = subscription.plan
-        
+
         if not plan:
             raise ValidationError("La suscripción no tiene un plan asociado.")
-        
+
         calculated_amount = plan.price
-        
+
         serializer.save(
             user=self.request.user,
             amount=calculated_amount,
             tenant=getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         )
-    
+
     @action(detail=True, methods=['post'], url_path='pay')
     def pay(self, request, pk=None):
         """Deshabilitado: no se permite pagar facturas por simulación local."""
@@ -182,6 +190,112 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
         output = self.get_serializer(invoice)
         return Response(output.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='me')
+    def me(self, request):
+        """Lista las facturas del usuario autenticado (tenant-scoped)."""
+        queryset = self.get_queryset().filter(user=request.user)
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    def _audit_payment_decision(self, request, action, invoice, extra_data=None):
+        payment = invoice.payment
+        if not payment:
+            return
+
+        proof = payment.proofs.order_by('-created_at', '-id').first()
+        bank_reference = proof.bank_reference if proof else None
+
+        description = (
+            f"Pago manual {'aprobado' if action == 'PAYMENT_APPROVED' else 'rechazado'} "
+            f"- factura #{invoice.id} monto {invoice.amount} "
+            f"comprobante {proof.id if proof else 'N/A'}"
+        )
+
+        log = create_audit_log(
+            user=request.user,
+            action=action,
+            description=description,
+            content_object=payment,
+            request=request,
+            source='PAYMENTS',
+            extra_data={
+                'tenant_id': invoice.tenant_id or (payment.tenant_id if payment else None),
+                'invoice_id': str(invoice.id),
+                'payment_id': str(payment.id),
+                'amount': str(invoice.amount),
+                'decision': action.replace('PAYMENT_', '').lower(),
+                'bank_reference': bank_reference,
+                **(extra_data or {}),
+            },
+        )
+        if log:
+            log.tenant_id = invoice.tenant_id or (payment.tenant_id if payment else None)
+            log.save(update_fields=['tenant'])
+
+    @action(detail=True, methods=['post'], url_path='approve-manual-payment')
+    def approve_manual_payment(self, request, pk=None):
+        invoice = self.get_object()
+        decision_note = request.data.get('decision_note') or request.data.get('reason') or ''
+        with transaction.atomic():
+            locked = Invoice.objects.select_for_update().select_related(
+                'payment__provider', 'subscription__plan', 'user', 'tenant'
+            ).get(pk=invoice.pk)
+            result = manual_payments.approve_manual_payment(locked, request.user, decision_note=decision_note)
+            if not result['ok']:
+                return Response({'error': result['error']}, status=result['status'])
+
+            data = result['data']
+            self._audit_payment_decision(request, 'PAYMENT_APPROVED', locked, data)
+
+            tenant = locked.tenant or locked.payment.tenant
+            access_until_str = data.get('access_until')
+            access_until = None
+            if access_until_str:
+                from dateutil import parser
+                try:
+                    access_until = parser.isoparse(access_until_str)
+                except Exception:
+                    access_until = None
+
+            def _send():
+                proof = locked.payment.proofs.order_by('-created_at', '-id').first()
+                manual_emails.send_manual_payment_approved_email(
+                    locked.user, tenant, locked, proof, access_until
+                )
+            transaction.on_commit(_send)
+
+        return Response(data, status=200)
+
+    @action(detail=True, methods=['post'], url_path='reject-manual-payment')
+    def reject_manual_payment(self, request, pk=None):
+        invoice = self.get_object()
+        reason = (request.data.get('decision_note') or request.data.get('reason') or '').strip()
+        with transaction.atomic():
+            locked = Invoice.objects.select_for_update().select_related(
+                'payment__provider', 'subscription__plan', 'user', 'tenant'
+            ).get(pk=invoice.pk)
+            result = manual_payments.reject_manual_payment(locked, request.user, reason)
+            if not result['ok']:
+                return Response({'error': result['error']}, status=result['status'])
+
+            data = result['data']
+            self._audit_payment_decision(request, 'PAYMENT_REJECTED', locked, data)
+
+            tenant = locked.tenant or locked.payment.tenant
+            proof = locked.payment.proofs.order_by('-created_at', '-id').first()
+            def _send():
+                if proof:
+                    manual_emails.send_manual_payment_rejected_email(
+                        locked.user, tenant, locked, proof
+                    )
+            transaction.on_commit(_send)
+
+        return Response(data, status=200)
 
 
 class PaymentAttemptViewSet(AuditLoggingMixin, viewsets.ModelViewSet):

@@ -7,14 +7,16 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, FileResponse, Http404
 from django.conf import settings
+from django.db import transaction
+import mimetypes
 import logging
 
 import stripe
 
 from apps.core.tenant_permissions import TenantPermissionByAction
-from .models import Payment, PaymentProvider
+from .models import Payment, PaymentProvider, PaymentProof
 from .services import StripeService, AzulService
 from .serializers import PaymentSerializer
 
@@ -255,6 +257,117 @@ def azul_webhook(request):
             logger.exception('Azul webhook processing error: %s', e)
 
     return JsonResponse({'received': True})
+
+
+# ---------------------------------------------------------------------------
+# Pagos manuales (transferencia bancaria)
+# ---------------------------------------------------------------------------
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def manual_upload(request):
+    """Sube un comprobante de pago manual para una Invoice pendiente del
+    propio tenant del usuario autenticado.
+
+    Body (multipart): invoice_id, bank_reference, amount_provided, file.
+    Nunca se confía en tenant_id/amount/user_id provenientes del cliente:
+    la Invoice es la única autoridad.
+    """
+    from apps.billing_api.models import Invoice
+    from .manual import upload_manual_proof
+    from . import emails as manual_emails
+    from apps.core.tenant_permissions import resolve_request_tenant
+
+    user = request.user
+    tenant = resolve_request_tenant(request)
+    if not tenant:
+        return Response({'error': 'No se pudo determinar el tenant.'}, status=400)
+
+    invoice_id = request.data.get('invoice_id')
+    if not invoice_id:
+        return Response({'error': 'invoice_id es requerido.'}, status=400)
+
+    invoice = Invoice.objects.select_related(
+        'payment__provider', 'subscription__plan', 'tenant'
+    ).filter(id=invoice_id, tenant=tenant).first()
+    if not invoice:
+        return Response({'error': 'Factura no encontrada.'}, status=404)
+
+    try:
+        with transaction.atomic():
+            result = upload_manual_proof(
+                invoice,
+                request.FILES.get('file'),
+                request.data.get('bank_reference'),
+                request.data.get('amount_provided'),
+            )
+            if not result['ok']:
+                return Response({'error': result['error']}, status=result['status'])
+
+            proof_id = result['data']['proof_id']
+            proof = PaymentProof.objects.get(id=proof_id)
+
+            def _notify():
+                manual_emails.send_manual_payment_pending_email(
+                    invoice.user, tenant, invoice, proof
+                )
+            transaction.on_commit(_notify)
+
+        result['data']['status'] = 'pending'
+        return Response(result['data'], status=201)
+    except Exception as exc:  # noqa: BLE001
+        logger.error('manual_upload error for user=%s: %s', user.id, exc, exc_info=True)
+        return Response({'error': 'Error al procesar el comprobante.'}, status=400)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def manual_proof_download(request, proof_id):
+    """Descarga protegida de un comprobante.
+
+    Solo el dueño del pago, un administrador del tenant con permisos de
+    billing, o un superusuario pueden acceder. El archivo se fuerza como
+    attachment (jamás se sirve inline).
+    """
+    from apps.roles_api.models import UserRole
+    from apps.core.tenant_permissions import resolve_request_tenant
+
+    user = request.user
+    proof = PaymentProof.objects.select_related(
+        'payment__tenant', 'payment__user'
+    ).filter(id=proof_id).first()
+    if not proof or not proof.file:
+        raise Http404
+
+    tenant = resolve_request_tenant(request)
+
+    is_allowed = False
+    if user.is_superuser:
+        is_allowed = True
+    else:
+        same_tenant = tenant is not None and (
+            proof.payment.tenant_id == tenant.id
+        )
+        is_owner = proof.payment.user_id == user.id
+        is_admin = UserRole.objects.filter(
+            user=user,
+            tenant_id=proof.payment.tenant_id,
+            role__permissions__content_type__app_label='billing_api',
+            role__permissions__codename='view_invoice',
+        ).exists()
+        is_allowed = same_tenant and (is_owner or is_admin)
+
+    if not is_allowed:
+        return Response(
+            {'error': 'No tienes acceso a este comprobante.'},
+            status=403,
+        )
+
+    ctype = mimetypes.guess_type(proof.file_name or proof.file.name)[0] \
+        or 'application/octet-stream'
+    response = FileResponse(proof.file.open('rb'), content_type=ctype)
+    response['Content-Disposition'] = f'attachment; filename="{proof.file_name or "comprobante"}"'
+    return response
 
 
 class StripeWebhookView(View):

@@ -555,6 +555,13 @@ else:
     }
     os.makedirs(MEDIA_ROOT, exist_ok=True)
 
+# Comprobantes de pago manual (transferencia/depósito).
+# Se almacenan FUERA de MEDIA_ROOT y no se sirven de forma pública:
+# el acceso se expone únicamente vía el endpoint protegido por autorización.
+PROOF_STORAGE_ROOT = env('PROOF_STORAGE_ROOT', default=str(BASE_DIR / 'payment_proofs'))
+PAYMENT_PROOF_MAX_SIZE_MB = env.int('PAYMENT_PROOF_MAX_SIZE_MB', default=5)
+os.makedirs(PROOF_STORAGE_ROOT, exist_ok=True)
+
 STATICFILES_FINDERS = [
     'django.contrib.staticfiles.finders.FileSystemFinder',
     'django.contrib.staticfiles.finders.AppDirectoriesFinder',

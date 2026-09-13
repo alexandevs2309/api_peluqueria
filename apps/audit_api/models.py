@@ -45,6 +45,8 @@ class AuditLog(models.Model):
         ('PAYPAL_ERROR', 'Error de PayPal'),
         ('TWILIO_ERROR', 'Error de Twilio'),
         ('SENDGRID_ERROR', 'Error de SendGrid'),
+        ('PAYMENT_APPROVED', 'Pago manual aprobado'),
+        ('PAYMENT_REJECTED', 'Pago manual rechazado'),
     ]
     
     user = models.ForeignKey(
@@ -114,6 +116,7 @@ class AuditLog(models.Model):
             ('ROLES', 'Roles y permisos'),
             ('SETTINGS', 'Configuración'),
             ('SUBSCRIPTIONS', 'Suscripciones'),
+            ('PAYMENTS', 'Pagos'),
             ('USERS', 'Usuarios'),
             ('SYSTEM', 'Sistema'),
             ('INTEGRATIONS', 'Integraciones'),
