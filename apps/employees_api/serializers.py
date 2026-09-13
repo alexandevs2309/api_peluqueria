@@ -121,10 +121,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
 
     def validate_user_id(self, value):
         request = self.context.get('request')
-        if request:
+        if request and value:
             tenant = getattr(request, 'tenant', None)
-            if tenant and value.tenant_id != tenant.id:
-                raise serializers.ValidationError("El usuario seleccionado no pertenece a este negocio")
+            if tenant:
+                try:
+                    user_obj = User.objects.get(id=value)
+                except User.DoesNotExist:
+                    raise serializers.ValidationError("El usuario seleccionado no pertenece a este negocio")
+                if user_obj.tenant_id != tenant.id:
+                    raise serializers.ValidationError("El usuario seleccionado no pertenece a este negocio")
         return value
     
     def validate_branch(self, value):

@@ -474,6 +474,11 @@ class SaleViewSet(TenantScopedViewSet):
                         ).order_by('created_at').first()
                         
                         if not sequence:
+                            existing_seq = NCFSequence.objects.filter(tenant=tenant, type=ncf_type).exists()
+                            if existing_seq:
+                                raise serializers.ValidationError(
+                                    f"Secuencia NCF agotada o vencida para tipo {ncf_type}."
+                                )
                             from datetime import timedelta
                             exp_date = timezone.now().date() + timedelta(days=730)
                             sequence = NCFSequence.objects.create(

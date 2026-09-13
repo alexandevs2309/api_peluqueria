@@ -250,14 +250,14 @@ def test_sale_ncf_generation_credito_fiscal_validation(authenticated_user, clien
     api_client.force_authenticate(user=user)
     response = api_client.post(reverse("sale-list"), data, format="json")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "rnc" in response.data
+    assert "rnc" in response.data.get("details", {})
     
     # Test invalid RNC (not 9 or 11 digits)
     data["rnc"] = "12345"
     data["company_name"] = "Barber Inc"
     response = api_client.post(reverse("sale-list"), data, format="json")
     assert response.status_code == status.HTTP_400_BAD_REQUEST
-    assert "rnc" in response.data
+    assert "rnc" in response.data.get("details", {})
     
     # Test successful creation with 9-digit RNC
     data["rnc"] = "131123456"
