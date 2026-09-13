@@ -301,6 +301,21 @@ class CashRegister(models.Model):
             models.Index(fields=['is_open']),
             models.Index(fields=['tenant', 'is_open'], name='pos_api_cas_tenant__911952_idx'),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'user', 'branch'],
+                condition=models.Q(is_open=True),
+                name='unique_open_register_per_user_branch',
+            ),
+            # Postgres trata los NULL como distintos en un unique index: un usuario sin
+            # sucursal (branch IS NULL) quedaría sin protección, por eso esta constraint
+            # adicional cubre el caso de cajas sin sucursal.
+            models.UniqueConstraint(
+                fields=['tenant', 'user'],
+                condition=models.Q(is_open=True, branch__isnull=True),
+                name='unique_open_register_per_user_no_branch',
+            ),
+        ]
     
     def save(self, *args, **kwargs):
         from decimal import Decimal

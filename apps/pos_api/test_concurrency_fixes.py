@@ -217,3 +217,108 @@ class RefundStockLockTests(TransactionTestCase):
         self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
         self.product.refresh_from_db()
         self.assertEqual(self.product.stock, 12, "El stock no debe restaurarse de nuevo")
+
+
+# ==============================================================================
+# BUG 3: Apertura de caja duplicada (open_register sin lock ni unicidad)
+# ==============================================================================
+
+class OpenRegisterDuplicateTests(TransactionTestCase):
+    """
+    Bug: open_register() verificaba si existía una caja abierta pero la creación no
+    estaba protegida a nivel de base de datos; dos peticiones concurrentes podían
+    abrir dos cajas simultáneas para el mismo usuario.
+
+    Fix: (1) transacción atómica + select_for_update en la verificación,
+    (2) UniqueConstraints (tenant, user, branch) y (tenant, user) con is_open=True,
+    (3) IntegrityError -> 400 'Ya tienes una caja abierta hoy' (views.py).
+    """
+
+    def setUp(self):
+        self.tenant = _create_tenant('Register Fix', 'regfix')
+        self.user = _create_user(self.tenant, 'regfix@test.com')
+        _setup_plan(self.tenant)
+        _setup_rbac(self.user, self.tenant)
+        self.client = APIClient()
+        authenticate_client(self.client, self.user)
+
+    def test_open_register_duplicate_constraint_blocks(self):
+        """Dos aperturas simultáneas (misma transacción antes de refrescar): la
+        segunda debe violar la unicidad (IntegrityError)."""
+        from django.db import IntegrityError, transaction
+
+        CashRegister.objects.create(
+            tenant=self.tenant, user=self.user, is_open=True, initial_cash=Decimal('100')
+        )
+
+        # Simula la segunda petición concurrente intentando crear otra caja abierta
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CashRegister.objects.create(
+                    tenant=self.tenant, user=self.user, is_open=True, initial_cash=Decimal('100')
+                )
+
+        self.assertEqual(
+            CashRegister.objects.filter(tenant=self.tenant, user=self.user, is_open=True).count(),
+            1,
+            "Debe quedar exactamente una caja abierta"
+        )
+
+    def test_open_register_double_submit_via_api(self):
+        """Doble submit al endpoint: la primera apertura responde 200 y la segunda 400."""
+        data = {'initial_cash': 100}
+        r1 = self.client.post('/api/pos/sales/open_register/', data, format='json')
+        self.assertEqual(r1.status_code, status.HTTP_200_OK)
+
+        r2 = self.client.post('/api/pos/sales/open_register/', data, format='json')
+        self.assertEqual(r2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('abierta', str(r2.data).lower())
+
+        open_registers = CashRegister.objects.filter(
+            tenant=self.tenant, user=self.user, is_open=True
+        )
+        self.assertEqual(open_registers.count(), 1, "Solo debe existir una caja abierta")
+
+    def test_open_register_close_then_reopen_allowed(self):
+        """Cerrar y luego abrir otra caja NO debe violar la constraint."""
+        from django.utils import timezone
+
+        CashRegister.objects.create(
+            tenant=self.tenant, user=self.user, is_open=True, initial_cash=Decimal('100')
+        )
+        CashRegister.objects.filter(tenant=self.tenant, user=self.user, is_open=True).update(
+            is_open=False, closed_at=timezone.now()
+        )
+
+        register = CashRegister.objects.create(
+            tenant=self.tenant, user=self.user, is_open=True, initial_cash=Decimal('200')
+        )
+        self.assertTrue(register.pk)
+
+    def test_open_register_constraint_is_per_branch(self):
+        """La unicidad es por sucursal: dos cajas abiertas en sucursales distintas
+        están permitidas; en la misma sucursal, no."""
+        from apps.settings_api.models import Branch
+        from apps.subscriptions_api.models import SubscriptionPlan
+        from django.db import IntegrityError, transaction
+
+        plan = self.tenant.subscription_plan
+        plan.allows_multiple_branches = True
+        plan.save(update_fields=['allows_multiple_branches'])
+
+        branch_a = Branch.objects.create(tenant=self.tenant, name='Sucursal A')
+        branch_b = Branch.objects.create(tenant=self.tenant, name='Sucursal B')
+
+        CashRegister.objects.create(
+            tenant=self.tenant, user=self.user, branch=branch_a, is_open=True, initial_cash=Decimal('100')
+        )
+        # Otra sucursal -> permitido
+        CashRegister.objects.create(
+            tenant=self.tenant, user=self.user, branch=branch_b, is_open=True, initial_cash=Decimal('100')
+        )
+        # Misma sucursal -> bloqueado
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                CashRegister.objects.create(
+                    tenant=self.tenant, user=self.user, branch=branch_a, is_open=True, initial_cash=Decimal('100')
+                )

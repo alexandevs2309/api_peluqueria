@@ -712,6 +712,7 @@ class SaleViewSet(TenantScopedViewSet):
 
     @action(detail=False, methods=['post'])
     def open_register(self, request):
+        from django.db import transaction, IntegrityError
         today = timezone.localdate()
         tenant = self._get_request_tenant()
         
@@ -724,48 +725,59 @@ class SaleViewSet(TenantScopedViewSet):
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
 
-        # PRIMERO: verificar si ya hay caja abierta HOY (ANTES de cerrar)
-        check_filters = {
-            'tenant': tenant,
-            'user': request.user,
-            'is_open': True,
-            'opened_at__date': today,
-        }
-        if branch_id:
-            check_filters['branch_id'] = branch_id
+        # CONCURRENCIA: verificar + cerrar + crear dentro de una misma transacción
+        # para evitar abrir dos cajas simultáneamente (doble submit).
+        with transaction.atomic():
+            # PRIMERO: verificar si ya hay caja abierta HOY (ANTES de cerrar)
+            check_filters = {
+                'tenant': tenant,
+                'user': request.user,
+                'is_open': True,
+                'opened_at__date': today,
+            }
+            if branch_id:
+                check_filters['branch_id'] = branch_id
 
-        existing_open = CashRegister.objects.filter(**check_filters).first()
-        if existing_open:
-            return Response(
-                {'error': 'Ya tienes una caja abierta hoy'},
-                status=status.HTTP_400_BAD_REQUEST
+            existing_open = CashRegister.objects.select_for_update().filter(**check_filters).first()
+            if existing_open:
+                return Response(
+                    {'error': 'Ya tienes una caja abierta hoy'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # Si no hay caja abierta hoy, cerrar cualquier caja abierta anterior (de días anteriores)
+            close_filters = {
+                'tenant': tenant,
+                'user': request.user,
+                'is_open': True
+            }
+            if branch_id:
+                close_filters['branch_id'] = branch_id
+
+            CashRegister.objects.filter(**close_filters).update(
+                is_open=False,
+                closed_at=timezone.now(),
             )
-
-        # Si no hay caja abierta hoy, cerrar cualquier caja abierta anterior (de días anteriores)
-        close_filters = {
-            'tenant': tenant,
-            'user': request.user,
-            'is_open': True
-        }
-        if branch_id:
-            close_filters['branch_id'] = branch_id
-
-        CashRegister.objects.filter(**close_filters).update(
-            is_open=False,
-            closed_at=timezone.now(),
-        )
-        
-        from .serializers import CashRegisterCreateSerializer
-        serializer = CashRegisterCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        register = CashRegister.objects.create(
-            user=request.user,
-            tenant=tenant,
-            branch_id=branch_id,
-            initial_cash=serializer.validated_data['initial_cash']
-        )
+            
+            from .serializers import CashRegisterCreateSerializer
+            serializer = CashRegisterCreateSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                register = CashRegister.objects.create(
+                    user=request.user,
+                    tenant=tenant,
+                    branch_id=branch_id,
+                    initial_cash=serializer.validated_data['initial_cash']
+                )
+            except IntegrityError:
+                # Multiples peticiones concurrentes llegaron a crear: la constraint
+                # unique_open_register_* dejó una sola caja abierta.
+                return Response(
+                    {'error': 'Ya tienes una caja abierta hoy'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
         
         return Response(CashRegisterSerializer(register).data)
 
