@@ -106,19 +106,7 @@ class User(AbstractBaseUser, PermissionsMixin):
                 name='user_must_have_tenant_or_be_superuser',
                 violation_error_message='Los usuarios no superadmin deben tener un tenant asignado.'
             ),
-            models.UniqueConstraint(
-                fields=['email'],
-                condition=models.Q(tenant__isnull=True),
-                name='unique_email_for_global_users',
-                violation_error_message='Ya existe un superusuario con este email.'
-            ),
-            models.UniqueConstraint(
-                fields=['email', 'tenant'],
-                name='unique_email_per_tenant',
-                violation_error_message='Ya existe un usuario con este email en este negocio.'
-            ),
         ]
-        # La unicidad de email se maneja via UniqueConstraint arriba
 
     def clean(self):
         """Validación estructural multi-tenant"""

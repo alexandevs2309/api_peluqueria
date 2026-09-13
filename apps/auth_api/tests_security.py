@@ -89,34 +89,18 @@ class MultiTenantSecurityTests(TestCase):
         
         self.client = APIClient()
     
-    def test_login_requires_explicit_tenant_for_client_users(self):
-        """Login de cliente debe fallar sin tenant explícito."""
-        # Crear usuario con mismo email en tenant B para forzar la ambigüedad
-        User.objects.create_user(
-            email='admin@tenant-a.com',
-            password='pass1234_other',
-            full_name='Admin Tenant B Dupe',
-            tenant=self.tenant_b,
-            role='Client-Admin'
-        )
+    def test_login_client_user_without_explicit_tenant(self):
+        """Con emails únicos globales, el login de un cliente infiere su tenant."""
         response = self.client.post('/api/auth/login/', {
             'email': 'admin@tenant-a.com',
             'password': 'pass1234'
         })
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('tenant', str(response.data))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['tenant']['subdomain'], 'tenant-a')
 
     @override_settings(ALLOWED_HOSTS=['testserver', 'api-peluqueria-p25h.onrender.com'])
-    def test_login_does_not_infer_tenant_from_technical_host(self):
+    def test_technical_host_does_not_become_tenant(self):
         """Hosts técnicos de Render/Netlify no deben convertirse en tenants."""
-        # Crear usuario con mismo email en tenant B para forzar la ambigüedad
-        User.objects.create_user(
-            email='admin@tenant-a.com',
-            password='pass1234_other',
-            full_name='Admin Tenant B Dupe',
-            tenant=self.tenant_b,
-            role='Client-Admin'
-        )
         response = self.client.post(
             '/api/auth/login/',
             {
@@ -125,8 +109,8 @@ class MultiTenantSecurityTests(TestCase):
             },
             HTTP_HOST='api-peluqueria-p25h.onrender.com'
         )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn('tenant', str(response.data))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['tenant']['subdomain'], 'tenant-a')
         self.assertNotIn('Credenciales inválidas', str(response.data))
 
     def test_login_accepts_tenant_field(self):
@@ -163,10 +147,10 @@ class MultiTenantSecurityTests(TestCase):
         self.assertEqual(response.data['tenant']['subdomain'], 'tenant-a')
     
     def test_same_email_different_tenants_isolated_login(self):
-        """Mismo email en diferentes tenants debe tener login aislado"""
-        # Crear usuario con mismo email en tenant B
+        """Emails únicos globales: con tenant explícito el login queda aislado por tenant"""
+        # Cada tenant usa un email distinto (los emails son únicos globales)
         User.objects.create_user(
-            email='staff@tenant-a.com',  # Mismo email que staff_a
+            email='staff-b@tenant-b.com',  # Email distinto al de staff_a
             password='different_pass',
             full_name='Staff Tenant B',
             tenant=self.tenant_b,
@@ -183,7 +167,7 @@ class MultiTenantSecurityTests(TestCase):
         
         # Login en tenant B con password diferente
         response_b = self.client.post('/api/auth/login/', {
-            'email': 'staff@tenant-a.com',
+            'email': 'staff-b@tenant-b.com',
             'password': 'different_pass',
             'tenant_subdomain': 'tenant-b'
         })
