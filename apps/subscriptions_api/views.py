@@ -233,7 +233,9 @@ class UserSubscriptionViewSet(viewsets.ModelViewSet):
                 return queryset.filter(user__tenant_id=tenant_id)
             return queryset
 
-        tenant = getattr(self.request, 'tenant', self.request.user.tenant)
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+        if not tenant:
+            return queryset.none()
         return queryset.filter(user__tenant=tenant)
 
     def perform_create(self, serializer):
