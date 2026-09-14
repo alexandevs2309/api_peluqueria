@@ -50,10 +50,21 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
 
         SubscriptionLimitValidator.validate_client_limit(self.request.user, tenant=tenant)
 
-        instance = serializer.save(
-            tenant=tenant,
-            created_by=self.request.user
-        )
+        # Branch enforcement for employees (copied from TenantScopedViewSet to avoid bypass)
+        save_kwargs = {'tenant': tenant, 'created_by': self.request.user}
+        user = self.request.user
+        if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
+            from apps.auth_api.role_utils import get_effective_role_api
+            user_role = get_effective_role_api(user, tenant=tenant)
+            if user_role != 'CLIENT_ADMIN' and hasattr(user, 'employee_profile') and user.employee_profile:
+                if user.employee_profile.branch_id:
+                    branch = serializer.validated_data.get('branch')
+                    if branch and branch.id != user.employee_profile.branch_id:
+                        from rest_framework.exceptions import PermissionDenied
+                        raise PermissionDenied("No tienes permiso para crear clientes en otra sucursal")
+                    save_kwargs['branch_id'] = user.employee_profile.branch_id
+
+        instance = serializer.save(**save_kwargs)
         self.log_action('create', instance, self.request.user, self.request)
         return instance
 
@@ -84,28 +95,45 @@ class ClientViewSet(AuditLoggingMixin, TenantScopedViewSet):
         })
 
     @action(detail=True, methods=['post'])
+    @requires_feature('client_history')
     def add_loyalty_points(self, request, pk=None):
+        from django.db import transaction
+        from django.db.models import F
         client = self.get_object()
-        points = request.data.get('points', 0)
-        
-        if points > 0:
-            client.loyalty_points += points
-            client.save()
-            return Response({'detail': f'{points} puntos agregados. Total: {client.loyalty_points}'})
-        
-        return Response({'error': 'Puntos deben ser mayor a 0'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            points = int(request.data.get('points', 0))
+        except (ValueError, TypeError):
+            return Response({'error': 'Puntos deben ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+        if points <= 0 or points > 10000:
+            return Response({'error': 'Puntos deben estar entre 1 y 10000'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            Client.objects.select_for_update().filter(pk=client.pk)
+            Client.objects.filter(pk=client.pk).update(loyalty_points=F('loyalty_points') + points)
+            LoyaltyTransaction.objects.create(client=client, points=points, transaction_type='earned', description=f'Puntos agregados manualmente: {points}')
+            client.refresh_from_db()
+        return Response({'detail': f'{points} puntos agregados. Total: {client.loyalty_points}'})
 
     @action(detail=True, methods=['post'])
+    @requires_feature('client_history')
     def redeem_points(self, request, pk=None):
+        from django.db import transaction
+        from django.db.models import F
         client = self.get_object()
-        points = request.data.get('points', 0)
-        
-        if points > 0 and client.loyalty_points >= points:
-            client.loyalty_points -= points
-            client.save()
-            return Response({'detail': f'{points} puntos canjeados. Restantes: {client.loyalty_points}'})
-        
-        return Response({'error': 'Puntos insuficientes'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            points = int(request.data.get('points', 0))
+        except (ValueError, TypeError):
+            return Response({'error': 'Puntos deben ser un número entero'}, status=status.HTTP_400_BAD_REQUEST)
+        if points <= 0:
+            return Response({'error': 'Puntos deben ser mayor a 0'}, status=status.HTTP_400_BAD_REQUEST)
+        with transaction.atomic():
+            locked = Client.objects.select_for_update().get(pk=client.pk)
+            if locked.loyalty_points < points:
+                return Response({'error': 'Puntos insuficientes'}, status=status.HTTP_400_BAD_REQUEST)
+            Client.objects.filter(pk=client.pk).update(loyalty_points=F('loyalty_points') - points)
+            LoyaltyTransaction.objects.create(client=locked, points=points, transaction_type='redeemed', description=f'Puntos canjeados: {points}')
+            locked.refresh_from_db()
+            client = locked
+        return Response({'detail': f'{points} puntos canjeados. Restantes: {client.loyalty_points}'})
 
     @action(detail=True, methods=['get'])
     def stats(self, request, pk=None):

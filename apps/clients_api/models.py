@@ -27,6 +27,14 @@ class Client(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        indexes = [
+            models.Index(fields=['tenant', 'full_name']),
+            models.Index(fields=['tenant', 'branch']),
+            models.Index(fields=['tenant', 'is_active']),
+            models.Index(fields=['tenant', 'birthday']),
+        ]
+
     def __str__(self):
         return self.full_name
 
