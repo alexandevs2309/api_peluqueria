@@ -124,6 +124,18 @@ class ProductSerializer(serializers.ModelSerializer):
         return f"{prefix}-X001"
 
     def validate(self, attrs):
+        # Normalizar barcode "" -> None para no violar UniqueConstraint con isnull=False
+        if 'barcode' in attrs:
+            barcode = attrs.get('barcode')
+            if barcode is not None and str(barcode).strip() == '':
+                attrs['barcode'] = None
+            elif barcode is not None:
+                attrs['barcode'] = str(barcode).strip()
+
+        # Validar stock no negativo
+        if 'stock' in attrs and attrs['stock'] is not None and attrs['stock'] < 0:
+            raise serializers.ValidationError({'stock': 'El stock no puede ser negativo'})
+
         sku = attrs.get('sku', None)
 
         if not self.instance and (sku is None or str(sku).strip() == ''):

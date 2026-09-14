@@ -73,11 +73,22 @@ class Product(models.Model):
                 condition=models.Q(barcode__isnull=False) & models.Q(branch__isnull=False),
                 name='unique_barcode_per_tenant_branch'
             ),
+            models.CheckConstraint(
+                check=models.Q(stock__gte=0),
+                name='stock_non_negative'
+            ),
+            models.CheckConstraint(
+                check=models.Q(min_stock__gte=0),
+                name='min_stock_non_negative'
+            ),
         ]
         indexes = [
             models.Index(fields=['tenant', 'sku']),
             models.Index(fields=['tenant', 'is_active']),
             models.Index(fields=['tenant', 'branch', 'is_active']),
+            models.Index(fields=['tenant', 'is_active', 'stock', 'min_stock']),
+            models.Index(fields=['tenant', 'barcode']),
+            models.Index(fields=['tenant', 'category']),
         ]
 
     @property

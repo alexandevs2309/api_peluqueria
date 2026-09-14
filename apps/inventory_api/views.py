@@ -1,4 +1,6 @@
 from rest_framework import viewsets, permissions
+from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.filters import SearchFilter, OrderingFilter
 from apps.audit_api.mixins import AuditLoggingMixin
 from apps.tenants_api.base_viewsets import TenantScopedViewSet, TenantScopedReadOnlyViewSet
 from apps.core.tenant_permissions import TenantPermissionByAction, tenant_permission
@@ -13,7 +15,7 @@ from rest_framework import status
 
 
 class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
-    queryset = Product.objects.all()
+    queryset = Product.objects.select_related('category', 'branch').all()
     serializer_class = ProductSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'inventory'
@@ -29,6 +31,10 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
         'stock_report': 'inventory_api.view_product',
         'search_by_barcode': 'inventory_api.view_product',
     }
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active', 'category', 'branch']
+    ordering_fields = ['name', 'price', 'stock', 'created_at']
+    search_fields = ['name', 'sku', 'barcode']
     
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -52,25 +58,35 @@ class ProductViewSet(AuditLoggingMixin, TenantScopedViewSet):
     def adjust_stock(self, request, pk=None):
         """Ajustar stock de un producto"""
         quantity = request.data.get('quantity', 0)
-        reason = request.data.get('reason', 'Ajuste manual')
-        
+        reason = (request.data.get('reason') or 'Ajuste manual').strip()
+
         if not isinstance(quantity, (int, float)):
             return Response(
-                {'error': 'La cantidad debe ser un número'}, 
+                {'error': 'La cantidad debe ser un número'},
                 status=400
             )
-        
+        if quantity == 0:
+            return Response({'error': 'La cantidad no puede ser cero'}, status=400)
+        if not reason or len(reason) < 3:
+            return Response({'error': 'Motivo requerido (mínimo 3 caracteres)'}, status=400)
+
         from django.db import transaction
         with transaction.atomic():
             product = Product.objects.select_for_update().get(pk=self.get_object().pk)
-            Product.objects.filter(pk=product.pk).update(stock=F('stock') + quantity)
+            new_stock = product.stock + int(quantity)
+            if new_stock < 0:
+                return Response(
+                    {'error': f'Stock insuficiente. Disponible: {product.stock}, solicitado: {abs(int(quantity))}'},
+                    status=400
+                )
+            Product.objects.filter(pk=product.pk).update(stock=F('stock') + int(quantity))
             StockMovement.objects.create(
                 product=product,
-                quantity=quantity,
+                quantity=int(quantity),
                 reason=reason
             )
             product.refresh_from_db()
-        
+
         return Response({
             'detail': f'Stock ajustado. Nuevo stock: {product.stock}',
             'new_stock': product.stock
@@ -161,7 +177,7 @@ class SupplierViewSet(AuditLoggingMixin, TenantScopedViewSet):
     }
 
 class StockMovementViewSet(TenantScopedReadOnlyViewSet):
-    queryset = StockMovement.objects.all()
+    queryset = StockMovement.objects.select_related('product', 'product__tenant').all()
     serializer_class = StockMovementSerializer
     permission_classes = [TenantPermissionByAction, HasFeaturePermission]
     required_feature = 'inventory'
@@ -171,7 +187,7 @@ class StockMovementViewSet(TenantScopedReadOnlyViewSet):
         'list': 'inventory_api.view_product',
         'retrieve': 'inventory_api.view_product',
     }
-    
+
     def get_queryset(self):
         """Filtrar por tenant vía product__tenant (StockMovement no tiene tenant directo)."""
         user = self.request.user
