@@ -589,6 +589,8 @@ LLM_BASE_URL = env('LLM_BASE_URL', default='')         # override para cualquier
 LLM_MODEL = env('LLM_MODEL', default='')                # override modelo
 LLM_API_KEY = env('LLM_API_KEY', default='')            # override clave
 
+YOUTUBE_API_KEY = env('YOUTUBE_API_KEY', default='')
+
 
 if "pytest" in sys.modules:
     CELERY_TASK_ALWAYS_EAGER = True

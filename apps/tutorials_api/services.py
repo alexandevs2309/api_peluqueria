@@ -120,7 +120,7 @@ class YouTubeService:
                 'video_id': video_id
             }
         
-        api_key = os.environ.get('YOUTUBE_API_KEY')
+        api_key = getattr(settings, 'YOUTUBE_API_KEY', None) or os.environ.get('YOUTUBE_API_KEY')
         if not api_key:
             logger.warning("YOUTUBE_API_KEY no configurada en variables de entorno")
             return {
