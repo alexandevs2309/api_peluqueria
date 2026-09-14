@@ -1722,6 +1722,11 @@ def dashboard_stats(request):
     from django.db.models import Count, Sum
     from datetime import datetime, timedelta
 
+    # Tenant isolation: require tenant for non-superusers
+    tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+    if not request.user.is_superuser and not tenant:
+        return Response({'error': 'Tenant requerido'}, status=403)
+
     today = timezone.localdate()
 
     start_date = request.GET.get('start_date')
@@ -1744,21 +1749,26 @@ def dashboard_stats(request):
     else:
         end_date = today
 
-    tenant = getattr(request, 'tenant', None)
-    tenant_id = getattr(tenant, 'id', None) or getattr(request.user.tenant, 'id', 'none')
-    cache_key = f'dashboard_stats_{request.user.id}_{tenant_id}_{start_date}_{end_date}_{branch_id or "all"}'
+    tenant_id = getattr(tenant, 'id', 'none') if tenant else 'none'
+    cache_key = f'dashboard_stats_{tenant_id}_{start_date}_{end_date}_{branch_id or "all"}'
     cached_data = cache.get(cache_key)
     if cached_data:
         return Response(cached_data)
 
-    base_filter = Q(pk__isnull=True)
     if request.user.is_superuser:
         if tenant:
             base_filter = Q(tenant=tenant)
         else:
-            base_filter = Q()
+            # Superuser must specify ?tenant_id or have tenant context; never leak all tenants
+            tenant_param = request.GET.get('tenant_id') or request.GET.get('tenant')
+            if tenant_param:
+                base_filter = Q(tenant_id=tenant_param)
+            else:
+                return Response({'error': 'tenant_id requerido para superuser sin contexto'}, status=400)
     elif tenant:
         base_filter = Q(tenant=tenant)
+    else:
+        base_filter = Q(pk__isnull=True)
 
     if branch_id:
         base_filter = base_filter & Q(branch_id=branch_id)
