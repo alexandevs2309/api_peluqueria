@@ -296,37 +296,72 @@ class SaleViewSet(TenantScopedViewSet):
                     if quantity <= 0:
                         raise serializers.ValidationError(f"La cantidad debe ser mayor a 0")
                         
-                    price = Decimal(str(detail.get('price', 0)))
-                    if price < 0:
-                        raise serializers.ValidationError(f"El precio no puede ser negativo")
-                        
-                    total += quantity * price
-                    
-                    # Validar y BLOQUEAR stock si es producto
-                    if detail.get('content_type') == 'product':
+                    # Precio desde DB, no del cliente (previene tampering)
+                    content_type = detail.get('content_type')
+                    object_id_raw = detail.get('object_id')
+                    try:
+                        object_id = int(object_id_raw)
+                    except (ValueError, TypeError):
+                        raise serializers.ValidationError("ID de ítem inválido")
+
+                    tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+                    if content_type == 'product':
                         from apps.inventory_api.models import Product
                         try:
-                            object_id = int(detail.get('object_id'))
-                            # LOCK: Bloquear fila para actualización
-                            tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
                             product = Product.objects.select_for_update().get(id=object_id, tenant=tenant)
-                            
-                            if not product.is_active:
-                                raise serializers.ValidationError(f"El producto {product.name} no está activo")
-                            
-                            # Validar stock DESPUÉS del lock
-                            if product.stock < quantity:
-                                raise serializers.ValidationError(
-                                    f"Stock insuficiente para {product.name}. Disponible: {product.stock}, Solicitado: {quantity}"
-                                )
-                            
-                            # CRÍTICO: Actualizar stock DENTRO del lock
-                            product.stock -= quantity
-                            product.save()
-                            
-                            locked_products.append((product, quantity))
-                        except (Product.DoesNotExist, ValueError, TypeError):
+                        except Product.DoesNotExist:
                             raise serializers.ValidationError("Producto no encontrado o ID inválido")
+                        if not product.is_active:
+                            raise serializers.ValidationError(f"El producto {product.name} no está activo")
+                        db_price = product.price
+                        # Si el cliente envió precio, validar que coincida (tolerancia 0.01)
+                        client_price_raw = detail.get('price')
+                        if client_price_raw is not None:
+                            try:
+                                client_price = Decimal(str(client_price_raw))
+                                if abs(client_price - db_price) > Decimal('0.01'):
+                                    raise serializers.ValidationError(
+                                        f"Precio manipulado para {product.name}. Esperado: {db_price}"
+                                    )
+                            except (InvalidOperation, TypeError):
+                                raise serializers.ValidationError("Precio inválido")
+                        price = db_price
+                    elif content_type == 'service':
+                        from apps.services_api.models import Service
+                        try:
+                            service = Service.objects.get(id=object_id, tenant=tenant)
+                        except Exception:
+                            raise serializers.ValidationError("Servicio no encontrado o ID inválido")
+                        db_price = service.price
+                        client_price_raw = detail.get('price')
+                        if client_price_raw is not None:
+                            try:
+                                client_price = Decimal(str(client_price_raw))
+                                if abs(client_price - db_price) > Decimal('0.01'):
+                                    raise serializers.ValidationError(
+                                        f"Precio manipulado para {service.name}. Esperado: {db_price}"
+                                    )
+                            except (InvalidOperation, TypeError):
+                                raise serializers.ValidationError("Precio inválido")
+                        price = db_price
+                    else:
+                        raise serializers.ValidationError("Tipo de ítem inválido (product/service)")
+
+                    if price < 0:
+                        raise serializers.ValidationError("El precio no puede ser negativo")
+
+                    total += quantity * price
+
+                    # Validar y BLOQUEAR stock si es producto
+                    if content_type == 'product':
+                        # product ya está bloqueado arriba
+                        if product.stock < quantity:
+                            raise serializers.ValidationError(
+                                f"Stock insuficiente para {product.name}. Disponible: {product.stock}, Solicitado: {quantity}"
+                            )
+                        product.stock -= quantity
+                        product.save()
+                        locked_products.append((product, quantity))
                 except (InvalidOperation, TypeError):
                     raise serializers.ValidationError("Valores inválidos para cantidad o precio")
             
@@ -474,22 +509,8 @@ class SaleViewSet(TenantScopedViewSet):
                         ).order_by('created_at').first()
                         
                         if not sequence:
-                            existing_seq = NCFSequence.objects.filter(tenant=tenant, type=ncf_type).exists()
-                            if existing_seq:
-                                raise serializers.ValidationError(
-                                    f"Secuencia NCF agotada o vencida para tipo {ncf_type}."
-                                )
-                            from datetime import timedelta
-                            exp_date = timezone.now().date() + timedelta(days=730)
-                            sequence = NCFSequence.objects.create(
-                                tenant=tenant,
-                                type=ncf_type,
-                                prefix='B',
-                                start_sequence=1,
-                                end_sequence=99999999,
-                                current_sequence=1,
-                                expiration_date=exp_date,
-                                is_active=True
+                            raise serializers.ValidationError(
+                                f"No hay secuencia NCF activa para tipo {ncf_type}. Configure una secuencia autorizada por DGII."
                             )
                         
                         ncf = sequence.get_next_ncf()

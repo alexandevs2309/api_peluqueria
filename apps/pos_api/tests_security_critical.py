@@ -239,17 +239,19 @@ class DiscountValidationTests(TestCase):
         self.user = create_test_user("testuser3@test.com", tenant=self.tenant)
         _setup_plan(self.tenant)
         _setup_rbac(self.user, self.tenant)
+        from apps.services_api.models import Service
+        self.service = Service.objects.create(tenant=self.tenant, name="Service 1", price=100, duration=30)
         self.cash_register = CashRegister.objects.create(
             tenant=self.tenant, user=self.user, initial_cash=1000
         )
         self.client = APIClient()
         authenticate_client(self.client, self.user)
-    
+
     def _sale_data(self, **overrides):
         data = {
             'total': 100, 'discount': 0, 'status': 'confirmed',
             'cash_register': self.cash_register.id,
-            'details': [{'content_type': 'service', 'object_id': 1, 'quantity': 1, 'price': 100, 'name': 'Service 1'}],
+            'details': [{'content_type': 'service', 'object_id': self.service.id, 'quantity': 1, 'price': 100, 'name': 'Service 1'}],
             'payments': [{'amount': 100, 'method': 'cash'}],
         }
         data.update(overrides)
