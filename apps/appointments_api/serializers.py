@@ -151,6 +151,9 @@ class AppointmentSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(_('Appointment date and time cannot be in the past'))
         if value > timezone.now() + timedelta(days=365):
             raise serializers.ValidationError(_('Appointment date cannot be more than 1 year in the future'))
+        # Enforce 30-min slot alignment
+        if value.minute % 30 != 0 or value.second != 0 or value.microsecond != 0:
+            raise serializers.ValidationError(_('Appointment time must be aligned to 30-minute slots'))
         return value
 
     def get_client_name(self, obj):

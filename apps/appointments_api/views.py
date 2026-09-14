@@ -27,19 +27,29 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         qs = super().get_queryset()
         # Date range filter: default last 90 days for list, overridable via ?from=&to=
         if self.action == 'list':
+            from django.utils.dateparse import parse_datetime
+
             date_from = self.request.query_params.get('from')
             date_to = self.request.query_params.get('to')
             now = timezone.now()
             if date_from:
                 try:
-                    qs = qs.filter(date_time__gte=datetime.fromisoformat(date_from))
+                    dt = parse_datetime(date_from)
+                    if dt is not None:
+                        if timezone.is_naive(dt):
+                            dt = timezone.make_aware(dt)
+                        qs = qs.filter(date_time__gte=dt)
                 except (ValueError, TypeError):
                     pass
             else:
                 qs = qs.filter(date_time__gte=now - timedelta(days=90))
             if date_to:
                 try:
-                    qs = qs.filter(date_time__lte=datetime.fromisoformat(date_to))
+                    dt = parse_datetime(date_to)
+                    if dt is not None:
+                        if timezone.is_naive(dt):
+                            dt = timezone.make_aware(dt)
+                        qs = qs.filter(date_time__lte=dt)
                 except (ValueError, TypeError):
                     pass
         if self.action in ('list', 'retrieve', 'today'):
@@ -121,49 +131,51 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
         day_of_week = weekdays[local_datetime.weekday()]
 
-        # Validar que no hay conflictos de horario (solapamientos considerando duración)
-        day_start = local_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
+        # Validar que no hay conflictos de horario (solapamientos considerando duración) con lock
+        from django.db import transaction
 
-        conflicting_appointments = Appointment.objects.filter(
-            tenant=tenant,
-            stylist=stylist,
-            date_time__gte=day_start,
-            date_time__lt=day_end,
-            status__in=['scheduled', 'completed']
-        ).exclude(pk=getattr(serializer.instance, 'pk', None)).select_related('service')
+        with transaction.atomic():
+            day_start = local_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
 
-        new_duration = service.duration if service else 30
-        new_start = appointment_datetime
-        new_end = new_start + timedelta(minutes=new_duration)
+            conflicting_appointments = Appointment.objects.select_for_update().filter(
+                tenant=tenant,
+                stylist=stylist,
+                date_time__gte=day_start,
+                date_time__lt=day_end,
+                status__in=['scheduled', 'completed']
+            ).exclude(pk=getattr(serializer.instance, 'pk', None)).select_related('service')
 
-        for exist in conflicting_appointments:
-            exist_duration = exist.service.duration if exist.service else 30
-            exist_start = exist.date_time
-            exist_end = exist_start + timedelta(minutes=exist_duration)
+            new_duration = service.duration if service else 30
+            new_start = appointment_datetime
+            new_end = new_start + timedelta(minutes=new_duration)
 
-            # Verificar solapamiento de intervalos
-            if new_start < exist_end and exist_start < new_end:
-                raise serializers.ValidationError(
-                    f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
-                )
+            for exist in conflicting_appointments:
+                exist_duration = exist.service.duration if exist.service else 30
+                exist_start = exist.date_time
+                exist_end = exist_start + timedelta(minutes=exist_duration)
 
-        # Validar horario de trabajo
-        work_schedule = WorkSchedule.objects.filter(
-            employee__user=stylist,
-            employee__tenant=tenant,
-            day_of_week=day_of_week
-        ).first()
+                if new_start < exist_end and exist_start < new_end:
+                    raise serializers.ValidationError(
+                        f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
+                    )
 
-        if work_schedule:
-            appointment_time = local_datetime.time()
-            if not (work_schedule.start_time <= appointment_time <= work_schedule.end_time):
-                raise serializers.ValidationError(
-                    f"El estilista no trabaja en ese horario el {day_of_week}"
-                )
-        SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
+            # Validar horario de trabajo
+            work_schedule = WorkSchedule.objects.filter(
+                employee__user=stylist,
+                employee__tenant=tenant,
+                day_of_week=day_of_week
+            ).first()
 
-        serializer.save(**save_kwargs)
+            if work_schedule:
+                appointment_time = local_datetime.time()
+                if not (work_schedule.start_time <= appointment_time <= work_schedule.end_time):
+                    raise serializers.ValidationError(
+                        f"El estilista no trabaja en ese horario el {day_of_week}"
+                    )
+            SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
+
+            serializer.save(**save_kwargs)
 
     def perform_update(self, serializer):
         self.perform_create(serializer)
