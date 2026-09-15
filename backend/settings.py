@@ -64,6 +64,11 @@ ALLOWED_HOSTS = env.list(
 )
 if DEBUG:
     ALLOWED_HOSTS.extend(['web', 'api_peluqueria-web-1', 'testserver'])
+else:
+    # Render asigna subdominios *.onrender.com que no están en ALLOWED_HOSTS
+    # (health checks y +1 domain). Los sufijos con punto cubren subdomínios en Django.
+    if '.onrender.com' not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append('.onrender.com')
 
 FRONTEND_URL = env(
     'FRONTEND_URL',

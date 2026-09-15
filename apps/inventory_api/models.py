@@ -86,9 +86,9 @@ class Product(models.Model):
             models.Index(fields=['tenant', 'sku']),
             models.Index(fields=['tenant', 'is_active']),
             models.Index(fields=['tenant', 'branch', 'is_active']),
-            models.Index(fields=['tenant', 'is_active', 'stock', 'min_stock']),
-            models.Index(fields=['tenant', 'barcode']),
-            models.Index(fields=['tenant', 'category']),
+            models.Index(fields=['tenant', 'is_active', 'stock', 'min_stock'], name='inv_prod_tenant_stock_idx'),
+            models.Index(fields=['tenant', 'barcode'], name='inv_prod_tenant_barcode_idx'),
+            models.Index(fields=['tenant', 'category'], name='inv_prod_tenant_cat_idx'),
         ]
 
     @property

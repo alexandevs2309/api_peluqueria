@@ -29,10 +29,10 @@ class Client(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=['tenant', 'full_name']),
-            models.Index(fields=['tenant', 'branch']),
-            models.Index(fields=['tenant', 'is_active']),
-            models.Index(fields=['tenant', 'birthday']),
+            models.Index(fields=['tenant', 'full_name'], name='clients_cl_tenant__f1a5a3_idx'),
+            models.Index(fields=['tenant', 'branch'], name='clients_cl_tenant__b8c7d2_idx'),
+            models.Index(fields=['tenant', 'is_active'], name='clients_cl_tenant__a3e1f9_idx'),
+            models.Index(fields=['tenant', 'birthday'], name='clients_cl_tenant__c9d2e1_idx'),
         ]
 
     def __str__(self):
