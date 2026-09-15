@@ -9,9 +9,9 @@ router.register(r'suppliers', SupplierViewSet)
 router.register(r'stock-movements', StockMovementViewSet)
 
 urlpatterns = [
-    path('', include(router.urls)),
     path('alerts/low-stock/', low_stock_alerts, name='low-stock-alerts'),
     path('categories/', categories_list, name='categories'),
     path('categories/<int:pk>/', category_detail, name='category-detail'),
     path('products/low-stock/', low_stock_products, name='low-stock'),
+    path('', include(router.urls)),
 ]
