@@ -67,9 +67,12 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     def validate_name(self, value):
         request = self.context.get('request')
-        if request and hasattr(request, 'tenant') and request.tenant:
+        tenant = None
+        if request:
+            tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        if tenant:
             branch = self.initial_data.get('branch')
-            qs = Service.objects.filter(name__iexact=value, tenant=request.tenant, branch_id=branch)
+            qs = Service.objects.filter(name__iexact=value, tenant=tenant, branch_id=branch)
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
@@ -82,8 +85,13 @@ class ServiceSerializer(serializers.ModelSerializer):
         categories = validated_data.pop('categories', None)
         image_file = validated_data.pop('image', None)
         request = self.context.get('request')
-        if request and hasattr(request, 'tenant') and request.tenant and 'tenant' not in validated_data:
-            validated_data['tenant'] = request.tenant
+        tenant = None
+        if request:
+            tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        if tenant and 'tenant' not in validated_data:
+            validated_data['tenant'] = tenant
+        if 'tenant' not in validated_data:
+            raise serializers.ValidationError({"tenant": ["Se requiere un establecimiento para crear el servicio."]})
         try:
             instance = super().create(validated_data)
         except IntegrityError:
