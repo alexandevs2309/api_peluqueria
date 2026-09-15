@@ -92,7 +92,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 if isinstance(user_data, dict) and user_data.get('email'):
                     email = user_data['email'].strip().lower()
                     full_name = user_data.get('full_name', '').strip()
-                    password = user_data.get('password') or 'Auron123!'
+                    password = user_data.get('password', '').strip()
+                    if not password:
+                        raise serializers.ValidationError({"user": ["La contraseña inicial es obligatoria para crear el empleado."]})
+                    if len(password) < 8:
+                        raise serializers.ValidationError({"user": ["La contraseña debe tener al menos 8 caracteres."]})
                     
                     user_obj = User.objects.filter(email=email, tenant=tenant).first() if tenant else User.objects.filter(email=email).first()
                     if user_obj:

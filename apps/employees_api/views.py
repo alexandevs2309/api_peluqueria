@@ -262,6 +262,20 @@ class EmployeeViewSet(TenantScopedViewSet):
         serializer = self.get_serializer(employee)
         return Response(serializer.data)
 
+    def destroy(self, request, *args, **kwargs):
+        employee = self.get_object()
+        employee.is_active = False
+        employee.save(update_fields=['is_active', 'updated_at'])
+        try:
+            user_obj = employee.user
+            if user_obj and not user_obj.is_superuser:
+                user_obj.is_active = False
+                user_obj.role = 'CLIENT_STAFF'
+                user_obj.save(update_fields=['is_active', 'role'])
+        except Exception:
+            pass
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     @action(detail=True, methods=['post'])
     def assign_service(self, request, pk=None):
         employee = self.get_object()
@@ -275,19 +289,27 @@ class EmployeeViewSet(TenantScopedViewSet):
     def assign_services(self, request, pk=None):
         employee = self.get_object()
         service_ids = request.data.get('service_ids', [])
-        
-        # Limpiar servicios existentes
-        ServiceEmployee.objects.filter(employee=employee).delete()
-        
-        # Asignar nuevos servicios
+        if not isinstance(service_ids, list):
+            return Response({'service_ids': ['Debe proporcionar una lista de ids de servicios.']}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.services_api.models import Service
+        valid_ids = set()
         for service_id in service_ids:
-            try:
-                from apps.services_api.models import Service
-                service = Service.objects.get(id=service_id, is_active=True, tenant=self.request.tenant)
-                ServiceEmployee.objects.create(employee=employee, service=service)
-            except Service.DoesNotExist:
-                continue
-                
+            if isinstance(service_id, str) and not str(service_id).isdigit():
+                return Response({'service_ids': [f'El id "{service_id}" no es válido.']}, status=status.HTTP_400_BAD_REQUEST)
+            valid_ids.add(int(service_id))
+
+        with transaction.atomic():
+            ServiceEmployee.objects.filter(employee=employee).delete()
+            servicios = Service.objects.filter(id__in=valid_ids, is_active=True, tenant=self.request.tenant)
+            encontrados = {s.id for s in servicios}
+            faltantes = valid_ids - encontrados
+            if faltantes:
+                raise ValidationError({'service_ids': [f'Los servicios {sorted(faltantes)} no existen o no pertenecen a este negocio.']})
+            ServiceEmployee.objects.bulk_create(
+                [ServiceEmployee(employee=employee, service=s) for s in servicios]
+            )
+
         return Response({'detail': 'Servicios asignados correctamente'})
 
     @action(detail=True, methods=['get'])
