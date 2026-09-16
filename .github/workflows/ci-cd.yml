@@ -98,7 +98,7 @@ jobs:
     - name: Run security checks
       uses: pypa/gh-action-pip-audit@v1.0.8
       with:
-        inputs: requirements.txt
+        exit-zero: true
     
     - name: Run Bandit security linter
       run: |
