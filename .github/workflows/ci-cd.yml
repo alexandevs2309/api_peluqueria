@@ -148,7 +148,7 @@ jobs:
 
         for i in $(seq 1 $MAX_RETRIES); do
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-            --max-time 10 "${API_URL}/healthz/")
+            --max-time 10 "${API_URL}/api/healthz/")
           echo "Attempt $i: HTTP $HTTP_STATUS"
           if [ "$HTTP_STATUS" = "200" ]; then
             echo "Health check passed"
@@ -164,7 +164,7 @@ jobs:
       run: |
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
           --max-time 10 \
-          "${{ secrets.PRODUCTION_API_URL }}/schema/")
+          "${{ secrets.PRODUCTION_API_URL }}/api/schema/")
         if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "403" ]; then
           echo "API schema endpoint reachable (HTTP $HTTP_STATUS)"
         else
