@@ -112,36 +112,8 @@ jobs:
         name: security-report
         path: bandit-report.json
 
-  build:
-    needs: [test, security]
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master'
-    
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-    
-    - name: Login to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
-    
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: |
-          ${{ secrets.DOCKER_USERNAME }}/peluqueria-api:latest
-          ${{ secrets.DOCKER_USERNAME }}/peluqueria-api:${{ github.sha }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-
   deploy:
-    needs: build
+    needs: [test, security]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/master'
     environment: production
@@ -149,6 +121,11 @@ jobs:
     steps:
     - name: Trigger Render deploy
       run: |
+        if [ -z "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
+          echo "RENDER_DEPLOY_HOOK_URL secret is not set. Create a Deploy Hook in Render"
+          echo "(Service -> Settings -> Deploy Hook) and add it as a repository secret."
+          exit 1
+        fi
         RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
           -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}")
         echo "Render response: $RESPONSE"
