@@ -306,7 +306,7 @@ def test_branch_limit_enforcement_for_basic_plan():
     
     with pytest.raises(ValueError) as exc:
         Branch.objects.create(name="Sucursal Secundaria", tenant=tenant)
-    assert "no permite" in str(exc.value)
+    assert "solo permite 1 sucursal" in str(exc.value)
 
 @pytest.mark.django_db
 def test_branch_limit_enforcement_for_business_plan():

@@ -106,7 +106,7 @@ class TestTenantViewSet:
         response = api_client.post(url, tenant_data)
         
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert "subdomain" in response.data
+        assert "subdomain" in response.data["details"]
     
     def test_retrieve_tenant(self, api_client, admin_user, tenant):
         api_client.force_authenticate(user=admin_user)

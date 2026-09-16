@@ -57,7 +57,7 @@ def test_list_roles_as_non_admin(client_user):
 
     response = client.get(reverse('role-list'))
     assert response.status_code == 403
-    assert 'detail' in response.data
+    assert 'detail' in response.data['details']
 
     assert not AdminActionLog.objects.filter(user=client_user, action='List roles').exists()
 
@@ -86,7 +86,7 @@ def test_create_role_as_admin(admin_user):
 
     permission = Permission.objects.first()
     data = {
-        'name': 'Manager',
+        'name': 'Manager-Special',
         'description': 'Role for managers',
     }
     if permission:
@@ -94,7 +94,7 @@ def test_create_role_as_admin(admin_user):
 
     response = client.post(reverse('role-list'), data, format='json')
     assert response.status_code == 201
-    role = Role.objects.get(name='Manager')
+    role = Role.objects.get(name='Manager-Special')
     assert role.description == 'Role for managers'
     if permission:
         assert role.permissions.exists()
@@ -148,7 +148,7 @@ def test_roles_unauthenticated():
     client = APIClient()
     response = client.get(reverse('role-list'))
     assert response.status_code == 401
-    assert 'detail' in response.data
+    assert 'detail' in response.data['details']
 
 @pytest.mark.django_db
 def test_retrieve_role_as_non_admin(client_user):

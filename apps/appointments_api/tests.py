@@ -431,9 +431,11 @@ def test_cross_tenant_cannot_create_with_other_client(authenticated_user, other_
 
 @pytest.mark.django_db
 def test_create_appointment_service_not_offered(client_factory, service_factory, stylist, stylist_role):
+    from apps.services_api.models import ServiceEmployee
     stylist_user, employee = stylist
     client_obj = client_factory.create()
     service = service_factory.create()
+    ServiceEmployee.objects.create(employee=employee, service=service_factory.create())
 
     appointment_datetime = timezone.localtime(timezone.now() + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0)
     naive_dt = appointment_datetime.replace(tzinfo=None)

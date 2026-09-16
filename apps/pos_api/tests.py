@@ -42,8 +42,8 @@ def test_sale_linked_to_appointment(authenticated_user, client, client_factory, 
     user.is_superuser = True
     user.save()
     CashRegister.objects.create(user=user, tenant=user.tenant, is_open=True, opened_at=timezone.now(), initial_cash=0)
-    client_obj = client_factory.create()
-    service = service_factory()
+    client_obj = client_factory.create(user=user, tenant=user.tenant)
+    service = service_factory(price=120.0)
     stylist_user, employee = stylist
 
     # Crear cita programada

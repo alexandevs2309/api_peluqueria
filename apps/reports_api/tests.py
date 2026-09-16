@@ -1,9 +1,8 @@
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
-from django.utils import timezone
-from apps.pos_api.models import Sale
 
 
 @pytest.fixture
@@ -17,84 +16,79 @@ def admin_user(db, django_user_model):
     return user
 
 
+@pytest.fixture
+def reports_user(db):
+    """Usuario con permisos de reportes y plan con features reports/export_reports."""
+    from django.contrib.auth.models import Permission
+    from apps.roles_api.models import Role, UserRole
+    from apps.subscriptions_api.models import SubscriptionPlan
+    from apps.auth_api.factories import UserFactory
+
+    plan, _ = SubscriptionPlan.objects.get_or_create(
+        name="report-test-plan",
+        defaults={
+            "price": 0,
+            "duration_month": 1,
+            "max_employees": 5,
+            "features": {"reports": True, "export_reports": True},
+        },
+    )
+    if plan.features != {"reports": True, "export_reports": True}:
+        plan.features = {"reports": True, "export_reports": True}
+        plan.save(update_fields=["features"])
+
+    role, _ = Role.objects.get_or_create(name="a_report_test_role")
+    perms = Permission.objects.filter(
+        content_type__app_label="reports_api",
+        codename__in=["view_sales_reports", "view_employee_reports", "view_kpi_dashboard"],
+    )
+    role.permissions.add(*perms)
+
+    user = UserFactory(is_email_verified=True)
+    UserRole.objects.create(user=user, role=role, tenant=user.tenant)
+    user.tenant.subscription_plan = plan
+    user.tenant.save(update_fields=["subscription_plan"])
+
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return user, client
+
 
 @pytest.mark.django_db
-def test_sales_report(authenticated_user):
-    user, client = authenticated_user
-
-    # Crear plan con feature reports_enabled
-    from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription
-    from django.utils import timezone
-
-    plan = SubscriptionPlan.objects.create(
-        name="Report Plan",
-        price=0,
-        duration_month=1,
-        max_employees=5,
-        features={"reports_enabled": True}
-    )
-    UserSubscription.objects.create(
-        user=user,
-        plan=plan,
-        start_date=timezone.now() - timezone.timedelta(days=1),
-        end_date=timezone.now() + timezone.timedelta(days=29),
-        is_active=True,
-        auto_renew=True
-    )
-
-    client.force_authenticate(user=user)
+def test_sales_report(reports_user):
+    _, client = reports_user
     response = client.get(reverse("sales-report"))
     assert response.status_code == status.HTTP_200_OK
-    assert "date" in response.data
     assert "total_sales" in response.data
-    assert "transaction_count" in response.data
+    assert "monthly_sales" in response.data
+    assert "sales_by_day" in response.data
+    assert "top_services" in response.data
+
 
 @pytest.mark.django_db
-def test_appointments_report(authenticated_user):
-    user, client = authenticated_user
-    client.force_authenticate(user=user)
-    response = client.get(reverse("appointments-report"))
+def test_appointments_report(reports_user):
+    _, client = reports_user
+    now = timezone.now()
+    response = client.get(
+        reverse("calendar-data"),
+        {"start": (now - __import__('datetime').timedelta(days=30)).isoformat(), "end": now.isoformat()},
+    )
     assert response.status_code == status.HTTP_200_OK
-    assert "date" in response.data
-    assert "total_appointments" in response.data
+    assert isinstance(response.data, list)
+
 
 @pytest.mark.django_db
-def test_employee_performance_report(authenticated_user):
-    user, client = authenticated_user
-    client.force_authenticate(user=user)
-    response = client.get(reverse("employee-performance-report"))
+def test_employee_performance_report(reports_user):
+    _, client = reports_user
+    response = client.get(reverse("employee-report"))
     assert response.status_code == status.HTTP_200_OK
+    assert "total_employees" in response.data
 
 
 @pytest.mark.django_db
 def test_report_export_invalid_format(admin_user):
     client = APIClient()
     client.force_authenticate(user=admin_user)
-    url = reverse("export-reports") + "?format=invalid"
+    url = reverse("export-report") + "?type=invalid"
     response = client.get(url)
-
-    assert response.status_code in [400, 404]  # Bad request or not found
-    
-# @pytest.mark.django_db
-# def test_report_export_csv(admin_user):
-#     client = APIClient()
-#     client.force_authenticate(user=admin_user)
-#     url = reverse("export-reports") + "?format=csv"
-#     print(f"Testing URL: {url}")
-
-#     Sale.objects.create(
-#         user=admin_user,
-#         date_time=timezone.now(),
-#         total=100.00,
-#         paid=100.00,
-#         payment_method='cash'
-#     )
-
-#     response = client.get(url, follow=True)  # Follow redirects
-
-#     assert response.status_code == status.HTTP_200_OK
-#     assert response["Content-Type"] in ["text/csv", "application/csv"]
-#     content = response.content.decode("utf-8")
-#     assert "ID" in content
-#     assert "Total" in content
-#     assert "Método de pago" in content
+    assert response.status_code == status.HTTP_400_BAD_REQUEST

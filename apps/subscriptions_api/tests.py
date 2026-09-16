@@ -538,35 +538,17 @@ def test_renew_subscription_paypal_create_order_infers_provider_from_paypal_acti
         name="standard", defaults={"price": 25, "duration_month": 1}
     )
 
-    class FakePaypalResponse:
-        status_code = 201
-
-        def json(self):
-            return {
-                "id": "ORDER-123",
-                "links": [
-                    {"rel": "approve", "href": "https://paypal.test/approve/ORDER-123"}
-                ],
-            }
-
-        @property
-        def text(self):
-            return '{"id":"ORDER-123"}'
-
-    def fake_paypal_token(self):
+    def fake_create_order(self, user, tenant, plan, months, billing_interval, auto_renew):
         return ({
-            "token": "paypal-token",
-            "config": {
-                "sandbox": True,
-                "base_url": "https://api.sandbox.paypal.com",
-            },
+            "order_id": "ORDER-123",
+            "approve_url": "https://paypal.test/approve/ORDER-123",
+            "amount": "25.00",
+            "sandbox": True,
         }, None)
 
-    def fake_requests_post(*args, **kwargs):
-        return FakePaypalResponse()
-
-    monkeypatch.setattr(subscription_views.RenewSubscriptionView, "_get_paypal_access_token", fake_paypal_token)
-    monkeypatch.setattr(subscription_views.requests, "post", fake_requests_post)
+    monkeypatch.setattr(
+        "apps.payments_api.services.PayPalService.create_order", fake_create_order
+    )
 
     client = APIClient()
     client.force_authenticate(user=user)
