@@ -32,6 +32,7 @@ from .serializers import (
     EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input,
     ResendVerificationSerializer
 )
+from .cookie_utils import set_auth_cookies
 from .role_utils import (
     get_effective_role_api,
     get_effective_role_name,
@@ -50,7 +51,6 @@ from .models import LoginAudit, AccessLog, ActiveSession
 from .utils import get_client_ip, get_user_agent, get_client_jti
 from .settings_policy import is_mfa_globally_enabled, get_jwt_expiry_minutes
 from .login_policy import is_login_locked_out, get_login_lockout_message
-from .cookie_utils import set_auth_cookies
 from apps.settings_api.utils import maybe_auto_upgrade_user_limit
 
 from django.utils.timezone import now
@@ -392,27 +392,14 @@ class LoginView(generics.GenericAPIView):
             }
 
         response = Response(response_data)
-        response.set_cookie(
-            'access_token',
-            value=access_token,
-            httponly=True,
-            secure=not settings.DEBUG,
-            samesite='Strict',
-            max_age=get_jwt_expiry_minutes() * 60,
-            path='/'
+        return set_auth_cookies(
+            response,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            access_max_age=get_jwt_expiry_minutes() * 60,
+            refresh_max_age=24 * 60 * 60,
+            tenant_id=tenant.id if tenant else None,
         )
-        response.set_cookie(
-            'refresh_token',
-            value=refresh_token,
-            httponly=True,
-            secure=not settings.DEBUG,
-            samesite='Strict',
-            max_age=24 * 60 * 60,
-            path='/'
-        )
-        if tenant:
-            response.set_cookie('tenant_id', str(tenant.id), httponly=False, secure=not settings.DEBUG, samesite='Strict')
-        return response
 
 class LogoutView(APIView):
     permission_classes = [AllowAny]
