@@ -8,25 +8,59 @@ import uuid
 
 class EncryptedFieldMixin:
     """
-    Mixin que 'encripta' campos usando django.core.signing (HMAC + compresion).
+    Mixin que cifra campos sensibles con Fernet (cryptography).
 
-    ADVERTENCIA TECNICA: django.core.signing NO es cifrado simetrico real.
-    Proporciona integridad (HMAC-SHA256) pero no confidencialidad verdadera:
-    el valor base64 es reversible si se tiene la SECRET_KEY.
-    Para cifrado real usar django-encrypted-model-fields o cryptography.Fernet.
-    Pendiente migrar antes de almacenar claves de produccion de terceros.
+    - En produccion FERNET_KEY es obligatoria (validado en backend/settings.py),
+      por lo que nunca se persiste texto plano.
+    - Los valores antiguos cifrados con django.core.signing se siguen leyendo
+      via fallback y se re-cifran a Fernet en el siguiente guardado.
     """
+
+    FERNET_PREFIX = 'gAAAAA'
+
+    @staticmethod
+    def _fernet():
+        from cryptography.fernet import Fernet
+        key = getattr(settings, 'FERNET_KEY', None)
+        if not key:
+            if not getattr(settings, 'DEBUG', True):
+                raise RuntimeError(
+                    'FERNET_KEY no esta configurada: no se permite guardar '
+                    'credenciales de pago en texto plano en produccion.'
+                )
+            return None
+        if isinstance(key, str):
+            key = key.encode()
+        return Fernet(key)
 
     @staticmethod
     def encrypt(value):
         if not value:
             return value
+        fernet = EncryptedFieldMixin._fernet()
+        if fernet is not None:
+            try:
+                payload = value.encode() if isinstance(value, str) else value
+                return fernet.encrypt(payload).decode()
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                if not getattr(settings, 'DEBUG', True):
+                    raise RuntimeError('No se pudo cifrar la credencial: %s' % exc) from exc
+        # Fallback dev / valores previos: firmado (integridad), nunca texto plano.
         return signing.dumps(value, salt="payment_provider", compress=True)
 
     @staticmethod
     def decrypt(value):
         if not value:
             return value
+        if value.startswith(EncryptedFieldMixin.FERNET_PREFIX):
+            fernet = EncryptedFieldMixin._fernet()
+            if fernet is not None:
+                try:
+                    return fernet.decrypt(value.encode()).decode()
+                except Exception:
+                    return value
         try:
             return signing.loads(value, salt="payment_provider")
         except (signing.BadSignature, signing.SignatureExpired):
@@ -34,9 +68,13 @@ class EncryptedFieldMixin:
 
     @staticmethod
     def _is_signed(value):
-        """Check if a value appears to be a signed string.
-        Uses structural validation to avoid double signing after key rotation.
+        """Check if a value is already protected (Fernet o firmado).
+        Evita doble cifrado tras rotacion de clave / migracion.
         """
+        if not value:
+            return False
+        if value.startswith(EncryptedFieldMixin.FERNET_PREFIX):
+            return True
         # Structural validation: signed strings contain exactly two ':' separators
         if value.count(":") == 2:
             return True

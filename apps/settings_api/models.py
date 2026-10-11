@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings as django_settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.core import signing
 from django.utils.translation import gettext_lazy as _
@@ -175,15 +176,48 @@ class SystemSettings(models.Model):
         verbose_name_plural = _("Configuraciones del Sistema")
 
     @staticmethod
+    def _fernet():
+        from cryptography.fernet import Fernet
+        key = getattr(django_settings, 'FERNET_KEY', None)
+        if not key:
+            if not getattr(django_settings, 'DEBUG', True):
+                raise RuntimeError(
+                    'FERNET_KEY no esta configurada: no se permite guardar '
+                    'configuracion sensible en texto plano en produccion.'
+                )
+            return None
+        if isinstance(key, str):
+            key = key.encode()
+        return Fernet(key)
+
+    @staticmethod
     def _encrypt(value):
         if not value:
             return value
+        fernet = SystemSettings._fernet()
+        if fernet is not None:
+            try:
+                payload = value.encode() if isinstance(value, str) else value
+                return fernet.encrypt(payload).decode()
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                if not getattr(django_settings, 'DEBUG', True):
+                    raise RuntimeError('No se pudo cifrar configuracion sensible: %s' % exc) from exc
+        # Fallback desarrollo / valores previos: firmado (integridad), nunca texto plano.
         return signing.dumps(value, salt="system_settings", compress=True)
 
     @staticmethod
     def _decrypt(value):
         if not value:
             return value
+        if value.startswith('gAAAAA'):
+            fernet = SystemSettings._fernet()
+            if fernet is not None:
+                try:
+                    return fernet.decrypt(value.encode()).decode()
+                except Exception:
+                    return value
         try:
             return signing.loads(value, salt="system_settings")
         except (signing.BadSignature, signing.SignatureExpired):
@@ -192,11 +226,12 @@ class SystemSettings(models.Model):
     @staticmethod
     def _is_encrypted(value):
         """Determine if a value appears to be encrypted.
-        This check first verifies the structural pattern of a signed string
-        (payload:timestamp:signature). If it matches, we treat it as encrypted
-        even if the signature cannot be validated due to key rotation.
+        Reconoce tokens Fernet (prefijo gAAAAA) y valores firmados con
+        django.core.signing (payload:timestamp:signature).
         """
         if not value:
+            return True
+        if value.startswith('gAAAAA'):
             return True
         # Structural validation: signed strings contain exactly two ':' separators
         if value.count(":") == 2:

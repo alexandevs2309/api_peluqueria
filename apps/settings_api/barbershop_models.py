@@ -2,14 +2,30 @@ from django.db import models
 from django.conf import settings as django_settings
 
 
+def _is_production():
+    """En produccion nunca se permite persistir credenciales en texto plano."""
+    return not getattr(django_settings, 'DEBUG', True)
+
+
 def _encrypt_value(value):
-    """Encriptar valor sensible con Fernet."""
+    """Encriptar valor sensible con Fernet.
+
+    Politica de seguridad: en produccion, si falta FERNET_KEY o falla el
+    cifrado, se lanza RuntimeError (nunca se guarda texto plano en silencio).
+    En desarrollo, sin clave, se mantiene el valor original para no romper
+    flujos locales (no hay secretos reales en dev).
+    """
     if not value:
         return value
     try:
         from cryptography.fernet import Fernet
         key = getattr(django_settings, 'FERNET_KEY', None)
         if not key:
+            if _is_production():
+                raise RuntimeError(
+                    'FERNET_KEY no esta configurada: no se permite guardar '
+                    'credenciales en texto plano en produccion.'
+                )
             return value
         if isinstance(key, str):
             key = key.encode()
@@ -17,7 +33,11 @@ def _encrypt_value(value):
         if isinstance(value, str):
             value = value.encode()
         return f.encrypt(value).decode()
-    except Exception:
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        if _is_production():
+            raise RuntimeError('No se pudo cifrar el valor sensible: %s' % exc) from exc
         return value
 
 

@@ -720,12 +720,25 @@ if not DEBUG:
             return True
         return any(v.startswith(p) or v == p for p in _PLACEHOLDER_PREFIXES)
 
-    _required_prod_vars = ['SECRET_KEY']
+    _required_prod_vars = ['SECRET_KEY', 'FERNET_KEY']
     for _var in _required_prod_vars:
         if _is_placeholder(env(_var, default='')):
             raise RuntimeError(
                 'Variable requerida en produccion no definida o con placeholder: ' + _var
             )
+
+    # FERNET_KEY debe ser una clave Fernet valida (32 bytes base64url): sin ella,
+    # las credenciales de pago se persistirian en texto plano (hallazgo BE-02).
+    try:
+        from cryptography.fernet import Fernet as _Fernet
+        _fernet_key_bytes = FERNET_KEY.encode() if isinstance(FERNET_KEY, str) else FERNET_KEY
+        _Fernet(_fernet_key_bytes)
+    except Exception:
+        raise RuntimeError(
+            'FERNET_KEY no es una clave Fernet valida. Genera una con: '
+            'python -c "from cryptography.fernet import Fernet; '
+            'print(Fernet.generate_key().decode())"'
+        )
 
     _stripe_enabled_in_env = bool(STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY)
     _paypal_enabled_in_env = bool(PAYPAL_CLIENT_ID and PAYPAL_SECRET)

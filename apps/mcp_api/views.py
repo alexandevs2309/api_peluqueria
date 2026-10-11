@@ -4,9 +4,11 @@ import re
 from datetime import date, timedelta
 
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import BasePermission, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
+
+from apps.auth_api.role_utils import get_effective_role_api
 
 from . import tools
 from .llm import SYSTEM_PROMPT_MCP, _resolve_provider, run_tool_chat
@@ -89,15 +91,33 @@ TOOL_DEFINITIONS = [
 ]
 
 
+class McpIsTenantAdmin(BasePermission):
+    """Acceso MCP restringido a administradores (plataforma o del tenant).
+
+    Los tools de MCP exponen datos de negocio (ventas, clientes, nómina,
+    inventario) a nivel de tenant. Antes cualquier rol autenticado podía
+    consultarlos. Deny-by-default: solo CLIENT_ADMIN / SUPER_ADMIN.
+    """
+
+    def has_permission(self, request, view):
+        if not request.user or not request.user.is_authenticated:
+            return False
+        if getattr(request.user, 'is_superuser', False):
+            return True
+        tenant = getattr(request, 'tenant', None)
+        role = get_effective_role_api(request.user, tenant=tenant)
+        return role in ('CLIENT_ADMIN', 'SUPER_ADMIN')
+
+
 class McpToolsView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [McpIsTenantAdmin]
 
     def get(self, request):
         return Response({"tools": TOOL_DEFINITIONS})
 
 
 class McpCallView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [McpIsTenantAdmin]
 
     def post(self, request):
         tool_name = request.data.get("tool")
@@ -223,7 +243,7 @@ FRIENDLY_NO_INTENT = (
 # ---------------------------------------------------------------------------
 
 class McpChatView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [McpIsTenantAdmin]
 
     def post(self, request):
         message = request.data.get("message", "").strip()
