@@ -210,5 +210,17 @@ El backend **no** corre en Render **ni en Docker**. Es una instalación **nativa
 
 **Pendientes (decididos por el usuario):**
 - **V2** — rotación de la contraseña root del VPS (quedó expuesta) + endurecer SSH (`PasswordAuthentication no`): **lo hará el usuario**.
-- **V3b** — copia offsite cifrada: requiere cuenta de almacenamiento (S3/Backblaze); el script ya la soporta vía rclone.
+- **V3b** — copia offsite cifrada: **rclone v1.60.1 ya instalado** en el VPS; pendiente crear bucket/Application Key en **Backblaze B2** y configurar el remote (ver A.4).
 - Guardar la clave de backups `/root/.auron_backup_key` y `FERNET_KEY` en un gestor de secretos.
+
+### A.4 Seguimiento — frontend (google fonts, dependencias) y hallazgos posteriores
+
+| Ítem | Acción | Verificación |
+|---|---|---|
+| **Fuentes CSP / Service Worker** | Fuente **Outfit auto-hospedada** (`public/fonts/outfit-*.woff2`) con `@font-face` locales; se eliminó el `@import` de Google Fonts y el preconnect; CSP añadió `fonts.gstatic.com` en `connect-src` (mitigación previa) | CSS desplegado `styles-KYVLP6IB.css`: 2 `@font-face` → `/fonts/`, **0** referencias a `gstatic`/`googleapis`; `/fonts/outfit-latin.woff2` HTTP 200; navegador: **0 errores, 0 violaciones CSP** (commits `528efcd`, `c7132ac`) |
+| **Dependencias frontend (npm audit)** | Angular **21.2.25** (parche), swiper **12.2.0**, dompurify **3.4.16**, nanoid **3.3.20**, source-map-js **1.2.2**, postcss **8.5.29**, `@angular/cli`/`build` **21.2.26**, `@angular/cdk` **21.2.14** (máx. publicado) | Build local `ng build` OK y desplegado (`main-C2GFR4BW.js`, `styles-KYVLP6IB.css`); `npm audit`: de **34 vulnerabilidades a 1 familia residual** |
+| **Residual dev-only** | `braces` (stack-exhaustion DoS) vía `chokidar` → `karma` (runner de tests de desarrollo) | **No entra al bundle de producción**; el fix exige `karma@4` (breaking). Aceptado como riesgo residual o pendiente de migrar `ng test` |
+| **SW auto-actualización** | `ngsw-worker.js` cambió de hash con el nuevo `@angular/service-worker@21.2.25` | Los Service Workers ya instalados se actualizan en la próxima visita y descartan la CSP/versión viejas |
+| **YouTube metadata 503** | El endpoint devuelve 503 **intencional**: `YOUTUBE_API_KEY` ausente en `/opt/auron-api/.env` | **No es regresión**; pendiente generar API key de YouTube Data v3 y añadirla al `.env` + reiniciar `auron-api` |
+
+**Commits de seguimiento:** `api_peluqueria` `f0041dc` (tanda 1 + informe + requirements C1); `auron-tailadmin` `528efcd` (fuentes Outfit locales) y `c7132ac` (dependencias + lock actualizados).
