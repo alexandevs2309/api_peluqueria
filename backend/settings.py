@@ -103,6 +103,7 @@ PUBLIC_FRONTEND_ORIGIN_DEFAULTS = [
     'https://frontend-app.auron-suites.workers.dev',
     'https://app.auronsuite.com',
     'https://www.app.auronsuite.com',
+    'https://beauty.auronsuite.com',
 ]
 
 
