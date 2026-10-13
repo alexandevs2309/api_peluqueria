@@ -1284,7 +1284,25 @@ class CashRegisterViewSet(TenantScopedViewSet):
             if user.employee_profile.branch_id:
                 branch_id = user.employee_profile.branch_id
                 
-        serializer.save(user=self.request.user, tenant=tenant, branch_id=branch_id)
+        from django.db import IntegrityError
+        # GUARD: una sola caja abierta por usuario/tenant/sucursal.
+        # Sin esto, "Abrir caja" con una caja ya abierta moría con 500
+        # (UniqueViolation) en vez de devolver un 400 claro.
+        open_filters = {'tenant': tenant, 'user': user, 'is_open': True}
+        if branch_id:
+            open_filters['branch_id'] = branch_id
+        if CashRegister.objects.filter(**open_filters).exists():
+            raise serializers.ValidationError(
+                {'error': 'Ya tienes una caja abierta. Ciérrala antes de abrir otra.'}
+            )
+
+        try:
+            serializer.save(user=self.request.user, tenant=tenant, branch_id=branch_id)
+        except IntegrityError:
+            # Doble submit concurrente: la constraint deja una sola abierta.
+            raise serializers.ValidationError(
+                {'error': 'Ya tienes una caja abierta. Ciérrala antes de abrir otra.'}
+            )
 
     @action(detail=False, methods=['get'])
     def current(self, request):
