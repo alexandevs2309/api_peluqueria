@@ -440,3 +440,18 @@ class CouponValidationSerializer(serializers.Serializer):
 
     def validate_code(self, value):
         return value.strip().upper()
+
+
+class PrinterSerializer(serializers.Serializer):
+    """Serializador para información de impresoras disponibles"""
+    id = serializers.CharField()
+    name = serializers.CharField()
+    type = serializers.ChoiceField(choices=[('usb', 'USB'), ('lan', 'LAN'), ('windows', 'Windows')])
+    path = serializers.CharField(required=False, allow_blank=True)  # COM3, IP:9100, etc.
+    status = serializers.ChoiceField(choices=[('online', 'Online'), ('offline', 'Offline'), ('unknown', 'Unknown')])
+    is_default = serializers.BooleanField(default=False)
+    capabilities = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        default=list
+    )  # ej: ['cut', 'bold', 'underline', 'cp850']

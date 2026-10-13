@@ -206,7 +206,9 @@ if DEBUG:
 else:
     # Production: Strict security limits
     THROTTLE_RATES = {
-        'user': '500/hour',
+        # 5000/h para usuarios autenticados: un POS activo supera 500 req/hora
+        # (cada venta genera varias llamadas). anon/login/auth siguen estrictos.
+        'user': '5000/hour',
         'anon': '50/hour',
         'login': '5/min',
         'register': '5/day',  # 5 registros por IP/día en producción (NAT compartido)

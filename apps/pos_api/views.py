@@ -8,7 +8,7 @@ from django.utils import timezone
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
 from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon
-from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer, NCFSequenceSerializer, CouponSerializer, CouponValidationSerializer
+from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer, NCFSequenceSerializer, CouponSerializer, CouponValidationSerializer, PrinterSerializer
 from django.db.models import Sum, Q, F
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from apps.core.permissions import IsSuperAdmin
@@ -39,6 +39,8 @@ class SaleViewSet(TenantScopedViewSet):
         'open_register': 'pos_api.add_sale',
         'current_register': 'pos_api.view_sale',
         'print_receipt': 'pos_api.view_sale',
+        'printers': 'pos_api.view_sale',
+        'print_token': 'pos_api.add_sale',
         'search_sales': 'pos_api.view_sale',
         'validate_stock': 'pos_api.add_sale',
         'charge_card': 'pos_api.add_sale',
@@ -1046,7 +1048,63 @@ class SaleViewSet(TenantScopedViewSet):
         }
         
         return Response(receipt_data)
-    
+
+    @action(detail=False, methods=['get'], permission_classes=[TenantPermissionByAction])
+    def printers(self, request):
+        """
+        Lista de impresoras disponibles para el tenant/usuario.
+        Los datos son proporcionados por el agente local (auron-print-agent)
+        y almacenados en cache/DB. Si no hay agente, devuelve lista vacía.
+        """
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        
+        # Buscar configuración POS para obtener impresoras configuradas
+        pos_config = PosConfiguration.objects.filter(tenant=tenant).first()
+        if not pos_config:
+            pos_config = PosConfiguration.objects.filter(user=request.user).first()
+        
+        printers = []
+        if pos_config and pos_config.receipt_template:
+            # Si hay template personalizado, puede incluir impresoras configuradas
+            # Por ahora devolvemos lista vacía - el agente la poblará via WebSocket
+            pass
+        
+        # Estructura esperada por el frontend (PrinterSerializer)
+        serializer = PrinterSerializer(printers, many=True)
+        return Response({
+            'printers': serializer.data,
+            'agent_connected': False,  # Se actualiza via WS push
+            'message': 'Conecte el agente local (auron-print-agent) para detectar impresoras USB/LAN'
+        })
+
+    @action(detail=False, methods=['post'], permission_classes=[TenantPermissionByAction])
+    def print_token(self, request):
+        """
+        Genera un JWT de corta vida (5 min) para que el agente local
+        se autentique en el WebSocket de impresión.
+        """
+        import jwt
+        from django.conf import settings
+        from datetime import datetime, timedelta
+        
+        tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
+        
+        payload = {
+            'sub': str(request.user.id),
+            'tenant_id': str(tenant.id) if tenant else None,
+            'type': 'print_agent',
+            'iat': datetime.utcnow(),
+            'exp': datetime.utcnow() + timedelta(minutes=5),
+        }
+        
+        token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
+        
+        return Response({
+            'token': token,
+            'expires_in': 300,
+            'ws_endpoint': 'ws://localhost:8081/ws'  # Endpoint del agente local
+        })
+
     @action(detail=False, methods=['get'])
     def search_sales(self, request):
         """Búsqueda avanzada de ventas"""
