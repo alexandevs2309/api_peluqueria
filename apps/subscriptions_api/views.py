@@ -1353,6 +1353,24 @@ class RenewSubscriptionView(APIView):
                 'payment_mode': 'manual_dev'
             })
 
+        # Configurar la API key de Stripe: primero la que tenga guardada el
+        # sistema (panel de administracion) y, si no, la variable de entorno.
+        # Sin esto, stripe.api_key quedaba en None y el intento de renovar
+        # fallaba con 500 al crear el customer.
+        from apps.settings_api.integration_service import IntegrationService
+        stripe_key = None
+        try:
+            stripe_key = IntegrationService.get_system_settings().stripe_secret_key
+        except Exception:
+            stripe_key = None
+        stripe_key = stripe_key or getattr(settings, 'STRIPE_SECRET_KEY', None)
+        if not stripe_key:
+            return Response({
+                'error': 'Stripe no está configurado',
+                'detail': 'Falta la clave secreta de Stripe. Configúrala en Ajustes del Sistema antes de cambiar de plan.'
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        stripe.api_key = stripe_key
+
         # ✅ PAGO REAL con Stripe
         try:
             # Obtener o crear customer en Stripe
