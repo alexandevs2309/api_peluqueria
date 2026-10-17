@@ -120,7 +120,13 @@ class PayrollViewSet(viewsets.ViewSet):
         from calendar import monthrange
         from django.db.models import Count, Sum
 
-        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        # OJO: getattr() solo usa el valor por defecto si el atributo NO
+        # existe. El middleware deja request.tenant = None para los
+        # superusuarios de la plataforma, y en ese caso el respaldo nunca se
+        # aplicaba y la nomina salia vacia.
+        tenant = getattr(request, 'tenant', None)
+        if tenant is None:
+            tenant = getattr(getattr(request, 'user', None), 'tenant', None)
         if not tenant:
             return Response({'periods': []})
 
