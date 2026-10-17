@@ -25,7 +25,7 @@ from apps.settings_api.models import Branch
 
 
 class ProductSerializer(serializers.ModelSerializer):
-    sku = serializers.CharField(required=False, allow_blank=True, max_length=100)
+    sku = serializers.CharField(required=False, allow_blank=True, allow_null=True, max_length=100)
     category = serializers.PrimaryKeyRelatedField(
         queryset=ProductCategory.objects.all(), allow_null=True, required=False
     )
