@@ -129,7 +129,7 @@ def _resolve_business_branding(user, request=None):
                     if request is not None:
                         logo_url = request.build_absolute_uri(raw_logo)
                     else:
-                        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+                        frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
                         logo_url = f"{frontend_url}{raw_logo}" if raw_logo.startswith('/') else f"{frontend_url}/{raw_logo}"
         except Exception:
             pass
@@ -247,7 +247,7 @@ class RegisterView(generics.CreateAPIView):
         
         # Enviar email de verificación (fuera de transacción)
         email_subject = "Verifica tu correo"
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
         verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
         email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
         email_html = _render_email_html(
@@ -520,7 +520,7 @@ class PasswordResetRequestView(APIView):
                 return Response({"detail": "Correo enviado si el usuario existe."}, status=status.HTTP_200_OK)
 
             # Use environment variable for frontend URL
-            frontend_url = getattr(settings, 'ADMIN_FRONTEND_URL', '') or getattr(settings, 'FRONTEND_URL', 'http://localhost:4200')
+            frontend_url = getattr(settings, 'ADMIN_FRONTEND_URL', '') or (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200')
 
             for user in target_users:
                 uid = urlsafe_base64_encode(force_bytes(user.pk))
@@ -693,7 +693,7 @@ class ResendVerificationView(APIView):
                     user.save(update_fields=['email_verification_token'])
 
                 email_subject = "Verifica tu correo"
-                frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+                frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
                 verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
                 email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
                 email_html = _render_email_html(

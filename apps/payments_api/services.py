@@ -90,7 +90,7 @@ class PayPalService:
         if err:
             return None, err
 
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
         price_per_cycle = plan.annual_price if billing_interval == 'year' else plan.price
         if billing_interval == 'year' and not price_per_cycle:
             price_per_cycle = plan.price * 12 * Decimal('0.8')
@@ -252,7 +252,7 @@ class PayPalService:
         if err:
             return None, err
             
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')
+        frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
         
         payload = {
             "plan_id": plan_id,
