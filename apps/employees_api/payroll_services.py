@@ -20,7 +20,7 @@ class PayrollCalculationService:
         Returns:
             dict con totales calculados
         """
-        from apps.pos_api.models import Sale
+        from apps.pos_api.models import Sale, SaleDetail
         from apps.employees_api.adjustment_models import CommissionAdjustment
         
         # 1. Sumar comisiones desde snapshots de ventas
@@ -44,16 +44,48 @@ class PayrollCalculationService:
         )
         logger.debug("start_dt=%s, end_dt=%s", start_dt, end_dt)
         
-        sales_commission = Sale.objects.filter(
+        tenant = period.employee.tenant
+
+        # ── Fuente SALE (ventas históricas) ─────────────────────────────────
+        # Snapshots a nivel de venta. Se respetan tal cual: no se recalculan.
+        #
+        # REGLA DE FUENTE ÚNICA (explícita y verificable en la consulta):
+        # una venta con comisiones por línea NUNCA aporta por aquí, aunque
+        # por un error llegara con ambos snapshots. Así la nómina no puede
+        # duplicar comisiones aunque el dato sea inconsistente.
+        sale_source_commission = Sale.objects.filter(
             employee=period.employee,
             date_time__gte=start_dt,
             date_time__lte=end_dt,
             status='confirmed',
             commission_amount_snapshot__isnull=False,
-            tenant=period.employee.tenant  # CORREGIDO: Usar campo tenant directo en lugar de user__tenant
+            tenant=tenant
+        ).exclude(
+            details__commission_amount_snapshot__isnull=False
         ).aggregate(
             total=Sum('commission_amount_snapshot')
         )['total'] or Decimal('0.00')
+
+        # ── Fuente LINE (comisiones por servicio) ───────────────────────────
+        # Snapshots a nivel de línea. Una venta con estos snapshots SIEMPRE
+        # tiene el snapshot de venta en NULL (garantizado en perform_create),
+        # por lo que ambas fuentes son mutuamente excluyentes y NO duplican.
+        detail_source_commission = SaleDetail.objects.filter(
+            employee=period.employee,
+            sale__date_time__gte=start_dt,
+            sale__date_time__lte=end_dt,
+            sale__status='confirmed',
+            sale__tenant=tenant,
+            commission_amount_snapshot__isnull=False,
+        ).aggregate(
+            total=Sum('commission_amount_snapshot')
+        )['total'] or Decimal('0.00')
+
+        sales_commission = sale_source_commission + detail_source_commission
+        logger.debug(
+            "commission sale_source=%s detail_source=%s",
+            sale_source_commission, detail_source_commission
+        )
         
         # 2. Sumar ajustes (positivos y negativos)
         adjustments_total = CommissionAdjustment.objects.filter(
@@ -89,6 +121,8 @@ class PayrollCalculationService:
             'base_salary': base_salary,
             'commission_earnings': total_commission,
             'sales_commission': sales_commission,
+            'sale_source_commission': sale_source_commission,
+            'detail_source_commission': detail_source_commission,
             'adjustments': adjustments_total,
             'gross_amount': base_salary + total_commission,
         }

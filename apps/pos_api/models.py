@@ -3,6 +3,7 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from decimal import Decimal
 from apps.clients_api.models import Client
 from apps.services_api.models import Service
 from apps.inventory_api.models import Product
@@ -42,6 +43,11 @@ class Sale(models.Model):
     ], default='cash')
     closed = models.BooleanField(default=False)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='confirmed')
+
+    # ── Reembolsos parciales ───────────────────────────────────────────────
+    # Suma ya reembolsada. Permite reembolsos parciales idempotentes y
+    # proportionally audited. Las ventas históricas inician en 0.00.
+    amount_refunded = models.DecimalField(max_digits=14, decimal_places=2, default=0.00)
     
     # Snapshot de comisión (FASE 1 - Payroll Determinístico)
     commission_rate_snapshot = models.DecimalField(
@@ -122,12 +128,16 @@ class Sale(models.Model):
                 self.coupon_code = self.coupon.code
             
             # NUEVO: Capturar snapshots de comisión al crear
-            if self.employee and self.employee.commission_rate:
-                self.commission_rate_snapshot = self.employee.commission_rate
-                # Calcular monto de comisión
+            if self.employee:
+                from apps.pos_api.services import SaleCommissionService
                 from decimal import Decimal
-                commission_rate = Decimal(str(self.employee.commission_rate)) / Decimal('100')
-                self.commission_amount_snapshot = self.total * commission_rate
+                rate, amount = SaleCommissionService.calculate_commission_snapshot(
+                    employee=self.employee,
+                    sale_total=self.total,
+                    sale_date=self.date_time.date() if self.date_time else None
+                )
+                self.commission_rate_snapshot = rate
+                self.commission_amount_snapshot = amount
             
             return super().save(*args, **kwargs)
         
@@ -220,6 +230,63 @@ class Sale(models.Model):
             )
         return super().delete(*args, **kwargs)
 
+    # ── Regla explícita y verificable de fuente de comisión ────────────────
+    # Una venta NUNCA tiene comisión a nivel de venta y a nivel de línea a la
+    # vez. Esta es la única fuente de verdad usada por la nómina, los reportes
+    # y los reembolsos:
+    #
+    #   - Si existe ≥1 detalle con `commission_amount_snapshot` no nulo
+    #     => fuente = LINE (detalle). El snapshot de venta se ignora.
+    #   - En cualquier otro caso
+    #     => fuente = SALE (histórico). Se respeta el snapshot de venta.
+    #
+    # Esta regla es determinista, idempotente y preserva las ventas
+    # históricas sin recalcular ni un solo centavo.
+    COMMISSION_SOURCE_NONE = 'none'
+    COMMISSION_SOURCE_SALE = 'sale'
+    COMMISSION_SOURCE_LINE = 'line'
+
+    @property
+    def commission_source(self):
+        """Devuelve 'line', 'sale' o 'none' según la regla de precedencia."""
+        if self.pk is None:
+            return self.COMMISSION_SOURCE_NONE
+        has_line = self.details.filter(
+            commission_amount_snapshot__isnull=False
+        ).exists()
+        if has_line:
+            return self.COMMISSION_SOURCE_LINE
+        if self.commission_amount_snapshot is not None:
+            return self.COMMISSION_SOURCE_SALE
+        return self.COMMISSION_SOURCE_NONE
+
+    @property
+    def refundable_amount(self):
+        """Monto que aún puede reembolsarse (protege contra sobre-reembolso)."""
+        return (self.total or Decimal('0.00')) - (self.amount_refunded or Decimal('0.00'))
+
+    @classmethod
+    def write_commission_snapshots(cls, sale, rate, amount):
+        """
+        Escribe los snapshots de comisión a nivel de VENTA.
+
+        Uso exclusivo del flujo de creación (SaleViewSet.perform_create) y de
+        la simulación de datos históricos en pruebas. Usa un UPDATE directo
+        para poder escribir los snapshots justo después de crear la venta,
+        que es cuando el modelo los calcula provisionalmente y hay que
+        ajustarlos a la fuente correcta (línea vs venta).
+
+        No debilita la inmutabilidad: cualquier cambio posterior por API sigue
+        bloqueado por el whitelist de IMMUTABLE_FIELDS en save().
+        """
+        cls.objects.filter(pk=sale.pk).update(
+            commission_rate_snapshot=rate,
+            commission_amount_snapshot=amount,
+        )
+        sale.commission_rate_snapshot = rate
+        sale.commission_amount_snapshot = amount
+        return sale
+
 class SaleDetail(models.Model):
     sale = models.ForeignKey(Sale, on_delete=models.CASCADE, related_name='details', db_index=True)
     
@@ -247,16 +314,104 @@ class SaleDetail(models.Model):
                     raise ValidationError({
                         'object_id': 'Service does not belong to the sale\'s tenant'
                     })
+
+        # Validación cross-tenant del empleado responsable de la línea
+        if self.employee_id and self.sale and self.sale.tenant_id:
+            if self.employee.tenant_id != self.sale.tenant_id:
+                raise ValidationError({
+                    'employee': 'El empleado no pertenece al tenant de la venta'
+                })
+            # Un empleado solo puede quedar a cargo de servicios que realmente presta.
+            model_name = self.content_type.model if self.content_type else None
+            if model_name == 'service':
+                from apps.services_api.models import ServiceEmployee
+                employee_services = ServiceEmployee.objects.filter(employee=self.employee)
+                # Solo se valida si el empleado tiene servicios asignados
+                # explícitamente (misma semántica que el módulo de Citas).
+                if employee_services.exists() and not employee_services.filter(service_id=self.object_id).exists():
+                    raise ValidationError({
+                        'employee': 'El empleado no presta este servicio'
+                    })
+
+    @property
+    def line_total(self):
+        """Total de la línea (cantidad × precio), base comisionable de la línea."""
+        return (self.price or Decimal('0.00')) * (self.quantity or 0)
+
+    def save(self, *args, **kwargs):
+        from django.core.exceptions import ValidationError
+
+        # Inmutabilidad: una vez creada la línea en una venta confirmada, ni el
+        # empleado ni los snapshots de comisión pueden cambiar. Sin esto, un
+        # reembolso podría dejar la nómina inconsistente con la venta.
+        if self.pk is not None:
+            try:
+                old = SaleDetail.objects.get(pk=self.pk)
+            except SaleDetail.DoesNotExist:
+                return super().save(*args, **kwargs)
+            if old.sale_id and Sale.objects.filter(pk=old.sale_id).exclude(status='draft').exists():
+                protected = {
+                    'employee': old.employee_id,
+                    'employee_id': old.employee_id,
+                    'commission_rate_snapshot': old.commission_rate_snapshot,
+                    'commission_amount_snapshot': old.commission_amount_snapshot,
+                    'commission_source': old.commission_source,
+                }
+                for field, expected in protected.items():
+                    current = getattr(self, field, None)
+                    if current != expected:
+                        raise ValidationError(
+                            f"No se puede modificar '{field}' en una línea de venta ya confirmada. "
+                            "Los snapshots de comisión son inmutables."
+                        )
+        return super().save(*args, **kwargs)
     
     # Campos para almacenar datos al momento de la venta
     name = models.CharField(max_length=255)  # Nombre del producto/servicio
     quantity = models.PositiveIntegerField(default=1)
     price = models.DecimalField(max_digits=14, decimal_places=2)  # Precio al momento de la venta
-    
+
+    # ── Comisión por línea (FASE 2: comisiones por servicio) ──────────────
+    # Una venta puede tener varios servicios realizados por distintos
+    # barberos. El empleado es QUIEN performed ESA línea, no la venta entera.
+    employee = models.ForeignKey(
+        'employees_api.Employee',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='sale_details',
+        help_text='Empleado/barbero responsable de esta línea',
+    )
+    # Snapshots inmutables: congelan la tasa y el monto al momento de cobrar,
+    # para que un cambio posterior de configuración no altere la nómina.
+    commission_rate_snapshot = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Porcentaje de comisión vigente para esta línea al momento de la venta',
+    )
+    commission_amount_snapshot = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text='Monto de comisión de esta línea al momento de la venta',
+    )
+    # Trazabilidad de la regla de negocio que resolvió la tasa (auditoría).
+    commission_source = models.CharField(
+        max_length=32,
+        blank=True,
+        default='',
+        help_text='Origen de la tasa: service|history|global|none',
+    )
 
     class Meta:
         verbose_name = 'Sale Detail'
         verbose_name_plural = 'Sale Details'
+        indexes = [
+            models.Index(fields=['employee', 'commission_amount_snapshot']),
+        ]
 
     def __str__(self): 
         try:

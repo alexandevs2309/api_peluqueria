@@ -367,14 +367,15 @@ class PayrollPeriod(models.Model):
                     tenant=employee.tenant,
                     employee=employee,
                     date_time__date__gte=self.period_start,
-                    date_time__date__lte=self.period_end
+                    date_time__date__lte=self.period_end,
+                    status='confirmed'
                 )
                 total_sales = sum(sale.total for sale in sales)
                 commission_rate_value = self.commission_rate_snapshot \
                     if self.commission_rate_snapshot is not None \
-                    else employee.commission_rate
-                commission_rate = commission_rate_value / 100
-                self.commission_earnings = Decimal(str(total_sales)) * Decimal(str(commission_rate))
+                    else (employee.commission_rate or Decimal('0.00'))
+                commission_rate = Decimal(str(commission_rate_value)) / Decimal('100')
+                self.commission_earnings = Decimal(str(total_sales)) * commission_rate
             else:
                 self.commission_earnings = Decimal('0.00')
             

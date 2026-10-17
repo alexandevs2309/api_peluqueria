@@ -69,7 +69,14 @@ def test_sale_linked_to_appointment(authenticated_user, client, client_factory, 
         "payments": [
             {"method": "cash", "amount": 100.0}
         ],
-        "appointment": appointment.id
+        "appointment": appointment.id,
+        # El estilista de esta cita no tiene perfil de empleado asociado, así
+        # que la venta se registra sin comisión mediante autorización
+        # explícita (regla de negocio: nunca se asigna un barbero
+        # automáticamente). El propósito de esta prueba es el vínculo con la
+        # cita, no el cálculo de comisión.
+        "no_commission_authorization": True,
+        "no_commission_reason": "Estilista de la cita sin perfil de empleado asociado",
     }
 
     api_client.force_authenticate(user=user)

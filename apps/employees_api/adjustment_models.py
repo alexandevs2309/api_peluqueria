@@ -12,6 +12,7 @@ class CommissionAdjustment(models.Model):
     
     REASON_CHOICES = [
         ('refund', 'Reembolso de venta'),
+        ('partial_refund', 'Reembolso parcial'),
         ('bonus', 'Bono adicional'),
         ('penalty', 'Penalización'),
         ('correction', 'Corrección contable'),
@@ -25,6 +26,26 @@ class CommissionAdjustment(models.Model):
         null=True,
         blank=True,
         help_text='Venta relacionada (si aplica)'
+    )
+
+    # Línea de venta origen del ajuste. Permite un ajuste por barbero en
+    # ventas con varios servicios. NULL = ajuste a nivel de venta (histórico).
+    sale_detail = models.ForeignKey(
+        'pos_api.SaleDetail',
+        on_delete=models.PROTECT,
+        related_name='commission_adjustments',
+        null=True,
+        blank=True,
+        help_text='Línea de venta origen (comisión por servicio)'
+    )
+
+    # Clave de idempotencia del reembolso. Reintentar el mismo reembolso con
+    # la misma clave no genera ajustes duplicados.
+    idempotency_key = models.CharField(
+        max_length=64,
+        null=True,
+        blank=True,
+        help_text='Clave de idempotencia para reembolsos repetidos'
     )
     
     payroll_period = models.ForeignKey(
@@ -77,14 +98,26 @@ class CommissionAdjustment(models.Model):
         indexes = [
             models.Index(fields=['payroll_period', 'employee']),
             models.Index(fields=['sale']),
+            models.Index(fields=['sale_detail']),
             models.Index(fields=['tenant', 'created_at']),
         ]
         constraints = [
+            # Un reembolso TOTAL por línea de venta (o por venta cuando no hay
+            # línea). Una venta con 2 barberos genera 2 ajustes distintos y una
+            # repetición sobre la misma línea no se duplica.
+            # Los reembolsos parciales se protegen con `idempotency_key` y con el
+            # tope de `Sale.amount_refunded`.
             models.UniqueConstraint(
-                fields=['sale', 'reason'],
+                fields=['sale', 'sale_detail', 'reason'],
                 condition=models.Q(reason='refund'),
-                name='unique_refund_per_sale'
-            )
+                name='unique_refund_per_sale_line'
+            ),
+            # Idempotencia explícita para reembolsos repetidos.
+            models.UniqueConstraint(
+                fields=['idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='unique_adjustment_idempotency_key'
+            ),
         ]
     
     def __str__(self):

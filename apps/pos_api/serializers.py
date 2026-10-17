@@ -12,11 +12,59 @@ class SaleDetailSerializer(serializers.ModelSerializer):
     item_type = serializers.SerializerMethodField()
     # Field to specify the type of content ('service' or 'product')
     content_type = serializers.CharField(help_text="Type of item being sold (service/product)")
-    
+    # Alias de entrada: 'employee' y 'employee_id' significan lo mismo.
+    employee_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    employee_name = serializers.SerializerMethodField()
+
     class Meta:
         model = SaleDetail
-        fields = ['id', 'content_type', 'object_id', 'name', 'quantity', 'price', 'item_type']
-        
+        fields = [
+            'id', 'content_type', 'object_id', 'name', 'quantity', 'price', 'item_type',
+            'employee', 'employee_id', 'employee_name',
+            'commission_rate_snapshot', 'commission_amount_snapshot', 'commission_source',
+        ]
+        # Los snapshots SIEMPRE los calcula el backend; el cliente solo
+        # declara QUIÉN hizo la línea.
+        read_only_fields = [
+            'commission_rate_snapshot', 'commission_amount_snapshot',
+            'commission_source', 'employee_name',
+        ]
+
+    def get_employee_name(self, obj):
+        emp_user = getattr(getattr(obj, 'employee', None), 'user', None)
+        return getattr(emp_user, 'full_name', None) or getattr(emp_user, 'email', None)
+
+    def get_fields(self):
+        fields = super().get_fields()
+        if 'employee' not in fields:
+            # Se declara aquí para resolver el queryset con el tenant del
+            # request sin capturarlo al importar el módulo.
+            from apps.employees_api.models import Employee
+            request = self.context.get('request')
+            queryset = Employee.objects.none()
+            if request is not None:
+                tenant = getattr(request, 'tenant', None) or getattr(
+                    getattr(request, 'user', None), 'tenant', None
+                )
+                if tenant:
+                    queryset = Employee.objects.filter(tenant=tenant)
+                elif getattr(getattr(request, 'user', None), 'is_superuser', False):
+                    queryset = Employee.objects.all()
+            fields['employee'] = serializers.PrimaryKeyRelatedField(
+                queryset=queryset, required=False, allow_null=True
+            )
+        return fields
+
+    def to_internal_value(self, data):
+        # Acepta 'employee' o 'employee_id' con el mismo significado.
+        if hasattr(data, 'get') and 'employee' not in data and data.get('employee_id'):
+            try:
+                data = data.copy()
+                data['employee'] = data['employee_id']
+            except Exception:
+                pass
+        return super().to_internal_value(data)
+
     def get_item_type(self, obj):
         return obj.content_type.model
 
@@ -240,6 +288,12 @@ class SaleSerializer(serializers.ModelSerializer):
                 content_type = ContentType.objects.get(app_label='inventory_api', model='product')
             
             detail['content_type'] = content_type
+            # 'employee_id' es alias de entrada; la FK real es 'employee'.
+            # 'employee' ya viene resuelto como instancia por el serializer.
+            detail.pop('employee_id', None)
+            # Los productos nunca llevan barbero responsable.
+            if detail['content_type'].model != 'service':
+                detail.pop('employee', None)
             SaleDetail.objects.create(sale=sale, **detail)
             # Stock ya se descuenta en perform_create() con transacciones atómicas
 

@@ -8,7 +8,8 @@ from django.core.exceptions import ValidationError
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, Count, Sum, F
+from decimal import Decimal
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.auth_api.role_utils import get_effective_role_name
 from datetime import date, timedelta
@@ -184,23 +185,90 @@ class PayrollViewSet(viewsets.ViewSet):
         if status_filter:
             periods = periods.filter(status=status_filter)
 
-        # 4. Ventas agrupadas (1 query con annotate)
+        # 4. Ventas agrupadas (1 query con annotate) - alineado con cálculo determinístico
         period_ids = list(periods.values_list('id', flat=True))
-        sales_agg = Sale.objects.filter(
+        # Usar rango aware con TZ del tenant para consistencia
+        from zoneinfo import ZoneInfo
+        from django.utils.timezone import make_aware
+        import datetime
+        try:
+            tenant_tz = ZoneInfo(getattr(tenant, 'timezone', None) or 'America/Santo_Domingo')
+        except Exception:
+            tenant_tz = ZoneInfo('America/Santo_Domingo')
+        start_dt_aware = make_aware(datetime.datetime.combine(start_date, datetime.time.min), timezone=tenant_tz)
+        end_dt_aware = make_aware(datetime.datetime.combine(end_date, datetime.time.max), timezone=tenant_tz)
+        # ── Atribución de ventas por empleado ────────────────────────────
+        # Regla de negocio: la venta se contabiliza UNA sola vez en la venta
+        # bruta del negocio, pero cada empleado ve únicamente SUS líneas.
+        #
+        # Se aplican las MISMAS fuentes que usa la nómina (regla de fuente
+        # única), por lo que reportar nunca puede contradecir el cálculo:
+        #   · ventas SIN comisión por línea -> se imputan al empleado de la
+        #     venta (comportamiento histórico, sin cambios);
+        #   · ventas CON comisión por línea -> se imputa a cada empleado el
+        #     importe de SUS líneas. Los productos no generan comisión de
+        #     servicios, así que no suman a nadie.
+        from apps.pos_api.models import SaleDetail
+
+        sales_window = dict(
             tenant=tenant,
+            date_time__gte=start_dt_aware,
+            date_time__lte=end_dt_aware,
+            status='confirmed',
+        )
+
+        # Ventas que ya tienen comisiones por línea: se imputan por línea.
+        line_sale_ids = SaleDetail.objects.filter(
+            sale__tenant=tenant,
+            sale__date_time__gte=start_dt_aware,
+            sale__date_time__lte=end_dt_aware,
+            sale__status='confirmed',
             employee_id__in=employee_ids,
-            date_time__date__gte=start_date,
-            date_time__date__lte=end_date,
-        ).values('employee_id').annotate(
+            commission_amount_snapshot__isnull=False,
+        ).values('sale_id')
+
+        # Fuente SALE: ventas históricas / un solo barbero.
+        sale_level_agg = Sale.objects.filter(
+            **sales_window,
+            employee_id__in=employee_ids,
+        ).exclude(id__in=line_sale_ids).values('employee_id').annotate(
             services_count=Count('id'),
             gross_sales=Sum('total'),
         )
+
+        # Fuente LINE: atribución por línea de servicio.
+        line_agg = SaleDetail.objects.filter(
+            sale__tenant=tenant,
+            sale__date_time__gte=start_dt_aware,
+            sale__date_time__lte=end_dt_aware,
+            sale__status='confirmed',
+            employee_id__in=employee_ids,
+            commission_amount_snapshot__isnull=False,
+        ).values('employee_id').annotate(
+            services_count=Count('sale_id', distinct=True),
+            gross_sales=Sum(F('price') * F('quantity')),
+        )
+
+        gross_by_employee = {emp_id: Decimal('0.00') for emp_id in employee_ids}
+        services_by_employee = {emp_id: 0 for emp_id in employee_ids}
+        for row in sale_level_agg:
+            gross_by_employee[row['employee_id']] = row['gross_sales'] or Decimal('0.00')
+            services_by_employee[row['employee_id']] = row['services_count'] or 0
+        for row in line_agg:
+            emp_id = row['employee_id']
+            gross_by_employee[emp_id] = (
+                gross_by_employee.get(emp_id, Decimal('0.00')) + (row['gross_sales'] or Decimal('0.00'))
+            )
+            services_by_employee[emp_id] = (
+                services_by_employee.get(emp_id, 0) + (row['services_count'] or 0)
+            )
+
         sales_by_emp = {
-            s['employee_id']: {
-                'services_count': s['services_count'] or 0,
-                'gross_sales': float(s['gross_sales'] or 0),
+            emp_id: {
+                'services_count': services_by_employee.get(emp_id, 0),
+                'gross_sales': float(gross_by_employee.get(emp_id) or 0),
             }
-            for s in sales_agg
+            for emp_id in employee_ids
         }
 
         # 5. Construir respuesta

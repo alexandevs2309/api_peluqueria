@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from django.utils import timezone
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
-from .models import Sale, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon
+from .models import Sale, SaleDetail, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer, NCFSequenceSerializer, CouponSerializer, CouponValidationSerializer, PrinterSerializer
 from django.db.models import Sum, Q, F
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
@@ -452,19 +452,159 @@ class SaleViewSet(TenantScopedViewSet):
 
             total_with_discount = total - discount
             
-            # Determinar el empleado para la venta
-            sale_employee = None
-            employee_id = self.request.data.get('employee_id')
-            if employee_id:
-                from apps.employees_api.models import Employee
+            # ── Resolución de empleados POR LÍNEA ─────────────────────────
+            # Una venta puede tener varios servicios, cada uno con su propio
+            # barbero. Si ninguna línea lo declara, se usa el empleado a nivel
+            # de venta (modo legado, una sola persona por venta).
+            from apps.employees_api.models import Employee
+            from apps.services_api.models import Service, ServiceEmployee
+            from apps.pos_api.services import SaleCommissionService
+
+            tenant_for_lines = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+
+            # ── Empleado a nivel de venta (modo legado / cita) ───────────
+            # El POS histórico envía `employee` en la venta. Se resuelve
+            # PRIMERO para que pueda aplicarse a las líneas que no declaren
+            # barbero. Esto también corrige el bug original: el backend solo
+            # leía `employee_id` y por eso ninguna venta quedaba con barbero.
+            sale_level_employee = None
+
+            # Si la venta proviene de una cita, el barbero es el estilista de
+            # esa cita. Es el profesional que réellement attending al cliente.
+            appointment_pk = self.request.data.get('appointment') or self.request.data.get('appointment_id')
+            if appointment_pk:
+                from django.db.models import Q
+                from apps.appointments_api.models import Appointment
+                appointment_obj = Appointment.objects.filter(
+                    Q(client__tenant_id=tenant_for_lines.id) | Q(stylist__tenant_id=tenant_for_lines.id),
+                    id=appointment_pk,
+                ).select_related('stylist').first()
+                if appointment_obj is not None:
+                    stylist_employee = getattr(appointment_obj.stylist, 'employee_profile', None)
+                    if stylist_employee is not None and stylist_employee.tenant_id == tenant_for_lines.id:
+                        sale_level_employee = stylist_employee
+
+            if sale_level_employee is None:
+                sale_level_id = self.request.data.get('employee') or self.request.data.get('employee_id')
+                if sale_level_id:
+                    try:
+                        sale_level_pk = int(sale_level_id)
+                    except (TypeError, ValueError):
+                        raise serializers.ValidationError(f"Empleado inválido: {sale_level_id}")
+                    sale_level_employee = Employee.objects.filter(
+                        id=sale_level_pk, tenant=tenant_for_lines
+                    ).first()
+                    if sale_level_employee is None:
+                        raise serializers.ValidationError(
+                            f"El empleado {sale_level_pk} no existe en tu negocio"
+                        )
+
+            line_specs = []
+            has_line_employee = False
+            services_without_employee = []
+            for idx, detail in enumerate(details):
+                content_type = detail.get('content_type')
                 try:
-                    tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
-                    if tenant:
-                        sale_employee = Employee.objects.get(id=employee_id, tenant=tenant)
-                except Employee.DoesNotExist:
-                    pass
-            
-            # Obtener o crear período activo para el empleado
+                    object_id = int(detail.get('object_id'))
+                except (TypeError, ValueError):
+                    object_id = None
+
+                # Productos: nunca llevan barbero responsable.
+                if content_type != 'service' or not object_id:
+                    line_specs.append({'index': idx, 'employee': None, 'service': None,
+                                       'quantity': Decimal(str(detail.get('quantity', 1))),
+                                       'price': Decimal('0')})
+                    continue
+
+                service = Service.objects.filter(id=object_id, tenant=tenant_for_lines).first()
+                quantity = Decimal(str(detail.get('quantity', 1)))
+                price = Decimal(str(detail.get('price', 0)))
+
+                raw_emp = detail.get('employee') or detail.get('employee_id')
+                if raw_emp:
+                    has_line_employee = True
+                    try:
+                        employee = Employee.objects.filter(
+                            id=int(raw_emp), tenant=tenant_for_lines
+                        ).first()
+                    except (TypeError, ValueError):
+                        raise serializers.ValidationError(
+                            f"Empleado inválido en el detalle {idx + 1}: {raw_emp}"
+                        )
+                    if employee is None:
+                        raise serializers.ValidationError(
+                            f"El empleado {raw_emp} no existe en tu negocio"
+                        )
+                elif sale_level_employee is not None:
+                    # Modo legado: el barbero de la venta cubre la línea.
+                    employee = sale_level_employee
+                else:
+                    # Servicio vendido sin barbero: requiere autorización.
+                    employee = None
+
+                if employee is not None:
+                    # Un empleado solo puede quedar a cargo de servicios que presta.
+                    emp_services = ServiceEmployee.objects.filter(employee=employee)
+                    if emp_services.exists() and not emp_services.filter(service=service).exists():
+                        raise serializers.ValidationError(
+                            f"«{employee.user.full_name or employee.user.email}» no presta "
+                            f"el servicio «{service.name}». "
+                            "Solo puedes asignar empleados que ofrezcan ese servicio."
+                        )
+                else:
+                    services_without_employee.append(service.name)
+
+                line_specs.append({'index': idx, 'employee': employee, 'service': service,
+                                   'quantity': quantity, 'price': price})
+
+            # Regla: nunca se asigna un empleado automáticamente. Si hay
+            # servicios sin barbero, se exige autorización explícita + motivo.
+            if services_without_employee:
+                authorized = bool(self.request.data.get('no_commission_authorization'))
+                reason = (self.request.data.get('no_commission_reason') or '').strip()
+                if not authorized or len(reason) < 10:
+                    raise serializers.ValidationError({
+                        'details': (
+                            f"Estos servicios no tienen empleados elegibles asignados: "
+                            f"{', '.join(services_without_employee)}. "
+                            "Selecciona un barbero para cada servicio o autoriza explícitamente "
+                            "la venta sin comisión indicando el motivo (mínimo 10 caracteres). "
+                            "No se asignará ningún empleado automáticamente."
+                        )
+                    })
+                no_commission_authorized = True
+                no_commission_reason = reason
+            else:
+                no_commission_authorized = False
+                no_commission_reason = ''
+
+            # Empleados distintos que participan en la venta (para períodos).
+            line_employees = []
+            for spec in line_specs:
+                emp = spec['employee']
+                if emp is not None and emp not in line_employees:
+                    line_employees.append(emp)
+
+            # La venta usa la fuente LÍNEA si alguna línea de servicio quedó
+            # con barbero, sin importar si vino del propio detalle o heredado
+            # de la cita. Solo si NINGUNA línea tiene barbero (venta de
+            # productos o venta autorizada sin comisión) se usa la fuente
+            # SALE. Esto mantiene una única regla, fácil de verificar.
+            line_commissions_active = any(
+                spec['employee'] is not None and spec['service'] is not None
+                for spec in line_specs
+            )
+
+            # ── Empleado ancla de la venta ─────────────────────────────────
+            # `Sale.employee` se mantiene por compatibilidad con reportes y
+            # el módulo de nominas, pero la comisión vive en cada línea.
+            # Con varios barberos se ancla al primero solo para trazabilidad.
+            if line_employees:
+                sale_employee = line_employees[0]
+            else:
+                sale_employee = sale_level_employee
+
+            # Período activo: para el empleado principal (campo legado de la venta).
             active_period = None
             if sale_employee:
                 active_period = self._get_or_create_active_period(sale_employee)
@@ -487,12 +627,50 @@ class SaleViewSet(TenantScopedViewSet):
                 coupon=coupon_obj if coupon_id else None
             )
 
-            # FIX POS-001: Aplicar snapshot de comisión usando historial
-            # (sobreescribe el snapshot calculado en Sale.save() con la tasa histórica correcta)
-            if sale_employee:
-                from apps.pos_api.services import SaleCommissionService
-                SaleCommissionService.apply_commission_snapshot(sale, sale_employee)
-                sale.save(update_fields=['commission_rate_snapshot', 'commission_amount_snapshot'])
+            # ── Snapshots de comisión POR LÍNEA ───────────────────────────
+            sale_details = list(sale.details.all())
+            created_line_commissions = False
+            if line_commissions_active:
+                for spec, detail_obj in zip(line_specs, sale_details):
+                    employee = spec['employee']
+                    service = spec['service']
+                    if not employee or not service:
+                        continue
+                    rate, amount, source = SaleCommissionService.calculate_detail_commission(
+                        employee=employee,
+                        service=service,
+                        line_total=spec['quantity'] * spec['price'],
+                        sale_date=sale.date_time.date() if sale.date_time else None,
+                    )
+                    if rate is None or amount is None:
+                        continue
+                    detail_obj.commission_rate_snapshot = rate
+                    detail_obj.commission_amount_snapshot = amount
+                    detail_obj.commission_source = source
+                    detail_obj.employee = employee
+                    # UPDATE directo: escribe los snapshots recién calculados y
+                    # el barbero responsable de la línea sin pasar por la
+                    # inmutabilidad (que protege cambios posteriores).
+                    SaleDetail.objects.filter(pk=detail_obj.pk).update(
+                        employee_id=employee.id,
+                        commission_rate_snapshot=rate,
+                        commission_amount_snapshot=amount,
+                        commission_source=source,
+                    )
+                    created_line_commissions = True
+
+            if created_line_commissions:
+                # REGLA DE FUENTE ÚNICA: con comisiones por línea, el snapshot
+                # de venta queda en NULL para que la nómina nunca duplique.
+                Sale.write_commission_snapshots(sale, None, None)
+            elif sale_employee:
+                # Venta de un solo barbero sin detalle por línea (modo legado).
+                rate, amount = SaleCommissionService.calculate_commission_snapshot(
+                    employee=sale_employee,
+                    sale_total=sale.total,
+                    sale_date=sale.date_time.date() if sale.date_time else None,
+                )
+                Sale.write_commission_snapshots(sale, rate, amount)
 
             # --- Generación de NCF (Comprobante Fiscal RD) ---
             ncf_type = self.request.data.get('ncf_type')
@@ -600,30 +778,63 @@ class SaleViewSet(TenantScopedViewSet):
                         }
                     )
             
-            # Recalcular período después de guardar venta.
-            # Si el período está finalizado, mover comisión a un ajuste en período abierto.
-            if active_period and getattr(active_period, 'is_finalized', False):
-                from apps.employees_api.adjustment_models import CommissionAdjustment
+            # ── Recalcular períodos de TODOS los empleados de la venta ────
+            # Con varios barberos, cada uno tiene su propio período. Si el
+            # período está finalizado, la comisión se mueve a un ajuste
+            # auditable en un período abierto (regla preexistente).
+            from apps.employees_api.adjustment_models import CommissionAdjustment
 
-                if sale_employee and sale.commission_amount_snapshot and sale.commission_amount_snapshot > 0:
-                    target_period = self._get_or_create_adjustment_period(sale_employee, timezone.now().date())
+            periods_to_recalc = []
+            if line_commissions_active:
+                for emp in line_employees:
+                    periods_to_recalc.append((emp, self._get_or_create_active_period(emp)))
+            elif sale_employee:
+                periods_to_recalc.append((sale_employee, active_period))
 
-                    CommissionAdjustment.objects.create(
-                        sale=sale,
-                        payroll_period=target_period,
-                        employee=sale_employee,
-                        amount=sale.commission_amount_snapshot,
-                        reason='correction',
-                        description=f'Ajuste automático por venta #{sale.id} en período finalizado',
-                        created_by=self.request.user,
-                        tenant=sale_employee.tenant
-                    )
+            for emp, period_obj in periods_to_recalc:
+                if period_obj is None:
+                    continue
+                if getattr(period_obj, 'is_finalized', False):
+                    for component in SaleCommissionService.commission_components(sale):
+                        if component['employee'] != emp or component['amount'] <= 0:
+                            continue
+                        target_period = self._get_or_create_adjustment_period(
+                            emp, timezone.now().date()
+                        )
+                        CommissionAdjustment.objects.create(
+                            sale=sale,
+                            sale_detail=component['detail'],
+                            payroll_period=target_period,
+                            employee=emp,
+                            amount=component['amount'],
+                            reason='correction',
+                            description=(
+                                f'Ajuste automático por venta #{sale.id} en período finalizado'
+                                + (f' (línea {component["detail"].id})' if component['detail'] else '')
+                            ),
+                            created_by=self.request.user,
+                            tenant=emp.tenant,
+                        )
+                        period_obj = target_period
+                period_obj.calculate_amounts()
+                period_obj.save()
 
-                    target_period.calculate_amounts()
-                    target_period.save()
-            elif active_period:
-                active_period.calculate_amounts()
-                active_period.save()
+            # ── Auditoría: venta sin comisión autorizada ──────────────────
+            if services_without_employee:
+                AuditLog.objects.create(
+                    user=self.request.user,
+                    action='ADMIN_ACTION',
+                    description=f"Venta #{sale.id} autorizada sin comisión por servicios sin barbero",
+                    content_object=sale,
+                    ip_address=self.request.META.get('REMOTE_ADDR'),
+                    user_agent=self.request.META.get('HTTP_USER_AGENT', ''),
+                    source='USER',
+                    extra_data={
+                        'sale_id': sale.id,
+                        'services_without_employee': services_without_employee,
+                        'reason': no_commission_reason,
+                    },
+                )
             
             # CRÍTICO: Crear movimientos de stock (productos ya actualizados)
             for product, quantity in locked_products:
@@ -839,6 +1050,7 @@ class SaleViewSet(TenantScopedViewSet):
         from django.db import transaction
         from apps.employees_api.adjustment_models import CommissionAdjustment
         from apps.employees_api.earnings_models import PayrollPeriod
+        from apps.pos_api.services import SaleCommissionService
         from django.db import IntegrityError
         import calendar
         
@@ -882,15 +1094,7 @@ class SaleViewSet(TenantScopedViewSet):
                     {'error': 'No se puede reembolsar una venta cerrada'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Verificar si ya existe refund (doble protección)
-            if hasattr(sale, 'refund'):
-                return Response(
-                    {'error': 'Esta venta ya fue reembolsada'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
 
-            # Regla de negocio: reembolso solo para ventas de productos
             sale_details = list(sale.details.select_related('content_type').all())
             if not sale_details:
                 return Response(
@@ -898,128 +1102,177 @@ class SaleViewSet(TenantScopedViewSet):
                     status=status.HTTP_400_BAD_REQUEST
                 )
 
-            has_non_product_items = any(
-                getattr(detail.content_type, 'model', None) != 'product'
-                for detail in sale_details
-            )
-            if has_non_product_items:
+            # ── Monto a reembolsar (total o parcial) ───────────────────────
+            raw_amount = request.data.get('amount')
+            if raw_amount in (None, ''):
+                refund_amount = sale.total
+            else:
+                try:
+                    refund_amount = Decimal(str(raw_amount)).quantize(Decimal('0.01'))
+                except (InvalidOperation, TypeError):
+                    return Response(
+                        {'error': 'Monto de reembolso inválido'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+
+            if refund_amount <= 0:
                 return Response(
-                    {'error': 'Solo se permiten reembolsos en ventas de productos'},
+                    {'error': 'El monto a reembolsar debe ser mayor a 0'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
-            
-            # Restaurar inventario
+
+            max_refundable = sale.refundable_amount
+            if refund_amount > max_refundable:
+                return Response(
+                    {'error': f'El monto a reembolsar ({refund_amount}) supera lo disponible ({max_refundable})'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            is_full_refund = refund_amount >= max_refundable
+            refund_ratio = (refund_amount / sale.total) if sale.total else Decimal('0')
+
+            # ── Idempotencia: repetir la misma clave no duplica ajustes ───
+            idempotency_key = (request.data.get('idempotency_key') or '').strip()[:64] or None
+            if idempotency_key:
+                already = CommissionAdjustment.objects.filter(
+                    idempotency_key=idempotency_key
+                ).first()
+                if already is not None:
+                    return Response({
+                        'detail': 'Reembolso ya procesado',
+                        'idempotent': True,
+                        'sale_id': sale.id,
+                    })
+
+            # ── Devolución de inventario (proporcional) ───────────────────
             for detail in sale_details:
-                if getattr(detail.content_type, 'model', None) == 'product':
-                    from apps.inventory_api.models import Product, StockMovement
-                    try:
-                        product = Product.objects.select_for_update().get(id=detail.object_id, tenant=self.request.tenant)
-                        product.stock += detail.quantity
-                        product.save()
-                        
-                        StockMovement.objects.create(
-                            product=product,
-                            quantity=detail.quantity,
-                            reason=f"Reembolso venta #{sale.id}"
+                if getattr(detail.content_type, 'model', None) != 'product':
+                    continue
+                from apps.inventory_api.models import Product, StockMovement
+                product = Product.objects.select_for_update().filter(
+                    id=detail.object_id, tenant=self.request.tenant
+                ).first()
+                if product is None:
+                    continue
+                # En un reembolso parcial solo vuelve la parte proporcional.
+                if is_full_refund:
+                    qty_back = detail.quantity
+                else:
+                    qty_back = int(
+                        (Decimal(detail.quantity) * refund_ratio).to_integral_value(
+                            rounding=ROUND_DOWN
                         )
-                    except Product.DoesNotExist:
-                        pass
+                    )
+                if qty_back <= 0:
+                    continue
+                product.stock += qty_back
+                product.save()
+                StockMovement.objects.create(
+                    product=product,
+                    quantity=qty_back,
+                    reason=f"{'Reembolso' if is_full_refund else 'Reembolso parcial'} venta #{sale.id}"
+                )
             
-            # Crear CommissionAdjustment si hay comisión
-            if sale.employee and sale.commission_amount_snapshot and sale.commission_amount_snapshot > 0:
-                # Validación de tenant (hardening)
-                if not request.user.is_superuser:
-                    if not hasattr(request, 'tenant') or not request.tenant:
-                        return Response(
-                            {'error': 'Usuario sin tenant'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-                    
-                    if sale.employee.tenant_id != request.tenant.id:
-                        return Response(
-                            {'error': 'No autorizado para reembolsar esta venta'},
-                            status=status.HTTP_403_FORBIDDEN
-                        )
-                
-                # Determinar período destino
-                target_period = sale.period
-                
-                # Si período original está finalizado, buscar/crear período abierto
-                if target_period and target_period.is_finalized:
-                    target_period = PayrollPeriod.objects.filter(
-                        employee=sale.employee,
-                        status__in=['open', 'pending_approval']
-                    ).first()
-                    
-                    # Si no existe período abierto, crear uno para quincena actual
-                    if not target_period:
-                        today = timezone.now().date()
-                        
-                        if today.day <= 15:
-                            start_date = today.replace(day=1)
-                            end_date = today.replace(day=15)
-                        else:
-                            start_date = today.replace(day=16)
-                            # Usar calendar.monthrange para obtener último día del mes
-                            last_day = calendar.monthrange(today.year, today.month)[1]
-                            end_date = today.replace(day=last_day)
-                        
-                        target_period = PayrollPeriod.objects.create(
-                            employee=sale.employee,
-                            period_type='biweekly',
-                            period_start=start_date,
-                            period_end=end_date,
-                            status='open'
-                        )
-                
-                # Crear adjustment negativo
-                if target_period:
-                    try:
+            # ── Ajustes de comisión auditables y proporcionales ───────────
+            # Un ajuste por barbero, respetando la regla de fuente única:
+            # por línea en ventas nuevas, por venta en las históricas.
+            affected_periods = {}
+            components = SaleCommissionService.refund_commission_components(sale, refund_ratio)
+            adjustment_reason = 'refund' if is_full_refund else 'partial_refund'
+
+            for component in components:
+                employee = component['employee']
+                if not request.user.is_superuser and employee.tenant_id != request.tenant.id:
+                    return Response(
+                        {'error': 'No autorizado para reembolsar esta venta'},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+
+                target_period = sale.period if component['source'] == 'sale' else None
+                if target_period is None:
+                    target_period = self._get_or_create_adjustment_period(
+                        employee, timezone.now().date()
+                    )
+
+                detail = component['detail']
+                key = None
+                if idempotency_key:
+                    key = f"{idempotency_key}:{detail.id}" if detail else idempotency_key
+
+                try:
+                    with transaction.atomic():
                         CommissionAdjustment.objects.create(
                             sale=sale,
+                            sale_detail=detail,
+                            idempotency_key=key,
                             payroll_period=target_period,
-                            employee=sale.employee,
-                            amount=-sale.commission_amount_snapshot,
-                            reason='refund',
-                            description=f'Reembolso de venta #{sale.id}. Motivo: {reason}',
+                            employee=employee,
+                            amount=component['amount'],
+                            reason=adjustment_reason,
+                            description=(
+                                f"{'Reembolso' if is_full_refund else 'Reembolso parcial'} "
+                                f"de venta #{sale.id}. Monto: {refund_amount}. Motivo: {reason}"
+                                + (f' (línea {detail.id})' if detail else '')
+                            ),
                             created_by=request.user,
-                            tenant=sale.employee.tenant
+                            tenant=employee.tenant
                         )
-                        
-                        # Recalcular período afectado (idempotente, no hace save interno)
-                        target_period.calculate_amounts()
-                        target_period.save()
-                        
-                    except IntegrityError:
-                        # Ya existe adjustment para este refund
-                        return Response(
-                            {'error': 'Ya existe un ajuste de comisión para este reembolso'},
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
-            
-            # Marcar como reembolsada respetando inmutabilidad financiera.
-            # El modelo Sale permite transición de estado confirmed -> refunded.
-            refunded_amount = sale.total
-            sale.status = 'refunded'
-            sale.closed = True
-            sale.save(update_fields=['status', 'closed', 'updated_at'])
+                except IntegrityError:
+                    # Duplicado: la comisión de esa línea ya fue revertida.
+                    continue
+
+                affected_periods[target_period.pk] = target_period
+
+            for period_obj in affected_periods.values():
+                period_obj.calculate_amounts()
+                period_obj.save()
+
+            # ── Estado de la venta ────────────────────────────────────────
+            sale.amount_refunded = sale.amount_refunded + refund_amount
+            if is_full_refund:
+                sale.status = 'refunded'
+                sale.closed = True
+                sale.save(update_fields=['status', 'closed', 'amount_refunded', 'updated_at'])
+            else:
+                # Reembolso parcial: la venta sigue vigente; la comisión ya fue
+                # reducida con el ajuste negativo proporcional.
+                sale.save(update_fields=['amount_refunded', 'updated_at'])
 
             AuditLog.objects.create(
                 user=request.user,
                 action='ADMIN_ACTION',
-                description=f"Reembolso procesado para venta #{sale.id}",
+                description=(
+                    f"{'Reembolso' if is_full_refund else 'Reembolso parcial'} procesado "
+                    f"para venta #{sale.id} por {refund_amount}"
+                ),
                 content_object=sale,
                 ip_address=request.META.get('REMOTE_ADDR'),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
                 source='SYSTEM',
                 extra_data={
                     'sale_id': sale.id,
+                    'refund_amount': str(refund_amount),
+                    'is_full_refund': is_full_refund,
                     'refund_reason': reason,
-                    'refund_amount': str(refunded_amount),
+                    'commission_components': [
+                        {
+                            'employee': str(c['employee']),
+                            'amount': str(c['amount']),
+                            'source': c['source'],
+                        } for c in components
+                    ],
                 }
             )
             
-            return Response({'detail': 'Venta reembolsada correctamente'})
+            return Response({
+                'detail': (
+                    'Venta reembolsada correctamente' if is_full_refund
+                    else 'Reembolso parcial procesado correctamente'
+                ),
+                'refunded_amount': str(refund_amount),
+                'is_full_refund': is_full_refund,
+                'commission_adjustments': len(components),
+            })
     
     @action(detail=True, methods=['get'])
     def print_receipt(self, request, pk=None):
