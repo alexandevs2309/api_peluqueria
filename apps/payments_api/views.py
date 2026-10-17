@@ -311,6 +311,11 @@ def manual_upload(request):
                 manual_emails.send_manual_payment_pending_email(
                     invoice.user, tenant, invoice, proof
                 )
+                # Avisar al administrador de la plataforma para que revise
+                # y apruebe/rechace el pago. Sin esto el admin no se enteraba.
+                manual_emails.send_admin_payment_pending_email(
+                    invoice.user, tenant, invoice, proof
+                )
             transaction.on_commit(_notify)
 
         result['data']['status'] = 'pending'

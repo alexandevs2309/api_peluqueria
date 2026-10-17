@@ -41,6 +41,16 @@ def _dispatch(user, subject, text_body, html_body):
     send_email_async.delay(subject, text_body, '', [user.email], html_message=html_body)
 
 
+def _dispatch_to(recipient, subject, text_body, html_body):
+    """Envia un correo a un destinatario arbitrario (ej. el admin de la plataforma) en vez de a un usuario."""
+    from apps.auth_api.tasks import send_email_async
+
+    if not recipient:
+        logger.warning('Email omitido: destinatario vacío')
+        return
+    send_email_async.delay(subject, text_body, '', [recipient], html_message=html_body)
+
+
 def _amount(value):
     try:
         return f"${float(value):,.2f}"
@@ -73,6 +83,61 @@ def send_manual_payment_pending_email(user, tenant, invoice, proof):
     )
     _dispatch(user, subject, text_body, _render('payment_pending.html', context))
     logger.info('payment_pending email -> %s (invoice=%s)', user.email, invoice.id)
+
+
+def send_admin_payment_pending_email(user, tenant, invoice, proof):
+    """Avisa al administrador de la plataforma que hay un comprobante
+    pendiente de verificación. Así el dueño se entera sin tener que revisar
+    la base de datos manualmente."""
+    from apps.settings_api.integration_service import IntegrationService
+    from apps.settings_api.models import SystemSettings
+
+    try:
+        system_settings = IntegrationService.get_system_settings()
+    except Exception:
+        system_settings = None
+
+    admin_email = None
+    if system_settings is not None:
+        admin_email = getattr(system_settings, 'support_email', None) or getattr(system_settings, 'from_email', None)
+    if not admin_email:
+        admin_email = os.getenv('SUPERADMIN_EMAIL') or os.getenv('SUPPORT_EMAIL')
+
+    if not admin_email:
+        logger.warning('No hay email de admin configurado; no se notifica el pago pendiente (invoice=%s)', invoice.id)
+        return
+
+    subject = f"Nuevo comprobante de transferencia pendiente - Factura #{invoice.id}"
+    context = {
+        'business_name': 'Auron Suite',
+        'title': subject,
+        'tenant_name': tenant.name if tenant else 'Desconocido',
+        'user_full_name': (user.full_name if user and user.full_name else '') or (user.email if user else 'Cliente'),
+        'invoice_id': str(invoice.id),
+        'plan_amount': _amount(proof.amount_provided),
+        'plan_name': invoice.subscription.plan.get_name_display() if invoice.subscription and invoice.subscription.plan else 'Suscripción',
+        'payment_method': 'Transferencia bancaria',
+        'bank_reference': proof.bank_reference,
+        'cta_label': 'Revisar pago',
+        'cta_url': f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')}/admin/billing",
+    }
+
+    text_body = (
+        f"Se recibió un nuevo comprobante de transferencia.\n\n"
+        f"Negocio: {context['tenant_name']}\n"
+        f"Cliente: {context['user_full_name']} ({user.email if user else ''})\n"
+        f"Factura: #{invoice.id}\n"
+        f"Monto: {context['plan_amount']}\n"
+        f"Plan: {context['plan_name']}\n"
+        f"Referencia bancaria: {proof.bank_reference}\n\n"
+        f"Para aprobar o rechazar, usa el endpoint:\n"
+        f"POST /api/billing/invoices/{invoice.id}/approve_manual_payment/\n"
+        f"POST /api/billing/invoices/{invoice.id}/reject_manual_payment/\n\n"
+        f"El equipo de Auron Suite"
+    )
+    html_body = _render('payment_pending.html', context)
+    _dispatch_to(admin_email, subject, text_body, html_body)
+    logger.info('admin_payment_pending email -> %s (invoice=%s)', admin_email, invoice.id)
 
 
 def send_manual_payment_approved_email(user, tenant, invoice, proof, access_until):
