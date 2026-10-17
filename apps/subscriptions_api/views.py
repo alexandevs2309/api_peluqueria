@@ -1173,6 +1173,18 @@ class RenewSubscriptionView(APIView):
             else:
                 payment_provider = 'stripe'
 
+        # Si Stripe no está configurado (sin clave), no intentar usarlo: se cae
+        # a 'manual' para que la renovación quede registrada como transferencia
+        # pendiente de verificación en vez de devolver 500.
+        if payment_provider == 'stripe':
+            try:
+                _stripe_key = IntegrationService.get_system_settings().stripe_secret_key
+            except Exception:
+                _stripe_key = None
+            _stripe_key = _stripe_key or getattr(settings, 'STRIPE_SECRET_KEY', None)
+            if not _stripe_key:
+                payment_provider = 'manual'
+
         billing_interval = str(request.data.get('billing_interval') or 'month').strip().lower()
         if billing_interval not in {'month', 'year'}:
             return Response({'error': 'billing_interval must be either "month" or "year"'}, status=400)
