@@ -138,13 +138,17 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             day_start = local_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
 
+            # OJO: select_for_update() + select_related('service') provocaba
+            # "FOR UPDATE cannot be applied to the nullable side of an outer join"
+            # en PostgreSQL, porque service es nullable. Se bloquea primero sin
+            # join y el servicio se carga por separado (lazy) al iterar.
             conflicting_appointments = Appointment.objects.select_for_update().filter(
                 tenant=tenant,
                 stylist=stylist,
                 date_time__gte=day_start,
                 date_time__lt=day_end,
                 status__in=['scheduled', 'completed']
-            ).exclude(pk=getattr(serializer.instance, 'pk', None)).select_related('service')
+            ).exclude(pk=getattr(serializer.instance, 'pk', None))
 
             new_duration = service.duration if service else 30
             new_start = appointment_datetime
