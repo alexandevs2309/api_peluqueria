@@ -1252,6 +1252,36 @@ class RenewSubscriptionView(APIView):
             from apps.billing_api.models import Invoice
             from apps.payments_api.models import Payment, PaymentProvider
 
+            # Si ya hay una factura por transferencia sin resolver, NO se crea
+            # otra: se devuelve la existente. Con transferencia bancaria el
+            # cliente puede pulsar "pagar" varias veces y transfieriera de ahi
+            # en adelante por cobros que el sistema no conoce.
+            pending = (
+                Invoice.objects
+                .filter(user=request.user, tenant=tenant, status='pending',
+                        payment_method='transfer')
+                .select_related('payment')
+                .order_by('-issued_at')
+                .first()
+            )
+            if pending:
+                proof = None
+                if pending.payment_id:
+                    proof = pending.payment.proofs.order_by('-created_at').first()
+                return Response({
+                    'message': (
+                        'Ya tienes una factura pendiente de pago. '
+                        'No necesitas generar otra.'
+                    ),
+                    'already_pending': True,
+                    'invoice_id': str(pending.id),
+                    'payment_id': str(pending.payment_id) if pending.payment_id else None,
+                    'amount': str(pending.amount),
+                    'invoice_status': 'pending',
+                    'proof_status': proof.decision if proof else None,
+                    'cta_url': '/client/payment-proofs',
+                }, status=status.HTTP_409_CONFLICT)
+
             provider, _ = PaymentProvider.objects.get_or_create(
                 name='manual', defaults={'is_active': True}
             )

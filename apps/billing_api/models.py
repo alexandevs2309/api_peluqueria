@@ -50,6 +50,24 @@ class Invoice(models.Model):
         ("refunded", "Refunded"),
     ], default="pending")
 
+    # Datos del descarte (cancelacion). La factura NUNCA se borra: queda en el
+    # historial con estado 'canceled' y el motivo de por que se cerro.
+    discard_reason = models.CharField(
+        max_length=255, blank=True,
+        help_text="Motivo por el que se descarto la factura"
+    )
+    discarded_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Fecha en que se descarto la factura"
+    )
+    discarded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='discarded_invoices',
+        help_text="Usuario que descarto la factura"
+    )
+
     class Meta:
         ordering = ["-issued_at"]
         indexes = [

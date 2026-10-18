@@ -38,6 +38,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         'me': 'billing_api.view_invoice',
         'approve_manual_payment': 'billing_api.change_invoice',
         'reject_manual_payment': 'billing_api.change_invoice',
+        'discard': 'billing_api.change_invoice',
     }
     http_method_names = ['get', 'post', 'head', 'options']
 
@@ -91,6 +92,63 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
             {'error': 'No se permite modificar ni eliminar facturas.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED
         )
+
+    @action(detail=True, methods=['post'], url_path='discard')
+    def discard(self, request, pk=None):
+        """Descarta una factura pendiente SIN borrarla del registro contable.
+
+        Es el equivalente de "cancelar" una factura: queda con estado
+        'canceled', con fecha y motivo, y deja de contar como deuda. Nunca se
+        borra porque el historial de facturacion debe ser integro.
+
+        Solo aplica a facturas pendientes y sin ningun comprobante aprobado.
+        """
+        invoice = self.get_object()
+
+        if invoice.status == 'paid' or invoice.is_paid:
+            return Response(
+                {'error': 'Una factura pagada no se puede descartar.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reason = (request.data.get('reason') or '').strip()
+        if len(reason) < 5:
+            return Response(
+                {'error': 'Indica el motivo del descarte (minimo 5 caracteres).'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Un comprobante aprobado significa que el dinero entro: no se descarta.
+        if invoice.payment_id:
+            if invoice.payment.proofs.filter(decision='approved').exists():
+                return Response(
+                    {'error': 'Esta factura tiene un pago aprobado.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        with transaction.atomic():
+            locked = Invoice.objects.select_for_update().get(pk=invoice.pk)
+            locked.status = 'canceled'
+            locked.discard_reason = reason
+            locked.discarded_at = timezone.now()
+            locked.discarded_by = request.user
+            locked.save(update_fields=['status', 'discard_reason', 'discarded_at', 'discarded_by'])
+
+            # El comprobante pendiente (si habia) queda rejected, no aprobado.
+            if locked.payment_id:
+                locked.payment.proofs.filter(decision='pending').update(decision='rejected')
+                locked.payment.status = 'failed'
+                locked.payment.save(update_fields=['status'])
+
+            self._audit_payment_decision(request, 'INVOICE_DISCARDED', locked, {
+                'reason': reason,
+            })
+
+        return Response({
+            'message': 'Factura descartada. Ya no cuenta como pendiente.',
+            'invoice_id': str(invoice.id),
+            'status': 'canceled',
+        }, status=status.HTTP_200_OK)
 
     @action(detail=True, methods=['post'])
     def mark_as_paid(self, request, pk=None):

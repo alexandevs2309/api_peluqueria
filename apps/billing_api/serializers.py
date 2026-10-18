@@ -42,6 +42,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             "subscription", "plan_name", "amount", "description",
             "due_date", "is_paid", "paid_at", "issued_at", "status",
             "payment_method", "proof",
+            "discard_reason", "discarded_at",
         ]
         read_only_fields = [
             "id", "user", "amount", "is_paid", "issued_at", "status", "paid_at"
