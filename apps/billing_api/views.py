@@ -43,7 +43,7 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Invoice.objects.select_related(
-            'user', 'tenant', 'subscription', 'subscription__plan'
+            'user', 'tenant', 'subscription', 'subscription__plan', 'payment'
         )
 
         if self.request.user.is_superuser:
@@ -56,6 +56,23 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         if not tenant:
             return Invoice.objects.none()
         return queryset.filter(tenant=tenant)
+
+    def filter_queryset(self, queryset):
+        """Permite pedir solo las facturas con comprobante pendiente de revision.
+
+        Se usa desde la pantalla del administrador para no tener que traer
+        todas las facturas y filtrar en el navegador.
+        """
+        queryset = super().filter_queryset(queryset)
+
+        if self.request.query_params.get('manual_pending') in ('1', 'true', 'True'):
+            queryset = queryset.filter(
+                status='pending',
+                payment__isnull=False,
+                payment__proofs__decision='pending',
+            ).distinct()
+
+        return queryset
 
     def update(self, request, *args, **kwargs):
         return Response(

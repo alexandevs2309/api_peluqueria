@@ -75,6 +75,12 @@ class InvoiceSerializer(serializers.ModelSerializer):
             return None
         if not proof:
             return None
+        file_url = None
+        if proof.file:
+            # El archivo NUNCA se expone como URL publica de MEDIA: solo se
+            # descarga por el endpoint protegido, que valida permisos.
+            file_url = f"/api/payments/manual/proof/{proof.id}/"
+
         return {
             'id': str(proof.id),
             'decision': proof.decision,
@@ -83,6 +89,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'bank_reference': proof.bank_reference,
             'amount_provided': float(proof.amount_provided) if proof.amount_provided is not None else None,
             'created_at': proof.created_at,
+            'file_name': proof.file_name or '',
+            'file_url': file_url,
         }
 
     def validate_amount(self, value):

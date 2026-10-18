@@ -18,7 +18,7 @@ def _base_context(subject, tenant, user):
         'title': subject,
         'tenant_name': tenant.name if tenant else 'Auron Suite',
         'user_full_name': (user.full_name if user and user.full_name else '') or (user.email if user else 'Cliente'),
-        'cta_url': f"{frontend_url}/client/invoices",
+        'cta_url': f"{frontend_url}/client/payment-proofs",
     }
 
 
@@ -118,21 +118,20 @@ def send_admin_payment_pending_email(user, tenant, invoice, proof):
         'plan_name': invoice.subscription.plan.get_name_display() if invoice.subscription and invoice.subscription.plan else 'Suscripción',
         'payment_method': 'Transferencia bancaria',
         'bank_reference': proof.bank_reference,
-        'cta_label': 'Revisar pago',
-        'cta_url': f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')}/admin/billing",
+        'cta_label': 'Revisar y aprobar',
+        'cta_url': f"{getattr(settings, 'FRONTEND_URL', 'http://localhost:4200').rstrip('/')}/admin/manual-payments-review",
     }
 
     text_body = (
-        f"Se recibió un nuevo comprobante de transferencia.\n\n"
+        f"Se recibio un nuevo comprobante de transferencia.\n\n"
         f"Negocio: {context['tenant_name']}\n"
         f"Cliente: {context['user_full_name']} ({user.email if user else ''})\n"
         f"Factura: #{invoice.id}\n"
         f"Monto: {context['plan_amount']}\n"
         f"Plan: {context['plan_name']}\n"
         f"Referencia bancaria: {proof.bank_reference}\n\n"
-        f"Para aprobar o rechazar, usa el endpoint:\n"
-        f"POST /api/billing/invoices/{invoice.id}/approve_manual_payment/\n"
-        f"POST /api/billing/invoices/{invoice.id}/reject_manual_payment/\n\n"
+        f"Para aprobar o rechazar el pago entra aqui:\n"
+        f"{context['cta_url']}\n\n"
         f"El equipo de Auron Suite"
     )
     html_body = _render('payment_pending.html', context)
