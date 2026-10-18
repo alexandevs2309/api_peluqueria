@@ -90,7 +90,7 @@ def send_admin_payment_pending_email(user, tenant, invoice, proof):
     pendiente de verificación. Así el dueño se entera sin tener que revisar
     la base de datos manualmente."""
     from apps.settings_api.integration_service import IntegrationService
-    from apps.settings_api.models import SystemSettings
+    from django.conf import settings
 
     try:
         system_settings = IntegrationService.get_system_settings()

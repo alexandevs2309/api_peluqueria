@@ -1,5 +1,7 @@
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.auth import get_user_model
+from django.db import transaction
+
 from .models import AuditLog
 
 User = get_user_model()
@@ -178,20 +180,31 @@ def create_audit_log(user, action, description, content_object=None,
             # Si la tabla contenttypes no existe aún (durante migraciones), saltar
             kwargs['content_type'] = None
 
-        # Manejar diferentes tipos de objetos que pueden no tener un atributo 'id' estándar
+        # Manejar diferentes tipos de objetos que pueden no tener un atributo 'id' estándar.
+        # OJO: object_id es PositiveIntegerField. Los modelos con pk UUID (Payment,
+        # PaymentProof) no caben ahí y PostgreSQL abortaba la transacción con
+        # "integer out of range". Para esos se registra el content_type y se deja
+        # object_id vacío: el uuid real queda en extra_data y en la descripción.
+        object_ref = None
         if hasattr(content_object, 'id'):
-            kwargs['object_id'] = content_object.id
+            object_ref = content_object.id
         elif hasattr(content_object, 'pk'):
-            kwargs['object_id'] = content_object.pk
+            object_ref = content_object.pk
+
+        if isinstance(object_ref, int):
+            kwargs['object_id'] = object_ref
         else:
-            # Si el objeto no tiene id ni pk, no podemos establecer object_id
             kwargs['object_id'] = None
     
     if extra_data:
         kwargs['extra_data'] = extra_data
     
     try:
-        return AuditLog.objects.create(**kwargs)
+        # savepoint: si el INSERT falla, la transacción externa sigue siendo
+        # utilizable. Antes un fallo aqui dejaba la transacción rota y la
+        # vista devolvía 500 aunque el pago se hubiera procesado bien.
+        with transaction.atomic():
+            return AuditLog.objects.create(**kwargs)
     except Exception as e:
         # Durante migraciones o estados tempranos de la app la tabla puede no existir.
         # No queremos que una auditoría impida el procedimiento principal (migrate/tests).

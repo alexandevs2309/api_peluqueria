@@ -259,9 +259,11 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         invoice = self.get_object()
         decision_note = request.data.get('decision_note') or request.data.get('reason') or ''
         with transaction.atomic():
-            locked = Invoice.objects.select_for_update().select_related(
-                'payment__provider', 'subscription__plan', 'user', 'tenant'
-            ).get(pk=invoice.pk)
+            # OJO: select_for_update() + select_related('payment__provider') falla
+            # en PostgreSQL con "FOR UPDATE cannot be applied to the nullable
+            # side of an outer join", porque payment es nullable. Se bloquea la
+            # factura sola y las relaciones se cargan despues (lazy).
+            locked = Invoice.objects.select_for_update().get(pk=invoice.pk)
             result = manual_payments.approve_manual_payment(locked, request.user, decision_note=decision_note)
             if not result['ok']:
                 return Response({'error': result['error']}, status=result['status'])
@@ -293,9 +295,9 @@ class InvoiceViewSet(AuditLoggingMixin, viewsets.ModelViewSet):
         invoice = self.get_object()
         reason = (request.data.get('decision_note') or request.data.get('reason') or '').strip()
         with transaction.atomic():
-            locked = Invoice.objects.select_for_update().select_related(
-                'payment__provider', 'subscription__plan', 'user', 'tenant'
-            ).get(pk=invoice.pk)
+            # Mismo caso que approve: el join con payment (nullable) rompe el
+            # FOR UPDATE en PostgreSQL. Se bloquea solo la factura.
+            locked = Invoice.objects.select_for_update().get(pk=invoice.pk)
             result = manual_payments.reject_manual_payment(locked, request.user, reason)
             if not result['ok']:
                 return Response({'error': result['error']}, status=result['status'])
