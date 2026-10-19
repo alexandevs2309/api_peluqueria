@@ -6,6 +6,7 @@ from .views import (
     azul_checkout,
     azul_verify,
     azul_webhook,
+    payment_availability,
     manual_upload,
     manual_proof_download,
 )
@@ -21,6 +22,8 @@ urlpatterns = [
     path('azul/checkout/', azul_checkout, name='azul-checkout'),
     path('azul/verify/', azul_verify, name='azul-verify'),
     path('azul/webhook/', azul_webhook, name='azul-webhook'),
+    # Disponibilidad real de metodos de pago (para el checkout)
+    path('availability/', payment_availability, name='payment-availability'),
     # Pagos manuales
     path('manual/', manual_upload, name='manual-upload'),
     path('manual/proof/<uuid:proof_id>/', manual_proof_download, name='manual-proof-download'),

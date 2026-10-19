@@ -211,6 +211,32 @@ def azul_verify(request):
 
 from apps.settings_api.integration_service import IntegrationService
 
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def payment_availability(request):
+    """Indica que metodos de pago estan realmente operativos.
+
+    El frontend lo usa para NO ofrecer formularios que no pueden cobrar
+    (por ejemplo, tarjeta cuando Azul todavia no esta configurado).
+    """
+    try:
+        card_configured = bool(AzulService().is_configured)
+    except Exception:
+        card_configured = False
+
+    try:
+        paypal_enabled = bool(IntegrationService.is_paypal_enabled())
+    except Exception:
+        paypal_enabled = False
+
+    return Response({
+        'card': card_configured,
+        'card_provider': 'azul',
+        'paypal': paypal_enabled,
+        'transfer': True,
+    })
+
 @csrf_exempt
 @api_view(['POST'])
 @permission_classes([AllowAny])
