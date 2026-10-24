@@ -103,6 +103,8 @@ class BarbershopWriteSerializer(serializers.ModelSerializer):
             'currency_symbol',
             'business_hours',
             'contact',
+            'enable_ncf',
+            'ncf_default_type',
         ]
 
     def validate_primary_color(self, value):

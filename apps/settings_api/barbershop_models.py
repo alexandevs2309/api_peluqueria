@@ -87,6 +87,21 @@ class BarbershopSettings(models.Model):
     whatsapp_phone = models.CharField(max_length=32, blank=True)
 
     # =============================================
+    # NCF (COMPROBANTE FISCAL RD) — Configuración por Tenant
+    # =============================================
+    
+    enable_ncf = models.BooleanField(
+        default=False,
+        help_text='Activa generación automática de NCF al confirmar ventas con cliente con RNC'
+    )
+    ncf_default_type = models.CharField(
+        max_length=2,
+        choices=[('01', 'Crédito Fiscal (B01)'), ('02', 'Consumidor Final (B02)')],
+        default='02',
+        help_text='Tipo de NCF por defecto al generar automáticamente'
+    )
+
+    # =============================================
     # PASARELA DE PAGO — Credenciales por Tenant
     # =============================================
 

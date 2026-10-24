@@ -672,9 +672,46 @@ class SaleViewSet(TenantScopedViewSet):
                 )
                 Sale.write_commission_snapshots(sale, rate, amount)
 
-            # --- Generación de NCF (Comprobante Fiscal RD) ---
+            # ── Generación AUTOMÁTICA de NCF (Comprobante Fiscal RD) ---
+            # Solo si: tenant tiene enable_ncf=True + cliente tiene RNC + venta confirmada
+            tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
+            auto_ncf = False
+            barbershop_settings = None
+            if tenant:
+                try:
+                    barbershop_settings = tenant.barbershop_settings
+                    if barbershop_settings.enable_ncf and sale.client and sale.client.rnc:
+                        auto_ncf = True
+                except Exception:
+                    pass
+            
+            # Generación automática de NCF
+            if auto_ncf:
+                from django.db import transaction
+                ncf_type = barbershop_settings.ncf_default_type or '02'
+                with transaction.atomic():
+                    sequence = NCFSequence.objects.select_for_update().filter(
+                        tenant=tenant,
+                        type=ncf_type,
+                        is_active=True,
+                        current_sequence__lte=F('end_sequence'),
+                        expiration_date__gte=timezone.now().date()
+                    ).order_by('created_at').first()
+                    
+                    if sequence:
+                        ncf = sequence.get_next_ncf()
+                        if ncf:
+                            sale.ncf = ncf
+                            sale.ncf_type = ncf_type
+                            sale.rnc = sale.client.rnc
+                            sale.company_name = sale.client.full_name
+                            sale.save(update_fields=['ncf', 'ncf_type', 'rnc', 'company_name'])
+                            sequence.current_sequence += 1
+                            sequence.save(update_fields=['current_sequence'])
+
+            # ── Generación MANUAL de NCF (Comprobante Fiscal RD) ---
             ncf_type = self.request.data.get('ncf_type')
-            if ncf_type:
+            if ncf_type and not auto_ncf:
                 tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
                 if tenant:
                     from django.db import transaction
