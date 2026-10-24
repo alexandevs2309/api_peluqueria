@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, time
 from .models import Employee, WorkSchedule, AttendanceRecord
 from apps.settings_api.models import Setting
+from apps.employees_api.earnings_models import PayrollConfiguration, PayrollPeriod
 
 @shared_task
 def auto_process_daily_absences():
@@ -114,3 +115,48 @@ def auto_checkout_end_of_day():
         closed_count += 1
         
     return f"Cerradas {closed_count} asistencias abiertas"
+
+
+@shared_task
+def auto_close_payroll_periods():
+    """
+    Cron diario que cierra períodos de nómina abiertos que ya terminaron.
+    Busca configuraciones con auto_close_periods=True y pasa períodos
+    con period_end < hoy de 'open' → 'pending_approval'.
+    """
+    from django.db import transaction
+    
+    today = timezone.now().date()
+    closed_count = 0
+    
+    configs = PayrollConfiguration.objects.filter(auto_close_periods=True).select_related('tenant')
+    
+    for config in configs:
+        # Períodos abiertos que ya terminaron (period_end < hoy)
+        periods = PayrollPeriod.objects.filter(
+            employee__tenant=config.tenant,
+            period_end__lt=today,
+            status='open'
+        ).select_related('employee')
+        
+        for period in periods:
+            try:
+                with transaction.atomic():
+                    # Recalcular antes de cerrar para asegurar montos actualizados
+                    period.calculate_amounts()
+                    period.close_period()  # pasa a pending_approval
+                    period.save(update_fields=[
+                        'status', 'submitted_for_approval_at',
+                        'base_salary', 'commission_earnings', 'gross_amount',
+                        'deductions_total', 'net_amount',
+                        'can_pay', 'pay_block_reason',
+                        'updated_at'
+                    ])
+                    closed_count += 1
+            except Exception as e:
+                # Log pero no fallar todo el task
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Error auto-cerrando período {period.id}: {e}")
+    
+    return f"Auto-cerrados {closed_count} períodos de nómina"

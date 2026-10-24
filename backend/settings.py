@@ -428,6 +428,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.subscriptions_api.tasks.check_expired_subscriptions',
         'schedule': crontab(minute=0),  # Cada hora
     },
+    # Automatización nómina: cerrar períodos abiertos que ya terminaron
+    'auto-close-payroll-periods': {
+        'task': 'apps.employees_api.tasks.auto_close_payroll_periods',
+        'schedule': crontab(hour=1, minute=0),  # Diario a la 1:00 AM
+    },
     # Tareas de automatización de citas
     'mark-expired-appointments': {
         'task': 'apps.notifications_api.tasks.mark_expired_appointments',
