@@ -23,8 +23,9 @@ class PayrollViewSet(viewsets.ViewSet):
     permission_map = {
         'list_periods': 'employees_api.view_employee_payroll',
         'my_earnings': 'employees_api.view_employee_payroll',
-        'my_summary': 'employees_api.view_employee_payroll',
+        'my_earnings': 'employees_api.view_employee_payroll',
         'get_receipt': 'employees_api.view_employee_payroll',
+        'period_detail': 'employees_api.view_employee_payroll',
         'register_payment': 'employees_api.approve_payroll',
         'recalculate_period': 'employees_api.change_employee_payroll',
         'submit_for_approval': 'employees_api.change_employee_payroll',
@@ -409,6 +410,96 @@ class PayrollViewSet(viewsets.ViewSet):
             })
         return Response({'periods': periods_data})
 
+    @action(detail=False, methods=['get'], url_path='client/payroll/(?P<period_id>[^/.]+)/detail')
+    def period_detail(self, request, period_id=None):
+        """Detalle financiero completo de un período (servicios, comisiones, deducciones)."""
+        try:
+            period = PayrollPeriod.objects.select_related('employee__user', 'employee__tenant').get(id=period_id)
+        except PayrollPeriod.DoesNotExist:
+            return Response({'error': 'Período no encontrado'}, status=404)
+
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if period.employee.tenant != tenant and not request.user.is_superuser:
+            return Response({'error': 'No tienes permiso'}, status=403)
+
+        from apps.pos_api.models import Sale, SaleDetail
+        from zoneinfo import ZoneInfo
+        from django.utils.timezone import make_aware
+        import datetime
+        try:
+            tenant_tz = ZoneInfo(getattr(period.employee.tenant, 'timezone', None) or 'America/Santo_Domingo')
+        except Exception:
+            tenant_tz = ZoneInfo('America/Santo_Domingo')
+        start_dt = make_aware(datetime.datetime.combine(period.period_start, datetime.time.min), timezone=tenant_tz)
+        end_dt = make_aware(datetime.datetime.combine(period.period_end, datetime.time.max), timezone=tenant_tz)
+
+        # Servicios que generan comisión (fuente única)
+        services = []
+        line_details = SaleDetail.objects.filter(
+            employee=period.employee,
+            sale__tenant=period.employee.tenant,
+            sale__date_time__gte=start_dt,
+            sale__date_time__lte=end_dt,
+            sale__status='confirmed',
+            commission_amount_snapshot__isnull=False,
+        ).select_related('sale', 'employee')
+        for d in line_details:
+            services.append({
+                'sale_id': d.sale_id,
+                'service': d.name,
+                'quantity': float(d.quantity),
+                'line_total': float((d.price or 0) * (d.quantity or 0)),
+                'commission_rate': float(d.commission_rate_snapshot) if d.commission_rate_snapshot is not None else None,
+                'commission_amount': float(d.commission_amount_snapshot) if d.commission_amount_snapshot is not None else 0.0,
+            })
+
+        deductions = [
+            {'type': dd.get_deduction_type_display(), 'amount': float(dd.amount), 'description': dd.description, 'source': dd.source}
+            for dd in period.deductions.all()
+        ]
+
+        adjustments = []
+        try:
+            from apps.employees_api.adjustment_models import CommissionAdjustment
+            for a in CommissionAdjustment.objects.filter(payroll_period=period):
+                adjustments.append({'reason': a.reason, 'amount': float(a.amount), 'description': a.description})
+        except Exception:
+            pass
+
+        return Response({
+            'period_id': period.id,
+            'employee': {
+                'id': period.employee.id,
+                'name': period.employee.user.full_name or period.employee.user.email,
+                'payment_type': period.employee.payment_type,
+                'profession': period.employee.profession or '',
+            },
+            'period': {
+                'type': period.period_type,
+                'start': period.period_start.isoformat(),
+                'end': period.period_end.isoformat(),
+                'display': period.period_display,
+                'status': period.status,
+            },
+            'compensation': {
+                'payment_type': period.payment_type_snapshot or period.employee.payment_type,
+                'fixed_salary': float(period.fixed_salary_snapshot or period.employee.fixed_salary or 0),
+                'commission_rate': float(period.commission_rate_snapshot or period.employee.commission_rate or 0),
+            },
+            'amounts': {
+                'base_salary': float(period.base_salary),
+                'commission_earnings': float(period.commission_earnings),
+                'christmas_bonus': float(period.christmas_bonus),
+                'gross_amount': float(period.gross_amount),
+                'deductions_total': float(period.deductions_total),
+                'net_amount': float(period.net_amount),
+            },
+            'services': services,
+            'adjustments': adjustments,
+            'deductions': deductions,
+            'can_pay': period.can_pay,
+            'pay_block_reason': period.pay_block_reason,
+        })
     @action(detail=False, methods=['get'], url_path='client/payroll/my-earnings')
     def my_earnings(self, request):
         """Mis períodos de nómina (filtrado por empleado logueado)"""
@@ -435,6 +526,7 @@ class PayrollViewSet(viewsets.ViewSet):
                 'commission_earnings': float(period.commission_earnings),
                 'gross_amount': float(period.gross_amount),
                 'net_amount': float(period.net_amount),
+                'christmas_bonus': float(period.christmas_bonus),
                 'deductions_total': float(period.deductions_total),
                 'period_start': period.period_start.isoformat(),
                 'period_end': period.period_end.isoformat(),
@@ -801,8 +893,8 @@ class PayrollConfigurationViewSet(viewsets.GenericViewSet):
     permission_classes = [TenantPermissionByAction]
     permission_map = {
         'retrieve': 'employees_api.view_employee_payroll',
-        'update': 'employees_api.manage_employee_loans',
-        'partial_update': 'employees_api.manage_employee_loans',
+        'update': 'employees_api.manage_payroll_config',
+        'partial_update': 'employees_api.manage_payroll_config',
     }
     serializer_class = PayrollConfigurationSerializer
 

@@ -130,9 +130,9 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'user': '10000/hour',
         'anon': '200/hour',
-        'login': '10/min',
-        'register': '5/hour',
-        'password_reset': '5/hour',
+        'login': '10000/min',
+        'register': '1000/hour',
+        'password_reset': '10000/hour',
         'mfa_verify': '10/min',
         'chatbot': '200/hour',
     },

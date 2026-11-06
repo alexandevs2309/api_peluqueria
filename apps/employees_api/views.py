@@ -743,7 +743,7 @@ class WorkScheduleViewSet(viewsets.ModelViewSet):
             is_tenant_admin = UserRole.objects.filter(
                 user=user,
                 tenant=self.request.tenant,
-                role__name__in=['Admin', 'Client-Admin', 'Manager']
+                role__name__in=['Client-Admin', 'Manager']
             ).exists()
 
             if is_tenant_admin:
@@ -832,7 +832,7 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
             is_tenant_admin = UserRole.objects.filter(
                 user=user,
                 tenant=self.request.tenant,
-                role__name__in=['Admin', 'Client-Admin', 'Manager']
+                role__name__in=['Client-Admin', 'Manager']
             ).exists()
 
             if is_tenant_admin:
@@ -1010,7 +1010,7 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
             is_admin_or_manager = UserRole.objects.filter(
                 user=user,
                 tenant=getattr(request, 'tenant', user.tenant if hasattr(user, 'tenant') else None),
-                role__name__in=['Admin', 'Client-Admin', 'Manager']
+                role__name__in=['Client-Admin', 'Manager']
             ).exists()
             if not is_admin_or_manager:
                 return Response({'detail': 'No tiene permisos para justificar asistencias'}, status=status.HTTP_403_FORBIDDEN)
@@ -1049,7 +1049,7 @@ class AttendanceRecordViewSet(viewsets.ModelViewSet):
                 is_admin_or_manager = UserRole.objects.filter(
                     user=user,
                     tenant=tenant,
-                    role__name__in=['Admin', 'Client-Admin', 'Manager']
+                    role__name__in=['Client-Admin', 'Manager']
                 ).exists()
                 if not is_admin_or_manager:
                     raise PermissionDenied("No tienes permisos para registrar asistencia de otros colaboradores")

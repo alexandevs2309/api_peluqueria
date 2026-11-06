@@ -60,7 +60,7 @@ class McpChatAuthTests(TestCase):
 
     def test_chat_requires_message(self):
         from apps.auth_api.factories import UserFactory
-        user = UserFactory()
+        user = UserFactory(is_superuser=True)
         client = APIClient()
         client.force_authenticate(user=user)
         resp = client.post("/api/mcp/chat/", {}, format="json")

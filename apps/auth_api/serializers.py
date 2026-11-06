@@ -222,6 +222,23 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
         user.save()
         return user
 
+class SetInitialPasswordSerializer(PasswordResetConfirmSerializer):
+    """Establece la contraseña inicial desde el enlace de un solo uso.
+
+    Reutiliza la validación de ``default_token_generator`` (uid + token) y,
+    además, marca el correo como verificado y consume el token de verificación.
+    """
+
+    def save(self):
+        user = self.validated_data['user']
+        user.set_password(self.validated_data['new_password'])
+        user.is_email_verified = True
+        user.email_verification_token = None
+        user.is_active = True
+        user.save()
+        return user
+
+
 class ResendVerificationSerializer(serializers.Serializer):
     email = serializers.EmailField()
 

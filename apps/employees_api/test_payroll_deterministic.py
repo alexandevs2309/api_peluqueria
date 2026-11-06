@@ -300,9 +300,9 @@ class TestPayrollDeterministic:
         sale.status = 'confirmed'
         sale.save()
         
-        # Debe usar tasa del historial (15%), no del empleado (10%)
-        assert sale.commission_rate_snapshot == Decimal('15.00')
-        assert sale.commission_amount_snapshot == Decimal('15.00')
+        # Regla aprobada: sin desglose por línea no se genera comisión a nivel de venta.
+        assert sale.commission_rate_snapshot is None
+        assert sale.commission_amount_snapshot is None
     
     def test_approved_period_creates_snapshot(self, setup_data):
         """Test 10: Aprobar período crea calculation_snapshot"""

@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     RegisterView, LoginView, LogoutView,
     ChangePasswordView, PasswordResetRequestView, PasswordResetConfirmView,ActiveSessionsView , TerminateSessionView , VerifyEmailView , MFALoginVerifyView , MFASetupView , MFAVerifyView, MFADisableView, UserViewSet, VerifyAuthView,
-    ResendVerificationView
+    ResendVerificationView, SetInitialPasswordView
 )
 from .cookie_views import CookieLoginView, CookieLogoutView, CookieRefreshView, LookupSubdomainView
 from .permissions_check import UserPermissionsView
@@ -28,6 +28,7 @@ urlpatterns = [
     path('session/<str:jti>/', TerminateSessionView.as_view(), name='terminate-session'),
     path('verify-email/<str:token>/', VerifyEmailView.as_view(), name='verify-email'),
     path('resend-verification/', ResendVerificationView.as_view(), name='resend-verification'),
+    path('set-password/', SetInitialPasswordView.as_view(), name='set-initial-password'),
     path('mfa/setup/', MFASetupView.as_view(), name='mfa-setup'),
     path('mfa/verify/', MFAVerifyView.as_view(), name='mfa-verify'),
     path('mfa/disable/', MFADisableView.as_view(), name='mfa-disable'),

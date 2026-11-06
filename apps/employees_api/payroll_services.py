@@ -22,6 +22,7 @@ class PayrollCalculationService:
         """
         from apps.pos_api.models import Sale, SaleDetail
         from apps.employees_api.adjustment_models import CommissionAdjustment
+        from apps.employees_api.compensation_models import EmployeeCompensationHistory
         
         # 1. Sumar comisiones desde snapshots de ventas
         import datetime
@@ -94,8 +95,16 @@ class PayrollCalculationService:
             total=Sum('amount')
         )['total'] or Decimal('0.00')
         
-        # 3. Obtener tipo de pago del empleado (usar snapshot si existe)
-        payment_type = period.payment_type_snapshot or period.employee.payment_type
+        # 3. Obtener tipo de pago del empleado (compensación histórica vigente)
+        from django.utils import timezone as _tz
+        _comp = EmployeeCompensationHistory.get_active_compensation(
+            employee=period.employee,
+            date=period.period_start,
+        )
+        if _comp is not None:
+            payment_type = _comp.payment_type
+        else:
+            payment_type = period.payment_type_snapshot or period.employee.payment_type
 
         # 4. Total de comisiones (solo commission/mixed reciben comisión de ventas)
         if payment_type in ['commission', 'mixed']:
@@ -104,9 +113,12 @@ class PayrollCalculationService:
             total_commission = adjustments_total  # fixed solo recibe ajustes manuales
 
         # 5. Salario base (si aplica)
-        fixed_salary = period.fixed_salary_snapshot \
-            if period.fixed_salary_snapshot is not None \
-            else period.employee.fixed_salary
+        if _comp is not None:
+            fixed_salary = _comp.fixed_salary
+        else:
+            fixed_salary = period.fixed_salary_snapshot \
+                if period.fixed_salary_snapshot is not None \
+                else period.employee.fixed_salary
         
         base_salary = Decimal('0.00')
         if payment_type in ['fixed', 'mixed']:
@@ -115,7 +127,18 @@ class PayrollCalculationService:
             elif period.period_type == 'biweekly':
                 base_salary = fixed_salary / 2
             elif period.period_type == 'weekly':
-                base_salary = fixed_salary / 4
+                import calendar
+                from datetime import timedelta
+                # Prorrateo por día: cada día se valora según los días del mes
+                # al que pertenece. Evita asumir que todos los días pertenecen
+                # al mes de inicio (períodos que cruzan meses).
+                total = Decimal('0.00')
+                cur = period.period_start
+                while cur <= period.period_end:
+                    dim = calendar.monthrange(cur.year, cur.month)[1]
+                    total += fixed_salary / Decimal(dim)
+                    cur = cur + timedelta(days=1)
+                base_salary = total.quantize(Decimal('0.01'))
         
         return {
             'base_salary': base_salary,
@@ -138,7 +161,7 @@ class PayrollCalculationService:
         """
         period.base_salary = calculation_result['base_salary']
         period.commission_earnings = calculation_result['commission_earnings']
-        period.gross_amount = calculation_result['gross_amount']
+        period.gross_amount = calculation_result['gross_amount'] + (period.christmas_bonus or Decimal('0.00'))
         
         # Calcular deducciones y neto
         deductions = period.deductions.all()

@@ -304,21 +304,43 @@ class CookieRefreshView(APIView):
         
         try:
             token = RefreshToken(refresh_token)
-            access = token.access_token
-            access.set_exp(lifetime=timedelta(minutes=get_jwt_expiry_minutes()))
-            new_access_token = str(access)
+            # Verificar que el token no esté en blacklist (reutilización)
+            try:
+                token.verify()
+            except Exception:
+                raise
 
-            # ROTATE_REFRESH_TOKENS=True: generar nuevo refresh y blacklistear el anterior
-            new_refresh_token = str(token)
-            
+            user_id = token.payload.get('user_id')
+            user = User.objects.get(pk=user_id)
+            tenant_id = token.payload.get('tenant_id')
+
+            # Validar tenant del usuario
+            if tenant_id is not None and getattr(user, 'tenant_id', None) not in (None, tenant_id):
+                raise ValidationError('Tenant mismatch')
+
+            # Blacklist del refresh anterior (protección contra reutilización)
+            try:
+                token.blacklist()
+            except Exception:
+                pass
+
+            # Emitir nuevo refresh + access (rotación real)
+            new_refresh = RefreshToken.for_user(user)
+            if tenant_id is not None:
+                new_refresh['tenant_id'] = tenant_id
+            new_access = new_refresh.access_token
+            new_access.set_exp(lifetime=timedelta(minutes=get_jwt_expiry_minutes()))
+            if tenant_id is not None:
+                new_access['tenant_id'] = tenant_id
+
             response = Response({
                 'message': 'Token refreshed successfully'
             }, status=status.HTTP_200_OK)
             
             return set_auth_cookies(
                 response,
-                access_token=new_access_token,
-                refresh_token=new_refresh_token,
+                access_token=str(new_access),
+                refresh_token=str(new_refresh),
                 access_max_age=_jwt_cookie_max_age('ACCESS_TOKEN_LIFETIME'),
                 refresh_max_age=_jwt_cookie_max_age('REFRESH_TOKEN_LIFETIME'),
             )

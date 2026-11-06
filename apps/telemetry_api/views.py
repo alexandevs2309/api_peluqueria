@@ -27,6 +27,9 @@ def errors_ingest(request):
     if not isinstance(events, list):
         return JsonResponse({'error': 'Field "events" must be a list'}, status=400)
 
+    if len(events) > 100:
+        events = events[:100]
+
     created = FrontendErrorEvent.ingest_batch(events)
     FrontendErrorEvent.forward_to_sentry(events)
 

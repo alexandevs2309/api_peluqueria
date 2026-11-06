@@ -6,6 +6,35 @@ import hashlib
 
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _auth_error(code: str, message: str, http_status: int, details=None) -> 'Response':
+    """Error controlado con el mismo contrato que el registro."""
+    return Response(
+        {
+            'error': message,
+            'code': code,
+            'type': 'VALIDATION' if http_status < 500 else 'SYSTEM',
+            'message': message,
+            'details': details or {},
+        },
+        status=http_status,
+    )
+
+
+def _resolve_password_token(uid: str, token: str):
+    """Devuelve ``(user, error_message)`` validando uid + token de un solo uso."""
+    if not uid or not token:
+        return None, 'El enlace es inválido o está incompleto.'
+    try:
+        user_id = force_str(urlsafe_base64_decode(uid))
+        user = User.objects.get(pk=user_id)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        return None, 'El enlace es inválido o ya fue utilizado.'
+
+    if not default_token_generator.check_token(user, token):
+        return None, 'El enlace es inválido, expiró o ya fue utilizado.'
+    return user, None
 from rest_framework import generics, status, permissions
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -13,8 +42,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import NotFound, ValidationError
 from rest_framework.pagination import LimitOffsetPagination
 from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
-from django.utils.http import urlsafe_base64_encode
-from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
 from apps.emails.service import EmailRenderer
 from django.contrib.auth import get_user_model
 from django.contrib.auth.tokens import default_token_generator
@@ -28,7 +57,8 @@ from .models import User, AccessLog
 from .serializers import (
     ActiveSessionSerializer, RegisterSerializer, LoginSerializer,
     PasswordChangeSerializer, PasswordResetRequestSerializer,
-    PasswordResetConfirmSerializer, MFASetupSerializer, MFAVerifySerializer,
+    PasswordResetConfirmSerializer, SetInitialPasswordSerializer,
+    MFASetupSerializer, MFAVerifySerializer,
     EmployeeUserSerializer, UserListSerializer, get_explicit_tenant_input,
     ResendVerificationSerializer
 )
@@ -651,24 +681,120 @@ class VerifyEmailView(APIView):
     permission_classes = [AllowAny]
 
     def get(self, request, token):
-        try:
-            user = User.objects.get(email_verification_token=token)
-            user.is_email_verified = True
-            user.email_verification_token = None
-            user.save()
-            AccessLog.objects.create(
-                user=user,
-                event_type='EMAIL_VERIFIED',
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request)[:255],
-                timestamp=now()
+        if not token:
+            return _auth_error(
+                'INVALID_VERIFICATION_TOKEN',
+                'Token inválido: el enlace de verificación es inválido.',
+                status.HTTP_400_BAD_REQUEST,
             )
-            return Response({"detail": "Correo verificado exitosamente."}, status=status.HTTP_200_OK)
-        except User.DoesNotExist:
-            return Response({"error": "Token inválido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from apps.auth_api.onboarding import is_email_verification_token_valid
+        user = User.objects.filter(email_verification_token=token).first()
+        if user is None or not is_email_verification_token_valid(token):
+            return _auth_error(
+                'INVALID_VERIFICATION_TOKEN',
+                'Token inválido: el enlace de verificación expiró o ya fue utilizado.',
+                status.HTTP_400_BAD_REQUEST,
+            )
+
+        if getattr(user, 'is_email_verified', False):
+            return Response(
+                {'detail': 'Tu correo ya estaba verificado.', 'email_verified': True},
+                status=status.HTTP_200_OK,
+            )
+
+        user.is_email_verified = True
+        user.email_verification_token = None
+        user.save(update_fields=['is_email_verified', 'email_verification_token'])
+        AccessLog.objects.create(
+            user=user,
+            event_type='EMAIL_VERIFIED',
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)[:255],
+            timestamp=now(),
+        )
+        return Response(
+            {'detail': 'Correo verificado exitosamente.', 'email_verified': True},
+            status=status.HTTP_200_OK,
+        )
+
+
+class SetInitialPasswordView(APIView):
+    """Valida y consume el enlace de un solo uso para crear la contraseña."""
+
+    permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetThrottle]
+
+    def get_throttles(self):
+        # La validación del enlace al abrir la página no debe consumir el
+        # límite de intentos del POST.
+        if self.request.method == 'GET':
+            return []
+        return super().get_throttles()
+
+    def get(self, request):
+        uid = request.query_params.get('uid') or ''
+        token = request.query_params.get('token') or ''
+        user, error = _resolve_password_token(uid, token)
+        if error:
+            return _auth_error(
+                'INVALID_OR_EXPIRED_TOKEN',
+                error,
+                status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'valid': True,
+            'email': user.email,
+            'full_name': user.full_name,
+        })
+
+    def post(self, request):
+        serializer = SetInitialPasswordSerializer(data=request.data)
+        if not serializer.is_valid():
+            first_error = next(iter(serializer.errors.values()))
+            message = first_error[0] if isinstance(first_error, (list, tuple)) else str(first_error)
+            return _auth_error(
+                'INVALID_PASSWORD_OR_TOKEN',
+                message,
+                status.HTTP_400_BAD_REQUEST,
+                details=serializer.errors,
+            )
+
+        user = serializer.save()
+        AccessLog.objects.create(
+            user=user,
+            event_type='PASSWORD_CHANGE',
+            ip_address=get_client_ip(request),
+            user_agent=get_user_agent(request)[:255],
+            timestamp=now(),
+        )
+
+        # Correo de confirmación (no bloquea la respuesta).
+        try:
+            subject = 'Contraseña creada'
+            text_body = (
+                f'Hola {user.full_name or user.email}, tu contraseña fue creada '
+                'correctamente y tu correo quedó verificado.'
+            )
+            html_body = _render_email_html(
+                'password_changed.html',
+                user=user,
+                title=subject,
+                request=request,
+            )
+            _deliver_user_email(user, subject, text_body, html_body)
+        except Exception:  # pragma: no cover - nunca falla la operación principal
+            logger.exception('No se pudo encolar el correo de confirmación user_id=%s', user.pk)
+
+        return Response({
+            'detail': 'Contraseña creada correctamente. Ya puedes iniciar sesión.',
+            'email_verified': True,
+        }, status=status.HTTP_200_OK)
+
 
 class ResendVerificationView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetThrottle]
 
     def post(self, request):
         serializer = ResendVerificationSerializer(data=request.data)
@@ -678,36 +804,23 @@ class ResendVerificationView(APIView):
         # Respuesta genérica por seguridad (evitar enumeración de usuarios)
         generic_response = Response(
             {"detail": "Si el correo está registrado y no verificado, se ha enviado un nuevo enlace de verificación."},
-            status=status.HTTP_200_OK
+            status=status.HTTP_200_OK,
         )
 
         try:
-            # Buscamos todos los usuarios no verificados asociados a este correo
-            users = User.objects.filter(email=email, is_email_verified=False)
-            if not users.exists():
-                return generic_response
+            from apps.auth_api.onboarding import send_onboarding_email
 
+            users = User.objects.filter(email__iexact=email, is_email_verified=False)
             for user in users:
                 if not user.email_verification_token:
-                    user.email_verification_token = uuid.uuid4().hex
+                    from apps.auth_api.onboarding import generate_email_verification_token
+                    user.email_verification_token = generate_email_verification_token()
                     user.save(update_fields=['email_verification_token'])
-
-                email_subject = "Verifica tu correo"
-                frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
-                verify_url = f"{frontend_url}/auth/verify-email/{user.email_verification_token}/"
-                email_body = f"Hola {user.full_name}, verifica tu correo en: {verify_url}"
-                email_html = _render_email_html(
-                    'verify_email.html',
-                    user=user,
-                    title=email_subject,
-                    cta_url=verify_url,
-                    cta_label='Verificar correo',
-                )
-                _deliver_user_email(user, email_subject, email_body, email_html)
+                send_onboarding_email(user, getattr(user, 'tenant', None))
 
             return generic_response
         except Exception as e:
-            logger.error(f"Error reenviando email de verificación a {email}: {str(e)}")
+            logger.error("Error reenviando email de verificación a %s: %s", email, str(e))
             return generic_response
 
 class MFASetupView(APIView):

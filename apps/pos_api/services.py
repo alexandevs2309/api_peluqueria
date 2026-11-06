@@ -141,11 +141,9 @@ class SaleCommissionService:
     @staticmethod
     def apply_commission_snapshot(sale, employee):
         """
-        Aplica snapshot de comisión a nivel de venta.
-
-        IMPORTANTE: si la venta ya tiene comisiones por línea, no se escribe
-        snapshot de venta. Esto garantiza la regla de fuente única y evita
-        doble conteo en la nómina.
+        Aplica snapshot de comisión. Regla aprobada: solo los servicios generan
+        comisión. Si la venta no tiene comisiones por línea, no se genera
+        comisión a nivel de venta (no se estima sobre el total).
         """
         has_line_commissions = (
             sale.pk is not None
@@ -156,17 +154,9 @@ class SaleCommissionService:
             sale.commission_amount_snapshot = None
             return
 
-        if employee and employee.payment_type in ['commission', 'mixed']:
-            rate, amount = SaleCommissionService.calculate_commission_snapshot(
-                employee=employee,
-                sale_total=sale.total,
-                sale_date=sale.date_time.date() if sale.date_time else None
-            )
-            sale.commission_rate_snapshot = rate
-            sale.commission_amount_snapshot = amount
-        else:
-            sale.commission_rate_snapshot = Decimal('0.00')
-            sale.commission_amount_snapshot = Decimal('0.00')
+        # Sin desglose por línea: sin comisión (no se estima sobre el total).
+        sale.commission_rate_snapshot = None
+        sale.commission_amount_snapshot = None
 
     # ── Reembolsos proporcionales ──────────────────────────────────────────
     @staticmethod

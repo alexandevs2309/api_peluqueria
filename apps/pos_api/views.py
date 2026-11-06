@@ -664,13 +664,9 @@ class SaleViewSet(TenantScopedViewSet):
                 # de venta queda en NULL para que la nómina nunca duplique.
                 Sale.write_commission_snapshots(sale, None, None)
             elif sale_employee:
-                # Venta de un solo barbero sin detalle por línea (modo legado).
-                rate, amount = SaleCommissionService.calculate_commission_snapshot(
-                    employee=sale_employee,
-                    sale_total=sale.total,
-                    sale_date=sale.date_time.date() if sale.date_time else None,
-                )
-                Sale.write_commission_snapshots(sale, rate, amount)
+                # Venta sin desglose por línea: no se genera comisión sobre el total
+                # (regla: solo servicios generan comisión; sin desglose no se estima).
+                Sale.write_commission_snapshots(sale, None, None)
 
             # ── Generación AUTOMÁTICA de NCF (Comprobante Fiscal RD) ---
             # Solo si: tenant tiene enable_ncf=True + cliente tiene RNC + venta confirmada
@@ -910,9 +906,9 @@ class SaleViewSet(TenantScopedViewSet):
             'client', 'employee', 'user', 'user__tenant', 'tenant'
         ).prefetch_related('details', 'details__content_type')
         
-        # Si no es superusuario ni staff, solo sus propias ventas
-        # (Client-Admin ve todas las ventas del tenant)
-        if not user.is_superuser and not user.is_staff:
+        # Si no es superusuario, solo sus propias ventas para roles no administrativos
+        # (Client-Admin ve todas las ventas del tenant). No usar is_staff como proxy.
+        if not user.is_superuser:
             from apps.auth_api.role_utils import get_effective_role_api
             user_role = get_effective_role_api(user, tenant=getattr(self.request, 'tenant', None))
             if user_role not in ('CLIENT_ADMIN', 'SUPER_ADMIN'):
@@ -2004,6 +2000,19 @@ class PosConfigurationViewSet(TenantScopedViewSet):
     def perform_create(self, serializer):
         tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         serializer.save(user=self.request.user, tenant=tenant)
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        if instance.tenant is None and not getattr(self.request.user, 'is_superuser', False):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('No se puede modificar una configuración compartida.')
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if instance.tenant is None and not getattr(self.request.user, 'is_superuser', False):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied('No se puede eliminar una configuración compartida.')
+        super().perform_destroy(instance)
             
 @api_view(['GET'])
 @permission_classes([permissions.IsAuthenticated])

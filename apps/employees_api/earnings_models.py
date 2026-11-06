@@ -53,6 +53,11 @@ class PayrollPeriod(models.Model):
         help_text='Porcentaje de comisión vigente al crear período'
     )
     
+    christmas_bonus = models.DecimalField(
+        max_digits=10, decimal_places=2, default=Decimal('0.00'),
+        help_text='Bono navideño (importe manual o calculado)'
+    )
+    
     base_salary = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     commission_earnings = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
     gross_amount = models.DecimalField(max_digits=10, decimal_places=2, default=Decimal('0.00'))
@@ -193,6 +198,8 @@ class PayrollPeriod(models.Model):
                 raise ValidationError("No se puede modificar deductions_total en período aprobado/pagado")
             if old_instance.net_amount != self.net_amount:
                 raise ValidationError("No se puede modificar net_amount en período aprobado/pagado")
+            if old_instance.christmas_bonus != self.christmas_bonus:
+                raise ValidationError("No se puede modificar christmas_bonus en período aprobado/pagado")
             
             # Detectar cambios en campos protegidos
             protected_fields_changed = []
@@ -247,9 +254,8 @@ class PayrollPeriod(models.Model):
             return
 
         # 1. Eliminar deducciones automáticas anteriores para este periodo
-        # para que al recalcular no se dupliquen
-        self.deductions.filter(is_automatic=True, description__startswith="[Asistencia]").delete()
-        self.deductions.filter(is_automatic=True, deduction_type__in=['tax', 'social_security', 'health_insurance']).delete()
+        # para que al recalcular no se dupliquen (identificadas por source)
+        self.deductions.filter(is_automatic=True, source='auto_attendance').delete()
         
         # 2. Calcular deducciones automáticas por asistencia tardía / inasistencia
         employee = self.employee
@@ -292,7 +298,8 @@ class PayrollPeriod(models.Model):
                             deduction_type='other',
                             amount=amount_late,
                             description=f"[Asistencia] Deducción por tardanza acumulada ({minutes_late} minutos)",
-                            is_automatic=True
+                            is_automatic=True,
+                            source='auto_attendance',
                         )
                 
                 if days_absent > 0:
@@ -303,13 +310,14 @@ class PayrollPeriod(models.Model):
                             deduction_type='other',
                             amount=amount_absent,
                             description=f"[Asistencia] Deducción por inasistencia ({days_absent} días)",
-                            is_automatic=True
+                            is_automatic=True,
+                            source='auto_attendance',
                         )
 
         # Auto-deduct active loan installments (Bug 3)
         self.deductions.filter(
             is_automatic=True,
-            description__startswith="[Préstamo]"
+            source='auto_loan',
         ).delete()
 
         from apps.employees_api.models import Loan
@@ -332,60 +340,35 @@ class PayrollPeriod(models.Model):
                         deduction_type='loan',
                         amount=installment_amount,
                         description=f"[Préstamo] Cuota automática — {loan.description or 'Préstamo #' + str(loan.id)}",
-                        is_automatic=True
+                        is_automatic=True,
+                        source='auto_loan',
+                        loan=loan,
                     )
         
         try:
             from apps.employees_api.payroll_services import PayrollCalculationService
-            
+
             calculation = PayrollCalculationService.calculate_from_snapshots(self)
-            
+
             # Aplicar resultados (IDEMPOTENTE: solo asigna valores)
             self.base_salary = calculation['base_salary']
             self.commission_earnings = calculation['commission_earnings']
-            self.gross_amount = calculation['gross_amount']
-            
-        except ImportError:
-            # Fallback a lógica antigua si el servicio no existe aún
-            employee = self.employee
-            
-            # Calcular salario base según tipo de pago y período
-            if employee.payment_type in ['fixed', 'mixed']:
-                if self.period_type == 'monthly':
-                    self.base_salary = employee.fixed_salary
-                elif self.period_type == 'biweekly':
-                    self.base_salary = employee.fixed_salary / 2
-                elif self.period_type == 'weekly':
-                    self.base_salary = employee.fixed_salary / 4
-            else:
-                self.base_salary = Decimal('0.00')
-            
-            # Calcular comisiones desde las ventas del período
-            if employee.payment_type in ['commission', 'mixed']:
-                from apps.pos_api.models import Sale
-                sales = Sale.objects.filter(
-                    tenant=employee.tenant,
-                    employee=employee,
-                    date_time__date__gte=self.period_start,
-                    date_time__date__lte=self.period_end,
-                    status='confirmed'
-                )
-                total_sales = sum(sale.total for sale in sales)
-                commission_rate_value = self.commission_rate_snapshot \
-                    if self.commission_rate_snapshot is not None \
-                    else (employee.commission_rate or Decimal('0.00'))
-                commission_rate = Decimal(str(commission_rate_value)) / Decimal('100')
-                self.commission_earnings = Decimal(str(total_sales)) * commission_rate
-            else:
-                self.commission_earnings = Decimal('0.00')
-            
-            # Calcular totales
-            self.gross_amount = self.base_salary + self.commission_earnings
+            self.gross_amount = calculation['gross_amount'] + (self.christmas_bonus or Decimal('0.00'))
+
+        except ImportError as exc:
+            import logging
+            logging.getLogger(__name__).exception(
+                "PayrollCalculationService no disponible; no se puede calcular la nómina del período %s",
+                getattr(self, 'pk', None),
+            )
+            raise RuntimeError(
+                "Servicio de cálculo de nómina no disponible"
+            ) from exc
 
         # Auto-apply configured rates from PayrollConfiguration (Bug 5)
         self.deductions.filter(
             is_automatic=True,
-            description__startswith="[Config]"
+            source='auto_config',
         ).delete()
 
         try:
@@ -406,7 +389,8 @@ class PayrollPeriod(models.Model):
                         deduction_type='tax',
                         amount=tax_amount,
                         description=f"[Config] ISR ({payroll_config.tax_rate}%)",
-                        is_automatic=True
+                        is_automatic=True,
+                        source='auto_config',
                     )
 
             if payroll_config.social_security_rate > 0:
@@ -419,7 +403,8 @@ class PayrollPeriod(models.Model):
                         deduction_type='social_security',
                         amount=ss_amount,
                         description=f"[Config] TSS ({payroll_config.social_security_rate}%)",
-                        is_automatic=True
+                        is_automatic=True,
+                        source='auto_config',
                     )
 
             if payroll_config.health_insurance_rate > 0:
@@ -432,7 +417,8 @@ class PayrollPeriod(models.Model):
                         deduction_type='health_insurance',
                         amount=hi_amount,
                         description=f"[Config] SFS ({payroll_config.health_insurance_rate}%)",
-                        is_automatic=True
+                        is_automatic=True,
+                        source='auto_config',
                     )
 
         # Calcular deducciones y neto finales
@@ -448,7 +434,7 @@ class PayrollPeriod(models.Model):
                 f"El monto neto no coincide con la fórmula (Bruto - Deducciones). "
                 f"Esperado: {self.gross_amount - self.deductions_total}, Encontrado: {self.net_amount}"
             )
-        expected_gross = self.base_salary + self.commission_earnings
+        expected_gross = self.base_salary + self.commission_earnings + (self.christmas_bonus or Decimal('0.00'))
         if self.gross_amount != expected_gross:
             raise ValueError(
                 f"El monto bruto no coincide con la suma de salario base y comisiones. "
@@ -586,29 +572,22 @@ class PayrollPeriod(models.Model):
         self.is_finalized = True  # NUEVO: Asegurar finalización
         self.save()
 
-        # Update loan remaining balances for auto-deducted installments (Bug 3)
-        from apps.employees_api.models import Loan
+        # Update loan remaining balances for auto-deducted installments.
+        # Se usa la referencia explícita `loan` para evitar matching por monto.
         loan_deductions = self.deductions.filter(
             is_automatic=True,
-            description__startswith="[Préstamo]"
+            deduction_type='loan',
+            loan__isnull=False,
         )
         for deduction in loan_deductions:
-            # Safe approach: match active loans and reduce balance
-            active_loans = Loan.objects.filter(
-                employee=self.employee,
-                status='active',
-                remaining_balance__gt=Decimal('0.00')
-            ).order_by('created_at')
-            for loan in active_loans:
-                installment = (loan.amount / max(loan.installments, 1)).quantize(Decimal('0.01'))
-                installment = min(installment, loan.remaining_balance)
-                if abs(installment - deduction.amount) < Decimal('0.02'):  # fuzzy match
-                    loan.remaining_balance -= deduction.amount
-                    if loan.remaining_balance <= Decimal('0.00'):
-                        loan.remaining_balance = Decimal('0.00')
-                        loan.status = 'paid'
-                    loan.save(update_fields=['remaining_balance', 'status'])
-                    break
+            loan = deduction.loan
+            if loan is None or loan.status != 'active':
+                continue
+            loan.remaining_balance -= deduction.amount
+            if loan.remaining_balance <= Decimal('0.00'):
+                loan.remaining_balance = Decimal('0.00')
+                loan.status = 'paid'
+            loan.save(update_fields=['remaining_balance', 'status'])
     
     @property
     def period_display(self):
@@ -651,7 +630,31 @@ class PayrollDeduction(models.Model):
     is_automatic = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
-    
+
+    # Fuente identificable de la deducción (no depender solo de prefijos de texto)
+    SOURCE_CHOICES = [
+        ('auto_attendance', 'Automática - Asistencia'),
+        ('auto_loan', 'Automática - Préstamo'),
+        ('auto_config', 'Automática - Configuración'),
+        ('manual', 'Manual'),
+        ('adjustment', 'Ajuste correctivo'),
+    ]
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default='manual')
+
+    # Trazabilidad mínima de auditoría
+    original_amount = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    modified_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='payroll_deductions_modified')
+    modified_at = models.DateTimeField(null=True, blank=True)
+
+    # Referencia explícita al préstamo (evita matching por monto)
+    loan = models.ForeignKey(
+        'employees_api.Loan',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='payroll_deductions',
+    )
+
     class Meta:
         ordering = ['deduction_type']
         indexes = [
