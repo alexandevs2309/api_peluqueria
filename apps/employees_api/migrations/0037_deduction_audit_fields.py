@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import migrations, models
 import django.db.models.deletion
 
@@ -6,6 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('employees_api', '0036_reclassify_deduction_sources'),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
     operations = [
@@ -17,7 +19,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='payrolldeduction',
             name='modified_by',
-            field=models.ForeignKey('auth.User', null=True, blank=True, on_delete=django.db.models.deletion.SET_NULL, related_name='payroll_deductions_modified'),
+            field=models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=django.db.models.deletion.SET_NULL, related_name='payroll_deductions_modified'),
         ),
         migrations.AddField(
             model_name='payrolldeduction',
