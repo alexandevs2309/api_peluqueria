@@ -111,14 +111,24 @@ class TestPayrollUserNull:
         assert period.gross_amount == Decimal('30.00')
         assert period.gross_amount > 0
 
+        from apps.employees_api.earnings_models import PayrollConfiguration
+        # Desactivar deducciones automáticas para este test (tasas en 0)
+        from apps.employees_api.earnings_models import PayrollConfiguration
+        PayrollConfiguration.objects.update_or_create(
+            tenant=tenant_a,
+            defaults={'tax_rate': Decimal('0.00'), 'social_security_rate': Decimal('0.00'), 'health_insurance_rate': Decimal('0.00')},
+        )
+
         # Crear una deducción manual para verificar el cálculo del neto
         PayrollDeduction.objects.create(
             period=period,
             deduction_type='other',
             amount=Decimal('5.00'),
-            description="Deducción de prueba"
+            description="Deducción de prueba",
+            is_automatic=False,
+            source='manual',
         )
-        
+
         period.calculate_amounts()
         # Caso G: net sigue siendo correcto (30.00 gross - 5.00 deduction = 25.00 net)
         assert period.net_amount == Decimal('25.00')

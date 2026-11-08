@@ -23,9 +23,18 @@ class PayrollViewSet(viewsets.ViewSet):
     permission_map = {
         'list_periods': 'employees_api.view_employee_payroll',
         'my_earnings': 'employees_api.view_employee_payroll',
-        'my_earnings': 'employees_api.view_employee_payroll',
         'get_receipt': 'employees_api.view_employee_payroll',
         'period_detail': 'employees_api.view_employee_payroll',
+        'generate_regalia': 'employees_api.change_employee_payroll',
+        'list_regalia': 'employees_api.view_employee_payroll',
+        'pay_regalia': 'employees_api.approve_payroll',
+        'generate_vacations': 'employees_api.change_employee_payroll',
+        'list_vacations': 'employees_api.view_employee_payroll',
+        'enjoy_vacation': 'employees_api.change_employee_payroll',
+        'compensate_vacation': 'employees_api.approve_payroll',
+        'generate_liquidacion': 'employees_api.change_employee_payroll',
+        'list_liquidaciones': 'employees_api.view_employee_payroll',
+        'pay_liquidacion': 'employees_api.approve_payroll',
         'register_payment': 'employees_api.approve_payroll',
         'recalculate_period': 'employees_api.change_employee_payroll',
         'submit_for_approval': 'employees_api.change_employee_payroll',
@@ -494,12 +503,248 @@ class PayrollViewSet(viewsets.ViewSet):
                 'deductions_total': float(period.deductions_total),
                 'net_amount': float(period.net_amount),
             },
+            'employer_contributions': {
+                'sfs': float(period.employer_sfs),
+                'afp': float(period.employer_afp),
+                'srl': float(period.employer_srl),
+                'infotep': float(period.employer_infotep),
+                'total': float(period.employer_total),
+            },
             'services': services,
             'adjustments': adjustments,
             'deductions': deductions,
             'can_pay': period.can_pay,
             'pay_block_reason': period.pay_block_reason,
         })
+    @action(detail=False, methods=['post'], url_path='client/payroll/generate-regalia')
+    def generate_regalia(self, request):
+        """Genera regalía pascual para todos los empleados activos del tenant."""
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'error': 'No se pudo determinar el tenant'}, status=400)
+
+        year = request.data.get('year') or __import__('datetime').date.today().year
+        try:
+            year = int(year)
+        except (ValueError, TypeError):
+            return Response({'error': 'Año inválido'}, status=400)
+
+        from apps.employees_api.models import Employee
+        from apps.employees_api.earnings_models import RegaliaPascual
+
+        employees = Employee.objects.filter(tenant=tenant, is_active=True)
+        created = 0
+        for emp in employees:
+            RegaliaPascual.calculate_for_employee(emp, year)
+            created += 1
+
+        return Response({'message': f'Regalía generada para {created} empleados', 'year': year})
+
+    @action(detail=False, methods=['get'], url_path='client/payroll/regalia')
+    def list_regalia(self, request):
+        """Lista regalías pascuales del tenant."""
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'regalias': []})
+        from apps.employees_api.earnings_models import RegaliaPascual
+        qs = RegaliaPascual.objects.filter(tenant=tenant)
+        year = request.query_params.get('year')
+        if year:
+            qs = qs.filter(year=year)
+        data = [
+            {
+                'id': r.id,
+                'employee_id': r.employee_id,
+                'employee_name': r.employee.user.full_name or r.employee.user.email,
+                'year': r.year,
+                'ordinary_salary_annual': float(r.ordinary_salary_annual),
+                'amount': float(r.amount),
+                'is_tax_exempt': r.is_tax_exempt,
+                'status': r.status,
+                'paid_at': r.paid_at.isoformat() if r.paid_at else None,
+            }
+            for r in qs
+        ]
+        return Response({'regalias': data})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/regalia/(?P<regalia_id>[^/.]+)/pay')
+    def pay_regalia(self, request, regalia_id=None):
+        """Marca una regalía como pagada."""
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        from apps.employees_api.earnings_models import RegaliaPascual
+        try:
+            regalia = RegaliaPascual.objects.get(id=regalia_id, tenant=tenant)
+        except RegaliaPascual.DoesNotExist:
+            return Response({'error': 'Regalía no encontrada'}, status=404)
+        if regalia.status == 'paid':
+            return Response({'error': 'Ya fue pagada'}, status=400)
+        regalia.mark_as_paid(request.user, request.data.get('reference'))
+        return Response({'message': 'Regalía pagada', 'amount': float(regalia.amount)})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/generate-vacations')
+    def generate_vacations(self, request):
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'error': 'No se pudo determinar el tenant'}, status=400)
+        year = request.data.get('year') or __import__('datetime').date.today().year
+        try:
+            year = int(year)
+        except (ValueError, TypeError):
+            return Response({'error': 'Año inválido'}, status=400)
+        from apps.employees_api.models import Employee
+        from apps.employees_api.earnings_models import Vacation
+        employees = Employee.objects.filter(tenant=tenant, is_active=True)
+        created = 0
+        for emp in employees:
+            Vacation.calculate_for_employee(emp, year)
+            created += 1
+        return Response({'message': f'Vacaciones generadas para {created} empleados', 'year': year})
+
+    @action(detail=False, methods=['get'], url_path='client/payroll/vacations')
+    def list_vacations(self, request):
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'vacations': []})
+        from apps.employees_api.earnings_models import Vacation
+        qs = Vacation.objects.filter(tenant=tenant)
+        year = request.query_params.get('year')
+        if year:
+            qs = qs.filter(year=year)
+        data = [
+            {
+                'id': v.id,
+                'employee_id': v.employee_id,
+                'employee_name': v.employee.user.full_name or v.employee.user.email,
+                'year': v.year,
+                'days_entitled': v.days_entitled,
+                'days_taken': v.days_taken,
+                'days_remaining': v.days_entitled - v.days_taken,
+                'paid_amount': float(v.paid_amount),
+                'status': v.status,
+                'start_date': v.start_date.isoformat() if v.start_date else None,
+                'end_date': v.end_date.isoformat() if v.end_date else None,
+            }
+            for v in qs
+        ]
+        return Response({'vacations': data})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/vacations/(?P<vacation_id>[^/.]+)/enjoy')
+    def enjoy_vacation(self, request, vacation_id=None):
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        from apps.employees_api.earnings_models import Vacation
+        from datetime import date
+        try:
+            vac = Vacation.objects.get(id=vacation_id, tenant=tenant)
+        except Vacation.DoesNotExist:
+            return Response({'error': 'Vacación no encontrada'}, status=404)
+        start = request.data.get('start_date')
+        end = request.data.get('end_date')
+        if not start or not end:
+            return Response({'error': 'start_date y end_date requeridos'}, status=400)
+        try:
+            vac.mark_enjoyed(date.fromisoformat(start), date.fromisoformat(end))
+        except ValueError as e:
+            return Response({'error': str(e)}, status=400)
+        return Response({'message': 'Vacación registrada', 'days_taken': vac.days_taken})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/vacations/(?P<vacation_id>[^/.]+)/compensate')
+    def compensate_vacation(self, request, vacation_id=None):
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        from apps.employees_api.earnings_models import Vacation
+        try:
+            vac = Vacation.objects.get(id=vacation_id, tenant=tenant)
+        except Vacation.DoesNotExist:
+            return Response({'error': 'Vacación no encontrada'}, status=404)
+        if vac.status == 'compensated':
+            return Response({'error': 'Ya fue compensada'}, status=400)
+        vac.compensate(request.user, request.data.get('termination_type'), None)
+        return Response({'message': 'Vacación compensada', 'paid_amount': float(vac.paid_amount)})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/generate-liquidacion')
+    def generate_liquidacion(self, request):
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'error': 'No se pudo determinar el tenant'}, status=400)
+        from apps.employees_api.models import Employee
+        from apps.employees_api.earnings_models import Liquidacion
+        employee_id = request.data.get('employee_id')
+        termination_date = request.data.get('termination_date')
+        termination_type = request.data.get('termination_type', 'desahucio')
+        if not employee_id or not termination_date:
+            return Response({'error': 'employee_id y termination_date requeridos'}, status=400)
+        try:
+            employee = Employee.objects.get(id=employee_id, tenant=tenant)
+        except Employee.DoesNotExist:
+            return Response({'error': 'Empleado no encontrado'}, status=404)
+        from datetime import date
+        try:
+            td = date.fromisoformat(termination_date)
+        except ValueError:
+            return Response({'error': 'Fecha inválida'}, status=400)
+        total_utilities = request.data.get('total_utilities')
+        total_payroll = request.data.get('total_payroll')
+        participacion_exempt = bool(request.data.get('participacion_exempt', False))
+        asistencia = request.data.get('asistencia_economica', '0')
+        liq = Liquidacion.calculate(
+            employee=employee,
+            termination_date=td,
+            termination_type=termination_type,
+            total_utilities=total_utilities,
+            total_payroll=total_payroll,
+            participacion_exempt=participacion_exempt,
+            asistencia_economica=asistencia,
+        )
+        return Response({
+            'id': liq.id,
+            'total': float(liq.total),
+            'preaviso': float(liq.preaviso_amount),
+            'cesantia': float(liq.cesantia_amount),
+            'vacaciones': float(liq.vacation_amount),
+            'regalia': float(liq.regalia_proporcional),
+            'participacion': float(liq.participacion_beneficios),
+        })
+
+    @action(detail=False, methods=['get'], url_path='client/payroll/liquidaciones')
+    def list_liquidaciones(self, request):
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        if not tenant:
+            return Response({'liquidaciones': []})
+        from apps.employees_api.earnings_models import Liquidacion
+        qs = Liquidacion.objects.filter(tenant=tenant)
+        data = [
+            {
+                'id': l.id,
+                'employee_id': l.employee_id,
+                'employee_name': l.employee.user.full_name or l.employee.user.email,
+                'termination_date': l.termination_date.isoformat(),
+                'termination_type': l.termination_type,
+                'total': float(l.total),
+                'status': l.status,
+                'paid_at': l.paid_at.isoformat() if l.paid_at else None,
+            }
+            for l in qs
+        ]
+        return Response({'liquidaciones': data})
+
+    @action(detail=False, methods=['post'], url_path='client/payroll/liquidaciones/(?P<liq_id>[^/.]+)/pay')
+    def pay_liquidacion(self, request, liq_id=None):
+        self._require_admin_role(request)
+        tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
+        from apps.employees_api.earnings_models import Liquidacion
+        try:
+            liq = Liquidacion.objects.get(id=liq_id, tenant=tenant)
+        except Liquidacion.DoesNotExist:
+            return Response({'error': 'Liquidación no encontrada'}, status=404)
+        if liq.status == 'paid':
+            return Response({'error': 'Ya fue pagada'}, status=400)
+        liq.mark_as_paid(request.user, request.data.get('reference'))
+        return Response({'message': 'Liquidación pagada', 'total': float(liq.total)})
     @action(detail=False, methods=['get'], url_path='client/payroll/my-earnings')
     def my_earnings(self, request):
         """Mis períodos de nómina (filtrado por empleado logueado)"""
@@ -873,7 +1118,10 @@ Equipo de Nómina'''
             
             if period.employee.tenant != getattr(request, 'tenant', request.user.tenant):
                 return Response({'error': 'No tienes permiso'}, status=403)
-            
+
+            if period.status != 'paid':
+                return Response({'error': 'El período no ha sido pagado'}, status=400)
+
             deductions = [{'type': d.get_deduction_type_display(), 'amount': float(d.amount), 'description': d.description} for d in period.deductions.all()]
             
             return Response({
@@ -881,7 +1129,8 @@ Equipo de Nómina'''
                 'company': {'name': period.employee.tenant.name, 'address': getattr(period.employee.tenant, 'address', 'N/A')},
                 'employee': {'name': period.employee.user.full_name or period.employee.user.email, 'email': period.employee.user.email, 'payment_type': period.employee.get_payment_type_display()},
                 'period': {'display': period.period_display, 'start_date': period.period_start.isoformat(), 'end_date': period.period_end.isoformat(), 'type': period.get_period_type_display()},
-                'amounts': {'base_salary': float(period.base_salary), 'commission_earnings': float(period.commission_earnings), 'gross_amount': float(period.gross_amount), 'deductions': {'total': float(period.deductions_total), 'items': deductions}, 'net_amount': float(period.net_amount)},
+                'amounts': {'base_salary': float(period.base_salary), 'commission_earnings': float(period.commission_earnings), 'gross_amount': float(period.gross_amount), 'deductions': {'total': float(period.deductions_total), 'items': deductions}, 'net_amount': float(period.net_amount), 'christmas_bonus': float(period.christmas_bonus)},
+                'employer_contributions': {'sfs': float(period.employer_sfs), 'afp': float(period.employer_afp), 'srl': float(period.employer_srl), 'infotep': float(period.employer_infotep), 'total': float(period.employer_total)},
                 'payment_info': {'method': period.get_payment_method_display() if period.payment_method else 'N/A', 'reference': period.payment_reference or 'N/A', 'paid_at': period.paid_at.isoformat() if period.paid_at else None, 'paid_by': period.paid_by.full_name if period.paid_by else 'N/A'}
             })
         except PayrollPeriod.DoesNotExist:
