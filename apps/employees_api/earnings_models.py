@@ -539,10 +539,19 @@ class PayrollPeriod(models.Model):
                                 source='auto_config',
                             )
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception(
+                        "Error al calcular ISR para período %s", getattr(self, 'pk', None)
+                    )
 
         # APORTES PATRONALES (no reducen el neto del empleado)
+        try:
+            payroll_config = self.employee.tenant.payroll_config
+        except Exception:
+            payroll_config = None
         srl_rate = Decimal('1.20')
+        if payroll_config and getattr(payroll_config, 'srl_rate', None) and payroll_config.srl_rate > 0:
+            srl_rate = payroll_config.srl_rate
         sfs_employer_base = min(self.gross_amount, Decimal('232230.00'))
         afp_employer_base = min(self.gross_amount, Decimal('464460.00'))
         srl_base = min(self.gross_amount, Decimal('92892.00'))
@@ -798,6 +807,7 @@ class PayrollDeduction(models.Model):
     def save(self, *args, **kwargs):
         """FIX 4: Hacer PayrollDeduction inmutable después de creación"""
         from django.core.exceptions import ValidationError
+        from django.utils import timezone
         
         if self.pk is not None:
             # Bloquear modificación de campos críticos
@@ -812,6 +822,10 @@ class PayrollDeduction(models.Model):
             # Validar que el período no esté finalizado
             if hasattr(self.period, 'is_finalized') and self.period.is_finalized:
                 raise ValidationError("No se puede modificar una deducción de un período finalizado")
+        else:
+            # Primera creación: registrar monto original
+            if self.original_amount is None:
+                self.original_amount = self.amount
         
         super().save(*args, **kwargs)
     
@@ -833,6 +847,7 @@ class PayrollConfiguration(models.Model):
     tax_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     social_security_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
     health_insurance_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('0.00'))
+    srl_rate = models.DecimalField(max_digits=5, decimal_places=2, default=Decimal('1.20'), help_text='Tasa SRL (riesgo laboral, 1.00-1.30%)')
     auto_close_periods = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -914,11 +929,18 @@ class RegaliaPascual(models.Model):
         for p in periods:
             ordinary_annual += (p.base_salary or Decimal('0.00')) + (p.commission_earnings or Decimal('0.00'))
 
-        # Si no hay períodos, usar salario fijo × meses trabajados
-        if ordinary_annual == Decimal('0.00') and employee.payment_type in ('fixed', 'mixed'):
-            # Estimar meses trabajados (mínimo 1)
-            months = 12
-            ordinary_annual = (employee.fixed_salary or Decimal('0.00')) * months
+        # Si no hay períodos, estimar por meses trabajados reales según fecha de contratación
+        if ordinary_annual == Decimal('0.00') and employee.payment_type in ('fixed', 'mixed', 'commission'):
+            if employee.hire_date and employee.hire_date.year == year:
+                months_worked = 12 - employee.hire_date.month + 1
+                if employee.hire_date.day > 15:
+                    months_worked = max(1, months_worked - 1)
+            elif employee.hire_date and employee.hire_date.year < year:
+                months_worked = 12
+            else:
+                months_worked = 12
+            months_worked = max(1, months_worked)
+            ordinary_annual = (employee.fixed_salary or Decimal('0.00')) * months_worked
 
         amount = (ordinary_annual / 12).quantize(Decimal('0.01'))
         if amount > cap:
@@ -1012,6 +1034,15 @@ class Liquidacion(models.Model):
         from django.utils import timezone
 
         tenant = employee.tenant
+        # Evitar múltiples liquidaciones activas para la misma terminación
+        existing = cls.objects.filter(
+            employee=employee,
+            termination_date=termination_date,
+            status='calculated',
+        ).first()
+        if existing is not None:
+            return existing
+
         hire_date = employee.hire_date or termination_date
 
         # Años y meses de servicio
@@ -1029,8 +1060,8 @@ class Liquidacion(models.Model):
         ).order_by('-period_end')[:12]
         if periods:
             total_ord = sum((p.base_salary or Decimal('0.00')) + (p.commission_earnings or Decimal('0.00')) for p in periods)
-            months = len(periods)
-            avg_monthly = (total_ord / months) if months else (employee.fixed_salary or Decimal('0.00'))
+            num_periods = len(periods)
+            avg_monthly = (total_ord / num_periods) if num_periods else (employee.fixed_salary or Decimal('0.00'))
             daily_salary = (avg_monthly / Decimal('23.83')).quantize(Decimal('0.01'))
         else:
             daily_salary = ((employee.fixed_salary or Decimal('0.00')) / Decimal('23.83')).quantize(Decimal('0.01'))
@@ -1096,7 +1127,7 @@ class Liquidacion(models.Model):
         ordinary_annual = sum((p.base_salary or Decimal('0.00')) + (p.commission_earnings or Decimal('0.00')) for p in year_periods)
         if ordinary_annual > 0:
             regalia = (Decimal(str(ordinary_annual)) / Decimal('12')).quantize(Decimal('0.01'))
-        elif employee.payment_type in ('fixed', 'mixed'):
+        elif employee.payment_type in ('fixed', 'mixed', 'commission'):
             months_worked = min(months, 12)
             if months_worked > 0:
                 regalia = ((employee.fixed_salary or Decimal('0.00')) * Decimal(months_worked) / Decimal('12')).quantize(Decimal('0.01'))
@@ -1106,7 +1137,15 @@ class Liquidacion(models.Model):
         # Excepciones Art. 223: empresas industriales/forestales/mineras primeros 3 años,
         # zonas francas, agrícolas con capital < RD$1,000,000
         if not participacion_exempt and total_utilities and total_payroll and total_payroll > 0:
-            share = (employee.fixed_salary or Decimal('0.00')) / total_payroll
+            # Usar remuneración ordinaria (base + comisiones) en lugar de solo salario fijo
+            emp_ordinary = (employee.fixed_salary or Decimal('0.00'))
+            emp_periods = PayrollPeriod.objects.filter(employee=employee, period_start__year=termination_date.year)
+            if emp_periods.exists():
+                emp_ordinary += sum((p.commission_earnings or Decimal('0.00')) for p in emp_periods)
+            if total_payroll and total_payroll > 0:
+                share = emp_ordinary / total_payroll
+            else:
+                share = Decimal('0.00')
             raw = (Decimal(str(total_utilities)) * Decimal('0.10') * share).quantize(Decimal('0.01'))
             # Tope: 45 días si <3 años, 60 días si >=3 años
             cap_days = 60 if years >= 3 else 45
@@ -1207,12 +1246,12 @@ class Vacation(models.Model):
         from datetime import date, timedelta
         hire_date = employee.hire_date
         if not hire_date:
-            # Si no hay fecha de contratación, asumir año completo
             years_of_service = year - (employee.created_at.year if employee.created_at else year)
         else:
             years_of_service = year - hire_date.year
-            if (hire_date.month, hire_date.day) > (12, 31):
-                years_of_service -= 1
+            # Si el aniversario no ha ocurrido aún en diciembre del año objetivo
+            if year == hire_date.year:
+                years_of_service = 0
 
         # Días según antigüedad
         if years_of_service >= 5:

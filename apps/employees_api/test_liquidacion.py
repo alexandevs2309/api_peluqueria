@@ -64,10 +64,10 @@ class TestLiquidacion(TestCase):
         cap = (daily * 60).quantize(Decimal('0.01'))
         assert liq.participacion_beneficios <= cap
 
-    def test_liquidacion_unique_per_termination(self):
+    def test_liquidacion_idempotent(self):
         l1 = Liquidacion.calculate(employee=self.emp, termination_date=date(2026,6,15), termination_type='desahucio')
         l2 = Liquidacion.calculate(employee=self.emp, termination_date=date(2026,6,15), termination_type='desahucio')
-        assert l1.id != l2.id
+        assert l1.id == l2.id  # idempotent: no duplicate
 
     def test_asistencia_economica_included(self):
         liq = Liquidacion.calculate(employee=self.emp, termination_date=date(2026,6,15), termination_type='desahucio', asistencia_economica=Decimal('5000.00'))
