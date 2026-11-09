@@ -61,6 +61,8 @@ class BarbershopAdminSerializer(serializers.ModelSerializer):
             'currency_symbol',
             'business_hours',
             'contact',
+            'enable_ncf',
+            'ncf_default_type',
             'created_at',
             'updated_at',
         ]

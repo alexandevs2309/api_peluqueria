@@ -31,6 +31,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         'create': 'settings_api.change_barbershopsettings',
         'admin_settings': 'settings_api.change_barbershopsettings',
         'upload_logo': 'settings_api.change_barbershopsettings',
+        'delete_logo': 'settings_api.change_barbershopsettings',
         'whatsapp_status': 'settings_api.view_barbershopsettings',
         'whatsapp_connect': 'settings_api.change_barbershopsettings',
         'whatsapp_disconnect': 'settings_api.change_barbershopsettings',
