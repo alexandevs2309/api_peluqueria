@@ -16,7 +16,7 @@ from django.contrib.auth import get_user_model
 from apps.employees_api.models import Employee, WorkSchedule
 from apps.services_api.models import ServiceEmployee
 
-User = get_user_model() 
+User = get_user_model()
 
 class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
     queryset = Appointment.objects.all()
@@ -52,6 +52,15 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                         qs = qs.filter(date_time__lte=dt)
                 except (ValueError, TypeError):
                     pass
+
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+
+        stylist_filter = self.request.query_params.get('stylist')
+        if stylist_filter:
+            qs = qs.filter(stylist_id=stylist_filter)
+
         if self.action in ('list', 'retrieve', 'today'):
             qs = qs.select_related('client', 'stylist', 'service')
             qs = qs.prefetch_related(
@@ -80,7 +89,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         appointment_datetime = serializer.validated_data.get('date_time', getattr(instance, 'date_time', None))
         stylist = serializer.validated_data.get('stylist', getattr(instance, 'stylist', None))
         service = serializer.validated_data.get('service', getattr(instance, 'service', None))
-        
+
         # Validar que el estilista tiene un perfil de empleado
         if not hasattr(stylist, 'employee_profile') or not stylist.employee_profile:
             raise serializers.ValidationError(
@@ -101,7 +110,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     raise serializers.ValidationError(
                         "El estilista no ofrece este servicio"
                     )
-        
+
         # Asignar tenant automáticamente y validar sucursal
         tenant = None
         user = self.request.user
@@ -125,7 +134,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     if branch and branch.id != user.employee_profile.branch_id:
                         raise serializers.ValidationError("No tienes permiso para programar citas en otra sucursal")
                     save_kwargs['branch_id'] = user.employee_profile.branch_id
-        
+
         # Convertir a hora local para validaciones de zona horaria
         local_datetime = timezone.localtime(appointment_datetime)
         weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
@@ -137,6 +146,20 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         with transaction.atomic():
             day_start = local_datetime.replace(hour=0, minute=0, second=0, microsecond=0)
             day_end = day_start + timedelta(days=1)
+
+            # Serializar operaciones por estilista y por cliente para evitar
+            # condiciones de carrera (select_for_update sobre filas existentes).
+            # Bloquear la fila del estilista (User) para serializar todas las
+            # operaciones sobre su agenda.
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            User.objects.select_for_update().get(pk=stylist.pk)
+
+            # Bloquear la fila del cliente para serializar operaciones sobre su agenda.
+            client = serializer.validated_data.get('client')
+            if client:
+                from apps.clients_api.models import Client
+                Client.objects.select_for_update().get(pk=client.pk if hasattr(client, 'pk') else client.id)
 
             # OJO: select_for_update() + select_related('service') provocaba
             # "FOR UPDATE cannot be applied to the nullable side of an outer join"
@@ -163,6 +186,26 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     raise serializers.ValidationError(
                         f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
                     )
+
+            # Validar que el cliente no tenga otra cita solapada con otro estilista
+            client = serializer.validated_data.get('client')
+            if client:
+                client_conflicts = Appointment.objects.select_for_update().filter(
+                    tenant=tenant,
+                    client=client,
+                    date_time__gte=day_start,
+                    date_time__lt=day_end,
+                    status__in=['scheduled', 'completed']
+                ).exclude(pk=getattr(serializer.instance, 'pk', None))
+                for exist in client_conflicts:
+                    exist_duration = exist.service.duration if exist.service else 30
+                    exist_start = exist.date_time
+                    exist_end = exist_start + timedelta(minutes=exist_duration)
+
+                    if new_start < exist_end and exist_start < new_end:
+                        raise serializers.ValidationError(
+                            f"El cliente ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
+                        )
 
             # Validar horario de trabajo
             work_schedule = WorkSchedule.objects.filter(
@@ -193,32 +236,44 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         stylist_id = request.query_params.get('stylist_id')
         date = request.query_params.get('date')
         exclude_id = request.query_params.get('exclude_id') or request.query_params.get('exclude_appointment_id')
-        
+        service_id = request.query_params.get('service_id')
+
         if not stylist_id or not date:
             return Response(
-                {'error': 'stylist_id y date son requeridos'}, 
+                {'error': 'stylist_id y date son requeridos'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
+        # Duración del servicio solicitado (default 30 si no se especifica)
+        service_duration = 30
+        if service_id:
+            try:
+                from apps.services_api.models import Service
+                svc = Service.objects.filter(id=service_id, tenant=self.request.tenant).first()
+                if svc:
+                    service_duration = svc.duration or 30
+            except Exception:
+                pass
+
         try:
             stylist = User.objects.filter(id=stylist_id, tenant=self.request.tenant).first()
             if not stylist:
                 employee = Employee.objects.filter(id=stylist_id, tenant=self.request.tenant).select_related('user').first()
                 if employee:
                     stylist = employee.user
-            
+
             if not stylist:
                 return Response(
-                    {'error': 'Estilista no encontrado'}, 
+                    {'error': 'Estilista no encontrado'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
             target_date = datetime.fromisoformat(date).date()
         except ValueError:
             return Response(
-                {'error': 'Fecha inválida'}, 
+                {'error': 'Fecha inválida'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         # Obtener horario de trabajo
         weekdays = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
         day_of_week = weekdays[target_date.weekday()]
@@ -227,13 +282,17 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             employee__tenant=self.request.tenant,
             day_of_week=day_of_week
         ).first()
-        
+
         if not work_schedule:
-            start_time_t = time(9, 0)
-            end_time_t = time(18, 0)
-        else:
-            start_time_t = work_schedule.start_time
-            end_time_t = work_schedule.end_time
+            return Response({
+                'date': date,
+                'stylist': stylist.full_name,
+                'available_slots': [],
+                'message': 'El empleado no tiene horario laboral configurado para este día.'
+            })
+
+        start_time_t = work_schedule.start_time
+        end_time_t = work_schedule.end_time
 
         # Obtener citas del estilista en el día y calcular rangos ocupados
         day_appointments = Appointment.objects.filter(
@@ -254,11 +313,11 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             apt_duration = apt.service.duration if apt.service else 30
             occupied_ranges.append((apt.date_time, apt.date_time + timedelta(minutes=apt_duration)))
 
-        # Generar slots de 30 minutos
+        # Generar slots considerando la duración del servicio solicitado
         slots = []
         current_time = datetime.combine(target_date, start_time_t)
         end_time = datetime.combine(target_date, end_time_t)
-        
+
         local_now = timezone.localtime(timezone.now())
         is_today = target_date == local_now.date()
         while current_time < end_time:
@@ -268,7 +327,12 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 continue
 
             slot_start = timezone.make_aware(current_time, timezone.get_current_timezone())
-            slot_end = slot_start + timedelta(minutes=30)
+            slot_end = slot_start + timedelta(minutes=service_duration)
+
+            # El slot completo debe caber en el horario
+            if slot_end.time() > end_time_t or slot_end.date() != target_date:
+                current_time += timedelta(minutes=30)
+                continue
 
             # Verificar si se solapa con algún rango ocupado
             is_overlap = False
@@ -276,55 +340,56 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                 if slot_start < end and start < slot_end:
                     is_overlap = True
                     break
-            
+
             if not is_overlap:
                 slots.append({
                     'datetime': current_time.isoformat(),
                     'time': current_time.strftime('%H:%M'),
                     'available': True
                 })
-            
+
             current_time += timedelta(minutes=30)
-        
+
         return Response({
             'date': date,
             'stylist': stylist.full_name,
+            'service_duration': service_duration,
             'available_slots': slots
         })
 
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         appointment = self.get_object()
-        
+
         if appointment.status == 'cancelled':
             return Response(
-                {'error': 'La cita ya está cancelada'}, 
+                {'error': 'La cita ya está cancelada'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         appointment.status = 'cancelled'
         appointment.save()
-        
+
         return Response({'detail': 'Cita cancelada correctamente'})
 
     @action(detail=True, methods=['post'])
     def complete(self, request, pk=None):
         appointment = self.get_object()
-        
+
         if appointment.status == 'completed':
             return Response(
-                {'error': 'La cita ya está completada'}, 
+                {'error': 'La cita ya está completada'},
                 status=status.HTTP_400_BAD_REQUEST
             )
-        
+
         appointment.status = 'completed'
         appointment.save()
-        
+
         # Actualizar última visita del cliente
         if appointment.client:
             appointment.client.last_visit = timezone.now()
             appointment.client.save()
-        
+
         return Response({'detail': 'Cita completada correctamente'})
 
     @action(detail=False, methods=['get'])
@@ -332,12 +397,12 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         today_local = timezone.localtime(timezone.now()).date()
         today_start = timezone.make_aware(datetime.combine(today_local, time.min), timezone.get_current_timezone())
         tomorrow_start = today_start + timedelta(days=1)
-        
+
         appointments = self.get_queryset().filter(
             date_time__gte=today_start,
             date_time__lt=tomorrow_start
         ).order_by('date_time')
-        
+
         serializer = AppointmentSerializer(appointments, many=True)
         return Response(serializer.data)
 
@@ -349,10 +414,10 @@ def calendar_events(request):
     """Eventos para calendario - formato FullCalendar"""
     start = request.GET.get('start')
     end = request.GET.get('end')
-    
+
     if not start or not end:
         return Response({'error': 'start y end son requeridos'}, status=400)
-    
+
     try:
         start_date = datetime.fromisoformat(start.replace('Z', '+00:00'))
         end_date = datetime.fromisoformat(end.replace('Z', '+00:00'))
@@ -363,7 +428,7 @@ def calendar_events(request):
     max_range = timedelta(days=90)
     if end_date - start_date > max_range:
         end_date = start_date + max_range
-    
+
     base_filter = Q(date_time__gte=start_date, date_time__lte=end_date)
 
     # Filtro de tenant obligatorio - previene fuga cross-tenant
@@ -387,13 +452,13 @@ def calendar_events(request):
     for apt in appointments:
         duration = apt.service.duration if apt.service else 30
         end_time = apt.date_time + timedelta(minutes=duration)
-        
+
         color = {
             'scheduled': '#3498db',
             'completed': '#2ecc71',
             'cancelled': '#e74c3c'
         }.get(apt.status, '#95a5a6')
-        
+
         events.append({
             'id': apt.id,
             'title': f"{apt.client.full_name}",
@@ -410,7 +475,7 @@ def calendar_events(request):
                 'notes': apt.description or ''
             }
         })
-    
+
     return Response(events)
 
 @api_view(['POST'])
@@ -422,59 +487,89 @@ def reschedule_appointment(request, pk):
         if not request.user.is_superuser:
             if not (getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)):
                 return Response({'error': 'Usuario sin tenant'}, status=404)
-            
+
             appointment = Appointment.objects.get(
                 id=pk,
                 tenant=request.tenant
             )
         else:
             appointment = Appointment.objects.get(id=pk)
-        
+
         new_datetime = request.data.get('new_datetime')
         if not new_datetime:
             return Response({'error': 'new_datetime es requerido'}, status=400)
-        
+
         try:
             new_dt = datetime.fromisoformat(new_datetime.replace('Z', '+00:00'))
         except ValueError:
             return Response({'error': 'Formato de fecha inválido'}, status=400)
-        
+
         # Validar disponibilidad (solapamientos considerando duración)
         day_start = new_dt.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
-        
-        conflicting_appointments = Appointment.objects.filter(
-            tenant=appointment.tenant,
-            stylist=appointment.stylist,
-            date_time__gte=day_start,
-            date_time__lt=day_end,
-            status__in=['scheduled', 'completed']
-        ).exclude(id=appointment.id).select_related('service')
-        
-        new_duration = appointment.service.duration if appointment.service else 30
-        new_start = new_dt
-        new_end = new_start + timedelta(minutes=new_duration)
-        
-        for exist in conflicting_appointments:
-            exist_duration = exist.service.duration if exist.service else 30
-            exist_start = exist.date_time
-            exist_end = exist_start + timedelta(minutes=exist_duration)
-            
-            if new_start < exist_end and exist_start < new_end:
-                return Response({
-                    'error': f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
-                }, status=400)
-        
-        old_datetime = appointment.date_time
-        appointment.date_time = new_dt
-        appointment.save()
-        
+
+        from django.db import transaction
+        with transaction.atomic():
+            # Serializar por estilista y cliente
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            User.objects.select_for_update().get(pk=appointment.stylist.pk)
+            if appointment.client:
+                from apps.clients_api.models import Client
+                Client.objects.select_for_update().get(pk=appointment.client.pk)
+
+            conflicting_appointments = Appointment.objects.select_for_update().filter(
+                tenant=appointment.tenant,
+                stylist=appointment.stylist,
+                date_time__gte=day_start,
+                date_time__lt=day_end,
+                status__in=['scheduled', 'completed']
+            ).exclude(id=appointment.id).select_related('service')
+
+            new_duration = appointment.service.duration if appointment.service else 30
+            new_start = new_dt
+            new_end = new_start + timedelta(minutes=new_duration)
+
+            for exist in conflicting_appointments:
+                exist_duration = exist.service.duration if exist.service else 30
+                exist_start = exist.date_time
+                exist_end = exist_start + timedelta(minutes=exist_duration)
+
+                if new_start < exist_end and exist_start < new_end:
+                    return Response({
+                        'error': f"El estilista ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
+                    }, status=400)
+
+            # Validar que el cliente no tenga otra cita solapada con otro estilista
+            if appointment.client:
+                client_conflicts = Appointment.objects.select_for_update().filter(
+                    tenant=appointment.tenant,
+                    client=appointment.client,
+                    date_time__gte=day_start,
+                    date_time__lt=day_end,
+                    status__in=['scheduled', 'completed']
+                ).exclude(id=appointment.id).select_related('service')
+
+                for exist in client_conflicts:
+                    exist_duration = exist.service.duration if exist.service else 30
+                    exist_start = exist.date_time
+                    exist_end = exist_start + timedelta(minutes=exist_duration)
+
+                    if new_start < exist_end and exist_start < new_end:
+                        return Response({
+                            'error': f"El cliente ya tiene una cita programada de {timezone.localtime(exist_start).strftime('%H:%M')} a {timezone.localtime(exist_end).strftime('%H:%M')}"
+                        }, status=400)
+
+            old_datetime = appointment.date_time
+            appointment.date_time = new_dt
+            appointment.save()
+
         return Response({
             'message': 'Cita reprogramada correctamente',
             'old_datetime': old_datetime.isoformat(),
             'new_datetime': new_dt.isoformat()
         })
-        
+
     except Appointment.DoesNotExist:
         return Response({'error': 'Cita no encontrada'}, status=404)
 
@@ -485,13 +580,13 @@ def stylist_schedule(request, stylist_id):
     try:
         # ✅ FIX: Definir user correctamente
         user = request.user
-        
+
         # ✅ VALIDAR TENANT del stylist (tolerando tanto User.id como Employee.id)
         stylist = None
         if not user.is_superuser:
             if not (getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)):
                 return Response({'error': 'Usuario sin tenant'}, status=404)
-            
+
             stylist = User.objects.filter(id=stylist_id, tenant=request.tenant).first()
             if not stylist:
                 employee = Employee.objects.filter(id=stylist_id, tenant=request.tenant).select_related('user').first()
@@ -503,22 +598,22 @@ def stylist_schedule(request, stylist_id):
                 employee = Employee.objects.filter(id=stylist_id).select_related('user').first()
                 if employee:
                     stylist = employee.user
-                    
+
         if not stylist:
             return Response({'error': 'Estilista no encontrado'}, status=404)
-        
+
         # Obtener horarios de trabajo
         from apps.employees_api.models import WorkSchedule
         schedules = WorkSchedule.objects.filter(
             employee__user=stylist,
             employee__tenant=request.tenant
         ).values('day_of_week', 'start_time', 'end_time')
-        
+
         # Obtener citas de la semana
         today = timezone.localtime(timezone.now()).date()
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
-        
+
         tenant_filter = {}
         if not user.is_superuser and (getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)):
             tenant_filter['tenant'] = request.tenant
@@ -529,13 +624,13 @@ def stylist_schedule(request, stylist_id):
             status__in=['scheduled', 'completed'],
             **tenant_filter
         ).values('date_time', 'client__full_name', 'service__name', 'status')
-        
+
         return Response({
             'stylist_name': stylist.full_name,
             'work_schedules': list(schedules),
             'appointments': list(appointments),
             'week_range': f"{week_start} - {week_end}"
         })
-        
+
     except User.DoesNotExist:
         return Response({'error': 'Estilista no encontrado'}, status=404)
