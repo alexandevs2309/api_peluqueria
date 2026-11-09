@@ -5,6 +5,7 @@ from apps.core.tenant_permissions import tenant_permission
 from apps.core.permissions import IsSuperAdmin
 from django.db.models import Count, Sum, Q
 from django.utils import timezone
+from decimal import Decimal
 from datetime import datetime, timedelta
 from apps.tenants_api.models import Tenant
 from apps.billing_api.models import Invoice
@@ -41,7 +42,7 @@ def employee_report(request):
     branch_id = get_report_branch_id(request)
     
     employee_filter = {'tenant': tenant}
-    sale_filter = {'employee__tenant': tenant, 'employee__isnull': False}
+    sale_filter = {'employee__tenant': tenant, 'employee__isnull': False, 'status': 'confirmed'}
     if branch_id:
         employee_filter['branch_id'] = branch_id
         sale_filter['branch_id'] = branch_id
@@ -92,8 +93,8 @@ def sales_report(request):
     tenant = getattr(request, 'tenant', request.user.tenant)
     branch_id = get_report_branch_id(request)
     
-    sale_filter = {'tenant': tenant}
-    detail_filter = {'sale__tenant': tenant, 'content_type__model': 'service'}
+    sale_filter = {'tenant': tenant, 'status': 'confirmed'}
+    detail_filter = {'sale__tenant': tenant, 'content_type__model': 'service', 'sale__status': 'confirmed'}
     if branch_id:
         sale_filter['branch_id'] = branch_id
         detail_filter['sale__branch_id'] = branch_id
@@ -140,10 +141,21 @@ def sales_report(request):
         total_sold=Sum('quantity'),
         total_revenue=Sum('price')
     ).order_by('-total_revenue')[:5]
-    
+
+    # Devoluciones (ventas reembolsadas)
+    refunded_filter = {'tenant': tenant, 'status': 'refunded'}
+    if branch_id:
+        refunded_filter['branch_id'] = branch_id
+    refunded_amount = Sale.objects.filter(**refunded_filter).aggregate(
+        total=Sum('amount_refunded')
+    )['total'] or 0
+    refunded_count = Sale.objects.filter(**refunded_filter).count()
+
     return Response({
         'total_sales': float(total_sales),
         'monthly_sales': float(monthly_sales),
+        'refunded_amount': float(refunded_amount),
+        'refunded_count': refunded_count,
         'sales_by_day': sales_by_day,
         'top_services': list(top_services)
     })
@@ -173,7 +185,7 @@ def dashboard_stats(request):
     
     employee_filter = {'tenant': tenant, 'is_active': True}
     appointment_filter = {'client__tenant': tenant, 'date_time__gte': month_start}
-    sale_filter = {'tenant': tenant, 'date_time__gte': month_start}
+    sale_filter = {'tenant': tenant, 'status': 'confirmed', 'date_time__gte': month_start}
     
     if branch_id:
         employee_filter['branch_id'] = branch_id
@@ -248,6 +260,7 @@ def reports_by_type(request):
             
             filters = {
                 'tenant': tenant,
+                'status': 'confirmed',
                 'date_time__gte': month_start,
                 'date_time__lte': month_end
             }
@@ -500,10 +513,10 @@ def kpi_dashboard(request):
     month_start = today.replace(day=1)
     week_start = today - timedelta(days=today.weekday())
     
-    sale_monthly_filter = {'tenant': tenant, 'date_time__date__gte': month_start}
+    sale_monthly_filter = {'tenant': tenant, 'status': 'confirmed', 'date_time__date__gte': month_start}
     appointment_monthly_filter = {'client__tenant': tenant, 'date_time__date__gte': month_start}
     
-    sale_weekly_filter = {'tenant': tenant, 'date_time__date__gte': week_start}
+    sale_weekly_filter = {'tenant': tenant, 'status': 'confirmed', 'date_time__date__gte': week_start}
     appointment_weekly_filter = {'client__tenant': tenant, 'date_time__date__gte': week_start}
     
     employee_filter = {'tenant': tenant, 'is_active': True}
@@ -567,6 +580,7 @@ def services_performance(request):
     
     filters = {
         'sale__tenant': tenant,
+        'sale__status': 'confirmed',
         'sale__date_time__gte': start_date,
         'content_type__model': 'service'
     }
@@ -855,3 +869,238 @@ def export_report(request):
     response['Content-Disposition'] = f'attachment; filename="{report_type}_report_{timezone.now().strftime("%Y%m%d_%H%M%S")}.xlsx"'
     wb.save(response)
     return response
+
+
+@api_view(['GET'])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
+@requires_feature('reports')
+def cash_report(request):
+    """Reporte de caja: aperturas, cierres, cobros, retiros, diferencias."""
+    from apps.pos_api.models import CashRegister, CashCount
+    from django.db.models import Sum, Count
+
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+
+    qs = CashRegister.objects.filter(tenant=tenant)
+    if branch_id:
+        qs = qs.filter(branch_id=branch_id)
+
+    # Filtro por fechas
+    start = request.GET.get('start_date')
+    end = request.GET.get('end_date')
+    if start:
+        qs = qs.filter(opened_at__date__gte=start)
+    if end:
+        qs = qs.filter(opened_at__date__lte=end)
+
+    registers = []
+    total_initial = Decimal('0.00')
+    total_final = Decimal('0.00')
+    total_sales_cash = Decimal('0.00')
+    total_differences = Decimal('0.00')
+
+    for cr in qs.order_by('-opened_at'):
+        diff = (cr.final_cash or Decimal('0.00')) - (cr.initial_cash or Decimal('0.00')) - (cr.sales_amount if hasattr(cr, 'sales_amount') else Decimal('0.00'))
+        registers.append({
+            'id': cr.id,
+            'user': cr.user.full_name if cr.user else None,
+            'branch': cr.branch.name if cr.branch else None,
+            'opened_at': cr.opened_at.isoformat() if cr.opened_at else None,
+            'closed_at': cr.closed_at.isoformat() if cr.closed_at else None,
+            'is_open': cr.is_open,
+            'initial_cash': float(cr.initial_cash or 0),
+            'final_cash': float(cr.final_cash or 0),
+            'sales_amount': float(getattr(cr, 'sales_amount', 0) or 0),
+            'difference': float(diff),
+        })
+        total_initial += (cr.initial_cash or Decimal('0.00'))
+        total_final += (cr.final_cash or Decimal('0.00'))
+        total_sales_cash += (getattr(cr, 'sales_amount', Decimal('0.00')) or Decimal('0.00'))
+        total_differences += diff
+
+    return Response({
+        'registers': registers,
+        'summary': {
+            'total_registers': qs.count(),
+            'open_registers': qs.filter(is_open=True).count(),
+            'closed_registers': qs.filter(is_open=False).count(),
+            'total_initial_cash': float(total_initial),
+            'total_final_cash': float(total_final),
+            'total_sales_cash': float(total_sales_cash),
+            'total_differences': float(total_differences),
+        }
+    })
+
+
+@api_view(['GET'])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
+@requires_feature('reports')
+def inventory_report(request):
+    """Reporte de inventario: existencias, rotación, movimientos, stock bajo, valoración."""
+    from apps.inventory_api.models import Product, StockMovement
+    from django.db.models import Sum, Count, F
+
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+
+    product_filter = {'tenant': tenant}
+    if branch_id:
+        product_filter['branch_id'] = branch_id
+
+    products = Product.objects.filter(**product_filter)
+    total_products = products.count()
+    low_stock = products.filter(stock__lte=F('min_stock')).count() if hasattr(Product, 'min_stock') else 0
+    out_of_stock = products.filter(stock=0).count() if hasattr(Product, 'stock') else 0
+
+    # Valoración del inventario (si hay costo)
+    total_value = Decimal('0.00')
+    if hasattr(Product, 'cost'):
+        total_value = products.aggregate(v=Sum(F('stock') * F('cost')))['v'] or Decimal('0.00')
+
+    # Movimientos recientes
+    movement_filter = {'product__tenant': tenant}
+    if branch_id:
+        movement_filter['product__branch_id'] = branch_id
+    movements = StockMovement.objects.filter(**movement_filter).order_by('-created_at')[:50]
+    movement_list = [
+        {
+            'id': m.id,
+            'product': m.product.name if m.product else None,
+            'quantity': m.quantity,
+            'reason': m.reason,
+            'created_at': m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in movements
+    ]
+
+    # Top productos por movimiento (rotación)
+    top_moving = StockMovement.objects.filter(**movement_filter).values('product__name').annotate(
+        total_movement=Sum('quantity')
+    ).order_by('-total_movement')[:10]
+
+    return Response({
+        'summary': {
+            'total_products': total_products,
+            'low_stock': low_stock,
+            'out_of_stock': out_of_stock,
+            'total_inventory_value': float(total_value),
+        },
+        'top_moving_products': list(top_moving),
+        'recent_movements': movement_list,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
+@requires_feature('reports')
+def fiscal_report(request):
+    """Reporte fiscal: ITBIS, NCF, ventas gravadas, exentas, anulaciones."""
+    from apps.pos_api.models import Sale
+
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+
+    sale_filter = {'tenant': tenant, 'status': 'confirmed'}
+    if branch_id:
+        sale_filter['branch_id'] = branch_id
+
+    # Ventas gravadas (con NCF)
+    taxable_sales = Sale.objects.filter(**sale_filter, ncf__isnull=False).exclude(ncf='')
+    # Ventas exentas (sin NCF)
+    exempt_sales = Sale.objects.filter(**sale_filter, ncf__isnull=True) | Sale.objects.filter(**sale_filter, ncf='')
+
+    taxable_total = taxable_sales.aggregate(t=Sum('total'))['t'] or Decimal('0.00')
+    exempt_total = exempt_sales.aggregate(t=Sum('total'))['t'] or Decimal('0.00')
+
+    # ITBIS: usar tax_rate del PosConfiguration (si existe)
+    tax_rate = Decimal('0.00')
+    try:
+        from apps.pos_api.models import PosConfiguration
+        pos_config = PosConfiguration.objects.filter(tenant=tenant).first()
+        if pos_config:
+            tax_rate = pos_config.tax_rate or Decimal('0.00')
+    except Exception:
+        pass
+
+    # Si tax_included, ITBIS = total * rate / (1 + rate); si no, ITBIS = total * rate
+    if tax_rate and tax_rate > 0:
+        if pos_config and pos_config.tax_included:
+            itbis = (taxable_total * tax_rate / (1 + tax_rate)).quantize(Decimal('0.01'))
+        else:
+            itbis = (taxable_total * tax_rate).quantize(Decimal('0.01'))
+    else:
+        itbis = Decimal('0.00')
+
+    # Anulaciones
+    voided = Sale.objects.filter(tenant=tenant, status='void')
+    if branch_id:
+        voided = voided.filter(branch_id=branch_id)
+    refunded = Sale.objects.filter(tenant=tenant, status='refunded')
+    if branch_id:
+        refunded = refunded.filter(branch_id=branch_id)
+
+    # NCF por tipo
+    ncf_by_type = Sale.objects.filter(**sale_filter).exclude(ncf__isnull=True).exclude(ncf='').values('ncf_type').annotate(
+        count=Count('id'),
+        total=Sum('total')
+    ).order_by('ncf_type')
+
+    return Response({
+        'summary': {
+            'taxable_sales_count': taxable_sales.count(),
+            'taxable_sales_total': float(taxable_total),
+            'exempt_sales_count': exempt_sales.count(),
+            'exempt_sales_total': float(exempt_total),
+            'itbis_amount': float(itbis),
+            'tax_rate': float(tax_rate),
+            'voided_count': voided.count(),
+            'voided_total': float(voided.aggregate(t=Sum('total'))['t'] or 0),
+            'refunded_count': refunded.count(),
+            'refunded_total': float(refunded.aggregate(t=Sum('total'))['t'] or 0),
+        },
+        'ncf_by_type': list(ncf_by_type),
+    })
+
+
+@api_view(['GET'])
+@permission_classes([tenant_permission('reports_api.view_sales_reports')])
+@requires_feature('reports')
+def consistency_check(request):
+    """Verifica que los totales de reportes coincidan con las transacciones de origen."""
+    from apps.pos_api.models import Sale
+
+    tenant = getattr(request, 'tenant', request.user.tenant)
+    branch_id = get_report_branch_id(request)
+
+    sale_filter = {'tenant': tenant, 'status': 'confirmed'}
+    if branch_id:
+        sale_filter['branch_id'] = branch_id
+
+    # Total de ventas (fuente: Sale)
+    report_total = Sale.objects.filter(**sale_filter).aggregate(t=Sum('total'))['t'] or Decimal('0.00')
+    sale_count = Sale.objects.filter(**sale_filter).count()
+
+    # Total de pagos (fuente: Payment)
+    from apps.pos_api.models import Payment
+    payment_total = Payment.objects.filter(sale__tenant=tenant).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+    if branch_id:
+        payment_total = Payment.objects.filter(sale__tenant=tenant, sale__branch_id=branch_id).aggregate(t=Sum('amount'))['t'] or Decimal('0.00')
+
+    # Total de movimientos de inventario (salidas)
+    from apps.inventory_api.models import StockMovement
+    stock_out = StockMovement.objects.filter(product__tenant=tenant, quantity__lt=0).aggregate(t=Sum('quantity'))['t'] or 0
+
+    return Response({
+        'sales': {
+            'count': sale_count,
+            'total': float(report_total),
+        },
+        'payments': {
+            'total': float(payment_total),
+        },
+        'inventory': {
+            'total_units_sold': abs(stock_out),
+        },
+        'consistent': abs(report_total - payment_total) < Decimal('0.02'),
+    })

@@ -15,6 +15,12 @@ urlpatterns = [
     path('services-performance/', views.services_performance, name='services-performance'),
     path('client-analytics/', views.client_analytics, name='client-analytics'),
     
+    # Reportes empresariales (Misión 06.2)
+    path('cash/', views.cash_report, name='cash-report'),
+    path('inventory/', views.inventory_report, name='inventory-report'),
+    path('fiscal/', views.fiscal_report, name='fiscal-report'),
+    path('consistency/', views.consistency_check, name='consistency-check'),
+
     # Advanced Analytics
     path('analytics/', analytics_views.AdvancedAnalyticsView.as_view(), name='advanced-analytics'),
     path('business-intelligence/', analytics_views.BusinessIntelligenceView.as_view(), name='business-intelligence'),
