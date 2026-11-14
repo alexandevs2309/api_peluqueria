@@ -61,6 +61,19 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         if stylist_filter:
             qs = qs.filter(stylist_id=stylist_filter)
 
+        # Profesionales (barberos/estilistas) solo ven sus propias citas
+        user = getattr(self.request, 'user', None)
+        if user and user.is_authenticated and not user.is_superuser:
+            from apps.auth_api.role_utils import get_effective_business_role
+            biz_role = get_effective_business_role(user, tenant=getattr(self.request, 'tenant', None))
+            if biz_role == 'professional':
+                try:
+                    emp = user.employee_profile
+                    if emp and emp.user_id:
+                        qs = qs.filter(stylist_id=emp.user_id)
+                except Exception:
+                    qs = qs.none()
+
         if self.action in ('list', 'retrieve', 'today'):
             qs = qs.select_related('client', 'stylist', 'service')
             qs = qs.prefetch_related(
@@ -82,6 +95,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         'cancel': 'appointments_api.cancel_appointment',
         'complete': 'appointments_api.complete_appointment',
         'today': 'appointments_api.view_appointment',
+        'check_duplicate': 'appointments_api.view_appointment',
     }
 
     def perform_create(self, serializer):
@@ -222,7 +236,13 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     )
             SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
 
-            serializer.save(**save_kwargs)
+            from django.db import IntegrityError
+            try:
+                serializer.save(**save_kwargs)
+            except IntegrityError:
+                raise serializers.ValidationError(
+                    "Ya existe una cita con el mismo cliente, estilista y horario."
+                )
 
     def perform_update(self, serializer):
         self.perform_create(serializer)
@@ -391,6 +411,47 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             appointment.client.save()
 
         return Response({'detail': 'Cita completada correctamente'})
+
+    @action(detail=False, methods=['get'])
+    def check_duplicate(self, request):
+        """
+        Verifica si existe una cita duplicada (mismo cliente, estilista y horario).
+        """
+        client_id = request.query_params.get('client_id')
+        stylist_id = request.query_params.get('stylist_id')
+        date = request.query_params.get('date')  # YYYY-MM-DD
+        time = request.query_params.get('time')  # HH:MM
+
+        if not all([client_id, stylist_id, date, time]):
+            return Response(
+                {'error': 'client_id, stylist_id, date y time son requeridos'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            # Combinar fecha y hora para crear un datetime
+            datetime_str = f"{date} {time}"
+            appointment_datetime = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
+            
+            # Asegurar que es aware datetime
+            if timezone.is_naive(appointment_datetime):
+                appointment_datetime = timezone.make_aware(appointment_datetime)
+
+            # Buscar citas existentes con el mismo cliente, estilista y horario
+            # Solo verificar citas programadas o completadas
+            exists = Appointment.objects.filter(
+                client_id=client_id,
+                stylist_id=stylist_id,
+                date_time=appointment_datetime,
+                status__in=['scheduled', 'completed']
+            ).exists()
+
+            return Response({'duplicate': exists})
+        except ValueError:
+            return Response(
+                {'error': 'Formato de fecha u hora inválido'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
     @action(detail=False, methods=['get'])
     def today(self, request):

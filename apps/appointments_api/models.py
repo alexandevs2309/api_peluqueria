@@ -42,6 +42,12 @@ class Appointment(models.Model):
             models.Index(fields=['tenant', 'branch', 'date_time']),
             models.Index(fields=['date_time']),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'stylist', 'client', 'date_time'],
+                name='unique_appointment_per_stylist_client_datetime',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.client} with {self.stylist} at {self.date_time}'
