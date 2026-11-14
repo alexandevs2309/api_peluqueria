@@ -149,6 +149,43 @@ class Command(BaseCommand):
             },
         ]
 
+        # Plan 'pro' (legacy, mantenido por compatibilidad)
+        plans.append({
+            'name': 'pro',
+            'description': 'Plan Pro para negocios en crecimiento (legacy)',
+            'price': 69.99,
+            'annual_price': 699.99,
+            'duration_month': 1,
+            'max_employees': 15,
+            'max_users': 30,
+            'allows_multiple_branches': True,
+            'features': {
+                'cash_register': True,
+                'appointments': True,
+                'inventory': True,
+                'reports': True,
+                'basic_reports': True,
+                'client_history': True,
+                'promotions': True,
+                'multi_location': True,
+                'advanced_reports': True,
+                'payroll': True,
+                'custom_branding': True,
+                'whatsapp_notifications': True,
+                'export_reports': False,
+                'priority_support': False,
+            },
+            'commercial_benefits': [
+                'Hasta 3 Sucursales',
+                'Hasta 15 Empleados y 30 Usuarios',
+                'Promociones y Cupones',
+                'Reportes Avanzados',
+                'Comisiones y Nómina',
+                'Soporte Prioritario',
+            ],
+            'is_active': True,
+        })
+
         for plan_data in plans:
             plan, created = SubscriptionPlan.objects.update_or_create(
                 name=plan_data['name'],

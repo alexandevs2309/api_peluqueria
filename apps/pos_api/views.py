@@ -158,23 +158,19 @@ class SaleViewSet(TenantScopedViewSet):
             raise serializers.ValidationError("Valores inválidos para cantidad o precio")
     
     def _get_or_create_active_period(self, employee):
-        """Obtiene o crea el período activo para el empleado"""
+        """Obtiene o crea el período activo para el empleado.
+        
+        Busca un período cuyo rango de fechas contenga la fecha de la venta.
+        Si no existe un período abierto para ese rango, busca uno existente
+        (cualquier estado) o crea uno nuevo.
+        """
         from apps.employees_api.earnings_models import PayrollPeriod
         from django.db import IntegrityError
         import calendar
         
-        # Buscar período abierto o pendiente
-        active_period = PayrollPeriod.objects.filter(
-            employee=employee,
-            status__in=['open', 'pending_approval']
-        ).first()
-        
-        if active_period:
-            return active_period
-        
-        # Crear período para quincena actual
         today = timezone.now().date()
         
+        # Determinar el rango de quincena para la fecha de hoy
         if today.day <= 15:
             start_date = today.replace(day=1)
             end_date = today.replace(day=15)
@@ -183,8 +179,17 @@ class SaleViewSet(TenantScopedViewSet):
             last_day = calendar.monthrange(today.year, today.month)[1]
             end_date = today.replace(day=last_day)
 
-        # Si ya existe un período para ese rango (cualquier estado), reutilizarlo
-        # para evitar choques de unique_employee_period.
+        # 1. Buscar período abierto/pendiente que contenga la fecha de hoy
+        active_period = PayrollPeriod.objects.filter(
+            employee=employee,
+            status__in=['open', 'pending_approval'],
+            period_start__lte=today,
+            period_end__gte=today
+        ).first()
+        if active_period:
+            return active_period
+
+        # 2. Buscar cualquier período existente para este rango (cualquier estado)
         existing_period = PayrollPeriod.objects.filter(
             employee=employee,
             period_start=start_date,
@@ -193,6 +198,7 @@ class SaleViewSet(TenantScopedViewSet):
         if existing_period:
             return existing_period
 
+        # 3. Crear nuevo período
         try:
             return PayrollPeriod.objects.create(
                 employee=employee,
@@ -202,7 +208,6 @@ class SaleViewSet(TenantScopedViewSet):
                 status='open'
             )
         except IntegrityError:
-            # Carrera de concurrencia: otro request creó el período.
             existing_period = PayrollPeriod.objects.filter(
                 employee=employee,
                 period_start=start_date,

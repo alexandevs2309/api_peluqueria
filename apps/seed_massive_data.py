@@ -573,6 +573,7 @@ def create_employees(tenant, branch, roles, count, currency):
         name = random.choice(available)
         used_names.add(name)
         email = _random_email(name, tenant.subdomain)
+        prof = professions[i % len(professions)]
         user = User.objects.filter(email=email).first()
         if not user:
             user = User(
@@ -583,8 +584,11 @@ def create_employees(tenant, branch, roles, count, currency):
             )
             user.set_password("AuronEmpPass2026*")
             user.save(skip_validation=True)
-            UserRole.objects.get_or_create(user=user, role=roles["estilista"], tenant=tenant)
-        prof = professions[i % len(professions)]
+            role_name = 'Manager' if prof == 'manager' else ('Cajera' if prof in ('receptionist', 'cashier') else 'Estilista')
+            role_obj = Role.objects.filter(name=role_name).first() or roles.get("estilista")
+            if role_obj:
+                UserRole.objects.get_or_create(user=user, role=role_obj, tenant=tenant)
+        # prof already defined above
         emp, _ = Employee.objects.update_or_create(
             user=user, tenant=tenant,
             defaults={

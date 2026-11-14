@@ -23,6 +23,7 @@ class PayrollViewSet(viewsets.ViewSet):
     permission_map = {
         'list_periods': 'employees_api.view_employee_payroll',
         'my_earnings': 'employees_api.view_employee_payroll',
+        'my_summary': 'employees_api.view_employee_payroll',
         'get_receipt': 'employees_api.view_employee_payroll',
         'period_detail': 'employees_api.view_employee_payroll',
         'generate_regalia': 'employees_api.change_employee_payroll',
@@ -324,8 +325,12 @@ class PayrollViewSet(viewsets.ViewSet):
                 'period_end': period.period_end.isoformat(),
                 'can_pay': period.can_pay,
                 'pay_block_reason': period.pay_block_reason,
-                'employee_payment_type': emp.payment_type,
-                'employee_commission_rate': float(emp.commission_rate or 0),
+                # Usar snapshot del período para consistencia con montos calculados
+                'employee_payment_type': period.payment_type_snapshot or emp.payment_type,
+                'employee_commission_rate': float(period.commission_rate_snapshot if period.commission_rate_snapshot is not None else (emp.commission_rate or 0)),
+                # Configuración actual del empleado (informativa, puede diferir si cambió después)
+                'current_payment_type': emp.payment_type,
+                'current_commission_rate': float(emp.commission_rate or 0),
                 'employee_profession': emp.get_profession_display() or emp.profession or '',
                 'services_count': sales_data['services_count'],
                 'gross_sales': round(sales_data['gross_sales'], 2),

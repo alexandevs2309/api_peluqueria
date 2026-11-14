@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from apps.services_api.models import Service, ServiceEmployee
 from .models import Employee, WorkSchedule, AttendanceRecord
+from apps.roles_api.models import UserRole, Role
 from apps.services_api.serializers import ServiceSerializer
 from django.contrib.auth import get_user_model
 from apps.auth_api.role_utils import get_effective_role_api
@@ -37,6 +38,38 @@ class UserBasicSerializer(serializers.ModelSerializer):
             parts = obj.full_name.split(' ', 1)
             return parts[1] if len(parts) > 1 else ''
         return ''
+
+
+
+_PROFESSION_TO_ROLE = {
+    'manager': 'Manager',
+    'receptionist': 'Cajera',
+    'cashier': 'Cajera',
+    'barber': 'Estilista',
+    'stylist': 'Estilista',
+    'manicurist': 'Estilista',
+    'pedicurist': 'Estilista',
+    'colorist': 'Estilista',
+    'braider': 'Estilista',
+    'eyebrow': 'Estilista',
+    'makeup': 'Estilista',
+    'massage': 'Estilista',
+    'barber_stylist': 'Estilista',
+    'general': 'Estilista',
+    'other': 'Estilista',
+}
+
+def _ensure_employee_user_role(user, tenant, profession=None):
+    """Asigna UserRole al usuario empleado segun su profesion si no tiene."""
+    try:
+        role_name = _PROFESSION_TO_ROLE.get((profession or '').lower(), 'Estilista')
+        role = Role.objects.filter(name__in=[role_name, role_name.lower(), role_name.capitalize()]).first()
+        if not role:
+            role = Role.objects.filter(name__in=['professional', 'Estilista']).first()
+        if role:
+            UserRole.objects.get_or_create(user=user, role=role, tenant=tenant)
+    except Exception:
+        pass
 
 class EmployeeSerializer(serializers.ModelSerializer):
     user_id = serializers.IntegerField(write_only=True, required=False, allow_null=True)
@@ -106,6 +139,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
                             if getattr(user_obj, 'role', '') != 'CLIENT_STAFF':
                                 user_obj.role = 'CLIENT_STAFF'
                                 user_obj.save(update_fields=['role'])
+                            if tenant:
+                                _ensure_employee_user_role(user_obj, tenant, profession=attrs.get("profession"))
                     else:
                         try:
                             user_obj = User.objects.create_user(
@@ -115,6 +150,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
                                 tenant=tenant,
                                 role='CLIENT_STAFF'
                             )
+                            if tenant:
+                                _ensure_employee_user_role(user_obj, tenant, profession=attrs.get("profession"))
                         except Exception as exc:
                             raise serializers.ValidationError({"user": [f"Error al crear la cuenta del usuario: {str(exc)}"]})
                     attrs['user'] = user_obj

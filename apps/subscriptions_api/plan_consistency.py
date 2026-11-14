@@ -14,6 +14,8 @@ FEATURE_ALIASES = {
     "promotions_enabled": ("promotions",),
     "multi_branch": ("multi_location",),
     "multi_location": ("multi_branch",),
+    "reports": ("basic_reports", "advanced_reports"),
+    "basic_reports": ("reports",),
 }
 
 

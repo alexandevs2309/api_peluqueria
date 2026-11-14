@@ -144,7 +144,10 @@ class SaleSerializer(serializers.ModelSerializer):
         return getattr(employee_user, 'full_name', None) or getattr(employee_user, 'email', None)
 
     def get_user_name(self, obj):
-        return getattr(getattr(obj, 'user', None), 'full_name', None) or getattr(getattr(obj, 'user', None), 'email', None)
+        user = getattr(obj, 'user', None)
+        if user:
+            return getattr(user, 'full_name', None) or getattr(user, 'email', None)
+        return None
 
     def validate(self, data):
         import logging
@@ -315,11 +318,27 @@ class SaleSerializer(serializers.ModelSerializer):
 class CashRegisterSerializer(serializers.ModelSerializer):
     sales_amount = serializers.SerializerMethodField()
     user_name = serializers.SerializerMethodField()
+    user_role = serializers.SerializerMethodField()
     
     class Meta:
         model = CashRegister
-        fields = ['id', 'user', 'user_name', 'branch', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
-        read_only_fields = ['user', 'user_name', 'opened_at', 'closed_at', 'sales_amount']
+        fields = ['id', 'user', 'user_name', 'user_role', 'branch', 'opened_at', 'closed_at', 'initial_cash', 'final_cash', 'is_open', 'sales_amount']
+        read_only_fields = ['user', 'user_name', 'user_role', 'opened_at', 'closed_at', 'sales_amount']
+
+    def get_user_name(self, obj):
+        if obj.user:
+            return obj.user.full_name or obj.user.email
+        return None
+
+    def get_user_role(self, obj):
+        if not obj.user:
+            return None
+        try:
+            from apps.auth_api.role_utils import get_effective_role_api
+            tenant = getattr(obj, 'tenant', None)
+            return get_effective_role_api(obj.user, tenant=tenant)
+        except Exception:
+            return getattr(obj.user, 'role', None)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -338,9 +357,6 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         if not obj.opened_at:
             return 0.0
         return obj.sales_amount
-
-    def get_user_name(self, obj):
-        return getattr(getattr(obj, 'user', None), 'full_name', None) or getattr(getattr(obj, 'user', None), 'email', None)
 
 class CashCountSerializer(serializers.ModelSerializer):
     class Meta:

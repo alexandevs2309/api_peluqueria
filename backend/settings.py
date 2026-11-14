@@ -459,6 +459,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.billing_api.tasks.daily_financial_reconciliation',
         'schedule': crontab(hour=4, minute=0),  # Diario a las 4:00 AM
     },
+    # Cierre automático de cajas olvidadas
+    'auto-close-old-cash-registers': {
+        'task': 'apps.pos_api.tasks.auto_close_old_cash_registers',
+        'schedule': crontab(hour=23, minute=59),  # Diario a las 23:59
+    },
 }
 
 # Financial reconciliation alerts
