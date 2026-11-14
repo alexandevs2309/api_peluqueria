@@ -95,7 +95,6 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         'cancel': 'appointments_api.cancel_appointment',
         'complete': 'appointments_api.complete_appointment',
         'today': 'appointments_api.view_appointment',
-        'check_duplicate': 'appointments_api.view_appointment',
     }
 
     def perform_create(self, serializer):
@@ -236,13 +235,7 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     )
             SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
 
-            from django.db import IntegrityError
-            try:
-                serializer.save(**save_kwargs)
-            except IntegrityError:
-                raise serializers.ValidationError(
-                    "Ya existe una cita con el mismo cliente, estilista y horario."
-                )
+            serializer.save(**save_kwargs)
 
     def perform_update(self, serializer):
         self.perform_create(serializer)
@@ -411,47 +404,6 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
             appointment.client.save()
 
         return Response({'detail': 'Cita completada correctamente'})
-
-    @action(detail=False, methods=['get'])
-    def check_duplicate(self, request):
-        """
-        Verifica si existe una cita duplicada (mismo cliente, estilista y horario).
-        """
-        client_id = request.query_params.get('client_id')
-        stylist_id = request.query_params.get('stylist_id')
-        date = request.query_params.get('date')  # YYYY-MM-DD
-        time = request.query_params.get('time')  # HH:MM
-
-        if not all([client_id, stylist_id, date, time]):
-            return Response(
-                {'error': 'client_id, stylist_id, date y time son requeridos'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        try:
-            # Combinar fecha y hora para crear un datetime
-            datetime_str = f"{date} {time}"
-            appointment_datetime = datetime.fromisoformat(datetime_str.replace('Z', '+00:00'))
-            
-            # Asegurar que es aware datetime
-            if timezone.is_naive(appointment_datetime):
-                appointment_datetime = timezone.make_aware(appointment_datetime)
-
-            # Buscar citas existentes con el mismo cliente, estilista y horario
-            # Solo verificar citas programadas o completadas
-            exists = Appointment.objects.filter(
-                client_id=client_id,
-                stylist_id=stylist_id,
-                date_time=appointment_datetime,
-                status__in=['scheduled', 'completed']
-            ).exists()
-
-            return Response({'duplicate': exists})
-        except ValueError:
-            return Response(
-                {'error': 'Formato de fecha u hora inválido'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
 
     @action(detail=False, methods=['get'])
     def today(self, request):
