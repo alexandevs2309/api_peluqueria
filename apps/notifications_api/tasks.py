@@ -36,13 +36,32 @@ def mark_expired_appointments(self):
 
         count = 0
         for appointment in expired_data:
-            if appointment.stylist:
-                client_name = appointment.client.full_name if appointment.client else 'Cliente'
+            client_name = appointment.client.full_name if appointment.client else 'Cliente'
+            dt_label = appointment.date_time.strftime('%d/%m/%Y %H:%M') if appointment.date_time else ''
+            recipients = []
+            if appointment.stylist_id:
+                recipients.append((appointment.stylist_id, f"El cliente {client_name} no asistió a la cita del {dt_label}"))
+            client_user = getattr(appointment.client, 'user', None) if appointment.client else None
+            if client_user and getattr(client_user, 'id', None):
+                recipients.append((client_user.id, f"Tu cita del {dt_label} fue marcada como no asistida."))
+            try:
+                tenant_id = getattr(appointment, 'tenant_id', None)
+                if tenant_id:
+                    from apps.auth_api.models import User
+                    for uid in User.objects.filter(tenant_id=tenant_id, roles__name='Client-Admin', is_active=True).values_list('id', flat=True):
+                        recipients.append((uid, f"Cita marcada como no asistida: {client_name} · {dt_label}"))
+            except Exception:
+                pass
+            seen = set()
+            for rid, msg in recipients:
+                if rid in seen:
+                    continue
+                seen.add(rid)
                 InAppNotification.objects.create(
-                    recipient=appointment.stylist,
+                    recipient_id=rid,
                     type='appointment',
                     title='Cliente no asistió',
-                    message=f"El cliente {client_name} no asistió a la cita del {appointment.date_time.strftime('%d/%m/%Y %H:%M')}"
+                    message=msg
                 )
             count += 1
         
@@ -71,18 +90,46 @@ def send_daily_appointment_reminders(self):
             date_time__date=today,
             status='scheduled'
         ).select_related('stylist', 'client', 'service')
-        
+
         count = 0
         for appointment in appointments:
-            # Notification for stylist
-            InAppNotification.objects.create(
-                recipient=appointment.stylist,
+            if not appointment.stylist_id:
+                continue
+            client_name = appointment.client.full_name if appointment.client else 'Cliente'
+            service_name = appointment.service.name if getattr(appointment, 'service', None) else 'Servicio'
+            time_label = appointment.date_time.strftime('%H:%M') if appointment.date_time else ''
+            # Evitar duplicados si la tarea se ejecuta más de una vez el mismo día
+            if InAppNotification.objects.filter(
+                recipient_id=appointment.stylist_id,
                 type='appointment',
                 title='Recordatorio: Cita hoy',
-                message=f"Cita con {appointment.client.full_name} a las {appointment.date_time.strftime('%H:%M')}"
+                message__contains=f"{client_name} a las {time_label}",
+                created_at__date=today,
+            ).exists():
+                continue
+            InAppNotification.objects.create(
+                recipient_id=appointment.stylist_id,
+                type='appointment',
+                title='Recordatorio: Cita hoy',
+                message=f"Cita con {client_name} a las {time_label}"
             )
+            client_user = getattr(appointment.client, 'user', None) if appointment.client else None
+            if client_user and getattr(client_user, 'id', None):
+                if not InAppNotification.objects.filter(
+                    recipient_id=client_user.id,
+                    type='appointment',
+                    title='Recordatorio: Tienes una cita hoy',
+                    message__contains=time_label,
+                    created_at__date=today,
+                ).exists():
+                    InAppNotification.objects.create(
+                        recipient_id=client_user.id,
+                        type='appointment',
+                        title='Recordatorio: Tienes una cita hoy',
+                        message=f"Tu cita de {service_name} es hoy a las {time_label}."
+                    )
             count += 1
-        
+
         return f"Sent {count} daily reminders"
     except Exception as e:
         logger.error(f"Error sending daily reminders: {str(e)}")
@@ -102,18 +149,43 @@ def notify_upcoming_appointments(self):
             date_time__gte=now,
             date_time__lte=one_hour_later,
             status='scheduled'
-        ).select_related('stylist', 'client')
-        
+        ).select_related('stylist', 'client', 'service')
+
         count = 0
         for appointment in upcoming:
-            InAppNotification.objects.create(
-                recipient=appointment.stylist,
+            client_name = appointment.client.full_name if appointment.client else 'Cliente'
+            service_name = appointment.service.name if getattr(appointment, 'service', None) else 'Servicio'
+            time_label = appointment.date_time.strftime('%H:%M') if appointment.date_time else ''
+            window_start = now - timedelta(minutes=70)
+            if appointment.stylist_id and not InAppNotification.objects.filter(
+                recipient_id=appointment.stylist_id,
                 type='appointment',
                 title='⏰ Cita próxima',
-                message=f"Cita con {appointment.client.full_name} en 1 hora ({appointment.date_time.strftime('%H:%M')})"
-            )
-            count += 1
-        
+                message__contains=f"{client_name}",
+                created_at__gte=window_start,
+            ).exists():
+                InAppNotification.objects.create(
+                    recipient_id=appointment.stylist_id,
+                    type='appointment',
+                    title='⏰ Cita próxima',
+                    message=f"Cita con {client_name} en 1 hora ({time_label})"
+                )
+                count += 1
+            client_user = getattr(appointment.client, 'user', None) if appointment.client else None
+            if client_user and getattr(client_user, 'id', None) and not InAppNotification.objects.filter(
+                recipient_id=client_user.id,
+                type='appointment',
+                title='⏰ Tu cita es pronto',
+                message__contains=time_label,
+                created_at__gte=window_start,
+            ).exists():
+                InAppNotification.objects.create(
+                    recipient_id=client_user.id,
+                    type='appointment',
+                    title='⏰ Tu cita es pronto',
+                    message=f"Tu cita de {service_name} es en aproximadamente 1 hora ({time_label})."
+                )
+
         return f"Notified {count} upcoming appointments"
     except Exception as e:
         logger.error(f"Error notifying upcoming appointments: {str(e)}")

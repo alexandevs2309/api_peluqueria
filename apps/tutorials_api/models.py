@@ -14,14 +14,25 @@ class Tutorial(models.Model):
         PAYROLL = 'payroll', 'Nómina'
         SUBSCRIPTIONS = 'subscriptions', 'Suscripciones'
 
+    class ContentTypeChoices(models.TextChoices):
+        VIDEO = 'video', 'Video'
+        TEXT = 'text', 'Texto'
+
     module = models.CharField(
         max_length=30,
         choices=ModuleChoices.choices,
         verbose_name='Módulo'
     )
+    content_type = models.CharField(
+        max_length=10,
+        choices=ContentTypeChoices.choices,
+        default=ContentTypeChoices.VIDEO,
+        verbose_name='Tipo de contenido'
+    )
     title = models.CharField(max_length=200, verbose_name='Título')
     description = models.TextField(blank=True, verbose_name='Descripción')
-    video_url = models.URLField(verbose_name='URL del video (YouTube embed)')
+    body = models.TextField(blank=True, verbose_name='Contenido (texto)')
+    video_url = models.URLField(blank=True, verbose_name='URL del video (YouTube embed)')
     thumbnail_url = models.URLField(blank=True, verbose_name='URL del thumbnail')
     duration = models.CharField(max_length=20, blank=True, verbose_name='Duración (ej: 3:45)')
     order = models.PositiveIntegerField(default=0, verbose_name='Orden')
