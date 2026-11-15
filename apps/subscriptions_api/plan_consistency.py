@@ -97,7 +97,34 @@ def can_add_user(tenant, count: int = 1, current_count: int | None = None) -> bo
 
 def get_plan_features(plan, expected_keys: list[str] | tuple[str, ...] | None = None) -> dict[str, bool]:
     expected_keys = list(expected_keys or [])
-    return normalize_features_dict(getattr(plan, "features", None), expected_keys)
+    features = dict(getattr(plan, "features", None) or {})
+    # Mapeo aprobado R1 (solo resolución): 'pro' (legacy) -> beneficios equivalentes a Premium,
+    # preservando derechos sin degradación y sin alterar registros almacenados.
+    if getattr(plan, "name", None) == "pro":
+        premium_like = {
+            "payroll": True,
+            "reports": True,
+            "inventory": True,
+            "promotions": True,
+            "appointments": True,
+            "basic_reports": True,
+            "cash_register": True,
+            "client_history": True,
+            "export_reports": True,
+            "multi_location": True,
+            "custom_branding": True,
+            "advanced_reports": True,
+            "priority_support": True,
+            "whatsapp_notifications": True,
+        }
+        merged = dict(premium_like)
+        merged.update(features)
+        # Forzar derechos de R1 (no degradar respecto a Premium)
+        for k, v in premium_like.items():
+            if v:
+                merged[k] = True
+        features = merged
+    return normalize_features_dict(features, expected_keys)
 
 
 def get_tenant_plan_features(tenant, expected_keys: list[str] | tuple[str, ...] | None = None) -> dict[str, bool]:
@@ -105,6 +132,34 @@ def get_tenant_plan_features(tenant, expected_keys: list[str] | tuple[str, ...] 
     settings = getattr(tenant, "settings", None) or {}
     stored_features = settings.get(PLAN_SETTINGS_FEATURES_KEY)
     subscription_plan = getattr(tenant, "subscription_plan", None)
+    tenant_plan_type = str(getattr(tenant, "plan_type", "") or "").lower()
+
+    # Mapeo aprobado R1 (solo resolución): tenants legacy con plan_type='pro' conservan
+    # derechos equivalentes a Premium sin degradación (compatibilidad ante fuente inconsistente).
+    if tenant_plan_type == "pro":
+        premium_like = normalize_features_dict({
+            "payroll": True, "reports": True, "inventory": True, "promotions": True,
+            "appointments": True, "basic_reports": True, "cash_register": True, "client_history": True,
+            "export_reports": True, "multi_location": True, "custom_branding": True,
+            "advanced_reports": True, "priority_support": True, "whatsapp_notifications": True,
+        }, expected_keys)
+        if isinstance(stored_features, dict):
+            merged = dict(premium_like)
+            for k, v in stored_features.items():
+                if k not in merged:
+                    merged[k] = v
+            for k, v in premium_like.items():
+                if v:
+                    merged[k] = True
+            return normalize_features_dict(merged, expected_keys)
+        if subscription_plan is not None:
+            plan_features = get_plan_features(subscription_plan)
+            merged = dict(plan_features)
+            for k, v in premium_like.items():
+                if v:
+                    merged[k] = True
+            return normalize_features_dict(merged, expected_keys)
+        return premium_like
 
     if isinstance(stored_features, dict):
         if subscription_plan is not None:

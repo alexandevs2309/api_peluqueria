@@ -52,9 +52,11 @@ def get_user_feature_flag(user, feature_name):
         'premium': ['cash_register', 'appointments', 'inventory', 'reports', 'basic_reports', 'client_history', 'promotions', 'multi_location', 'advanced_reports', 'payroll', 'custom_branding', 'whatsapp_notifications'],
         'enterprise': ['cash_register', 'appointments', 'inventory', 'reports', 'basic_reports', 'client_history', 'promotions', 'multi_location', 'advanced_reports', 'payroll', 'custom_branding', 'whatsapp_notifications', 'export_reports', 'priority_support'],
     }
+    # Mapeo aprobado R1 (solo resolución): 'pro' (legacy) -> Premium, sin degradar derechos.
+    plan_features['pro'] = plan_features['premium']
 
     plan_type = getattr(subscription.plan, 'name', 'basic').lower()
-    return feature_name in plan_features.get(plan_type, [])
+    return feature_name in plan_features.get(plan_type, plan_features['basic'])
 
 
 def log_subscription_event(*args, **kwargs):

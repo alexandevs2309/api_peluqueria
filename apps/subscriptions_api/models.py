@@ -66,11 +66,14 @@ class PromotionalCredit(models.Model):
 
 class SubscriptionPlan(models.Model):
 
+    # Catálogo oficial: Basic, Standard, Premium, Enterprise.
+    # 'pro' es un plan legacy (no oficial) conservado por compatibilidad de datos históricos.
     PLAN_CHOICES = [
         ('basic', 'Basic'),
-        ('standard', 'Pro'),
-        ('premium', 'Business'),
+        ('standard', 'Standard'),
+        ('premium', 'Premium'),
         ('enterprise', 'Enterprise'),
+        ('pro', 'Pro (Legacy)'),
     ]
 
     name = models.CharField(max_length=100, unique=True, choices=PLAN_CHOICES, help_text="Name of the subscription plan")

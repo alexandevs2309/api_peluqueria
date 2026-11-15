@@ -149,43 +149,9 @@ class Command(BaseCommand):
             },
         ]
 
-        # Plan 'pro' (legacy, mantenido por compatibilidad)
-        plans.append({
-            'name': 'pro',
-            'description': 'Plan Pro para negocios en crecimiento (legacy)',
-            'price': 69.99,
-            'annual_price': 699.99,
-            'duration_month': 1,
-            'max_employees': 15,
-            'max_users': 30,
-            'allows_multiple_branches': True,
-            'features': {
-                'cash_register': True,
-                'appointments': True,
-                'inventory': True,
-                'reports': True,
-                'basic_reports': True,
-                'client_history': True,
-                'promotions': True,
-                'multi_location': True,
-                'advanced_reports': True,
-                'payroll': True,
-                'custom_branding': True,
-                'whatsapp_notifications': True,
-                'export_reports': False,
-                'priority_support': False,
-            },
-            'commercial_benefits': [
-                'Hasta 3 Sucursales',
-                'Hasta 15 Empleados y 30 Usuarios',
-                'Promociones y Cupones',
-                'Reportes Avanzados',
-                'Comisiones y Nómina',
-                'Soporte Prioritario',
-            ],
-            'is_active': True,
-        })
-
+        # Catálogo oficial: Basic, Standard, Premium, Enterprise.
+        # 'pro' es legacy (mapeo aprobado R1 -> Premium): no se crea/actualiza automáticamente
+        # para evitar sobrescribir valores históricos ni reactivarlo como plan oficial.
         for plan_data in plans:
             plan, created = SubscriptionPlan.objects.update_or_create(
                 name=plan_data['name'],
@@ -198,4 +164,12 @@ class Command(BaseCommand):
                 f'branches={plan.allows_multiple_branches})'
             ))
 
-        self.stdout.write(self.style.SUCCESS('All subscription plans synced successfully.'))
+        pro_plan = SubscriptionPlan.objects.filter(name='pro').first()
+        if pro_plan:
+            self.stdout.write(self.style.WARNING(
+                'Legacy plan "pro" detectado (sin cambios): se conserva por compatibilidad; mapeo R1 -> Premium.'
+            ))
+        else:
+            self.stdout.write('Legacy plan "pro": no presente (no se crea como plan oficial).')
+
+        self.stdout.write(self.style.SUCCESS('Official subscription plans synced successfully (basic/standard/premium/enterprise).'))

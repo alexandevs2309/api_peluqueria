@@ -21,7 +21,12 @@ class SubscriptionLimitValidator:
             # Sin suscripción = plan gratuito (1 empleado)
             max_employees = 1
         else:
-            max_employees = subscription.plan.max_employees
+            plan = subscription.plan
+            # Mapeo aprobado R1 (solo resolución): 'pro' (legacy) -> Premium, sin degradar límites.
+            if getattr(plan, 'name', None) == 'pro':
+                max_employees = 25
+            else:
+                max_employees = plan.max_employees
             
         # 0 = ilimitado
         if max_employees == 0:
@@ -55,7 +60,9 @@ class SubscriptionLimitValidator:
         if not subscription:
             max_clients = 50  # Plan gratuito
         else:
-            max_clients = getattr(subscription.plan, 'max_clients', 0)
+            plan = subscription.plan
+            # Mapeo aprobado R1 (solo resolución): 'pro' (legacy) -> Premium (sin límite definido específico).
+            max_clients = getattr(plan, 'max_clients', 0)
             
         if max_clients == 0:
             return True
@@ -89,9 +96,11 @@ class SubscriptionLimitValidator:
         if not subscription:
             max_appointments = 100  # Plan gratuito
         else:
-            max_appointments = getattr(subscription.plan, 'max_appointments_per_month', None)
+            plan = subscription.plan
+            # Mapeo aprobado R1 (solo resolución): 'pro' (legacy) -> Premium (sin límite definido específico).
+            max_appointments = getattr(plan, 'max_appointments_per_month', None)
             if max_appointments is None:
-                max_appointments = getattr(subscription.plan, 'max_appointments', 0)
+                max_appointments = getattr(plan, 'max_appointments', 0)
             
         if max_appointments == 0:
             return True

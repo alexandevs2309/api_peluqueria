@@ -23,11 +23,14 @@ from .subscription_lifecycle import (
 )
 
 class Tenant(models.Model):
+    # Catálogo oficial: Basic, Standard, Premium, Enterprise.
+    # 'pro' es un valor legacy conservado por compatibilidad (mapeo aprobado R1: pro -> Premium).
     PLAN_CHOICES = [
         ("basic", "Basic"),
-        ("standard", "Pro"),
-        ("premium", "Business"),
+        ("standard", "Standard"),
+        ("premium", "Premium"),
         ("enterprise", "Enterprise"),
+        ("pro", "Pro (Legacy)"),
     ]
     SUBSCRIPTION_STATUS = [
         ("trial", "Trial"),
@@ -135,10 +138,18 @@ class Tenant(models.Model):
     
     def can_add_user(self):
         """Check if tenant can add more users"""
+        # Mapeo aprobado R1 (solo resolución): 'pro' legacy -> capacidad Premium, sin degradar.
+        if str(getattr(self, 'plan_type', '') or '').lower() == 'pro':
+            current = self.users.filter(is_active=True).count()
+            return (current + 1) <= 30
         return can_add_user_for_tenant(self)
     
     def can_add_employee(self):
         """Check if tenant can add more employees"""
+        # Mapeo aprobado R1 (solo resolución): 'pro' legacy -> capacidad Premium, sin degradar.
+        if str(getattr(self, 'plan_type', '') or '').lower() == 'pro':
+            current = self.employees.filter(is_active=True).count() if hasattr(self, 'employees') else 0
+            return (current + 1) <= 25
         return can_add_employee_for_tenant(self)
     
     def get_user_usage(self):
