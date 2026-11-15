@@ -126,8 +126,13 @@ class EmployeeSerializer(serializers.ModelSerializer):
                     email = user_data['email'].strip().lower()
                     full_name = user_data.get('full_name', '').strip()
                     password = user_data.get('password', '').strip()
+                    auto_generated = False
                     if not password:
-                        raise serializers.ValidationError({"user": ["La contraseña inicial es obligatoria para crear el empleado."]})
+                        # Auto-generar contraseña si no se proporciona
+                        import secrets, string
+                        alphabet = string.ascii_letters + string.digits
+                        password = ''.join(secrets.choice(alphabet) for _ in range(12))
+                        auto_generated = True
                     if len(password) < 8:
                         raise serializers.ValidationError({"user": ["La contraseña debe tener al menos 8 caracteres."]})
                     
@@ -141,6 +146,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
                                 user_obj.save(update_fields=['role'])
                             if tenant:
                                 _ensure_employee_user_role(user_obj, tenant, profession=attrs.get("profession"))
+                            # Guardar contraseña temporal para envío de email
+                            user_obj._plain_password = password
+                            user_obj._auto_generated = auto_generated
                     else:
                         try:
                             user_obj = User.objects.create_user(
@@ -152,6 +160,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
                             )
                             if tenant:
                                 _ensure_employee_user_role(user_obj, tenant, profession=attrs.get("profession"))
+                            # Guardar contraseña temporal para envío de email
+                            user_obj._plain_password = password
+                            user_obj._auto_generated = auto_generated
                         except Exception as exc:
                             raise serializers.ValidationError({"user": [f"Error al crear la cuenta del usuario: {str(exc)}"]})
                     attrs['user'] = user_obj
@@ -252,7 +263,7 @@ class EmployeeServiceSerializer(serializers.ModelSerializer):
 class WorkScheduleSerializer(serializers.ModelSerializer):
     class Meta:
         model = WorkSchedule
-        fields = ['id', 'employee', 'day_of_week', 'start_time', 'end_time', 'created_at']
+        fields = ['id', 'employee', 'day_of_week', 'is_closed', 'start_time', 'end_time', 'created_at']
         read_only_fields = ['created_at']
 
     def __init__(self, *args, **kwargs):

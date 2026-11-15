@@ -60,6 +60,7 @@ class EmployeeViewSet(TenantScopedViewSet):
     def perform_create(self, serializer):
         """Override para validar límite de empleados según plan"""
         user = self.request.user
+        tenant = getattr(self.request, 'tenant', None) or getattr(self.request.user, 'tenant', None)
         
         # SuperAdmin: puede crear sin validación de límite
         if user.is_superuser:
@@ -73,6 +74,36 @@ class EmployeeViewSet(TenantScopedViewSet):
                 serializer.save(tenant=tenant)
             else:
                 serializer.save()
+            
+            # Enviar email al empleado (superadmin)
+            try:
+                from apps.auth_api.tasks import send_email_async
+                from django.conf import settings
+                employee_user = serializer.instance.user if hasattr(serializer.instance, 'user') else None
+                if employee_user and hasattr(employee_user, '_plain_password'):
+                    plain_pw = employee_user._plain_password
+                    tenant_name = tenant.name if tenant else 'tu negocio'
+                    frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
+                    subject = f'Bienvenido a {tenant_name} - Tus credenciales de acceso'
+                    text_body = (
+                        f'Hola {employee_user.full_name},\n\n'
+                        f'Se ha creado tu cuenta de empleado en {tenant_name}.\n\n'
+                        f'Tus credenciales de acceso:\n'
+                        f'  Correo: {employee_user.email}\n'
+                        f'  Contraseña: {plain_pw}\n\n'
+                        f'Puedes iniciar sesión en: {frontend_url}/signin\n\n'
+                        'Saludos,\nAdministración'
+                    )
+                    send_email_async.delay(
+                        subject=subject,
+                        message=text_body,
+                        from_email='',
+                        recipient_list=[employee_user.email],
+                        html_message=text_body.replace('\n', '<br>'),
+                    )
+            except Exception as e:
+                import logging
+                logging.getLogger('employees_api').warning('No se pudo enviar email de credenciales: %s', e)
             return
         
         # Usuario normal: validar límite y asignar tenant
@@ -105,6 +136,48 @@ class EmployeeViewSet(TenantScopedViewSet):
                 })
 
         serializer.save(tenant=tenant)
+
+        # Enviar email al empleado con sus credenciales
+        try:
+            from apps.auth_api.tasks import send_email_async
+            from django.conf import settings
+            employee_user = serializer.instance.user if hasattr(serializer.instance, 'user') else None
+            if employee_user and hasattr(employee_user, '_plain_password'):
+                plain_pw = employee_user._plain_password
+                auto_gen = getattr(employee_user, '_auto_generated', False)
+                tenant_name = tenant.name if tenant else 'tu negocio'
+                frontend_url = (getattr(settings, 'FRONTEND_URL', '') or 'http://localhost:4200').rstrip('/')
+                subject = f'Bienvenido a {tenant_name} - Tus credenciales de acceso'
+                text_body = (
+                    f'Hola {employee_user.full_name},\n\n'
+                    f'Se ha creado tu cuenta de empleado en {tenant_name}.\n\n'
+                    f'Tus credenciales de acceso:\n'
+                    f'  Correo: {employee_user.email}\n'
+                    f'  Contraseña: {plain_pw}\n\n'
+                    f'Puedes iniciar sesión en: {frontend_url}/signin\n\n'
+                    + ('Te recomendamos cambiar tu contraseña después del primer ingreso.\n\n' if auto_gen else '')
+                    + 'Saludos,\nAdministración'
+                )
+                html_body = (
+                    f'<p>Hola <strong>{employee_user.full_name}</strong>,</p>'
+                    f'<p>Se ha creado tu cuenta de empleado en <strong>{tenant_name}</strong>.</p>'
+                    f'<p><strong>Tus credenciales de acceso:</strong></p>'
+                    f'<ul><li>Correo: {employee_user.email}</li>'
+                    f'<li>Contraseña: {plain_pw}</li></ul>'
+                    f'<p>Puedes iniciar sesión en: <a href="{frontend_url}/signin">{frontend_url}/signin</a></p>'
+                    + ('<p>Te recomendamos cambiar tu contraseña después del primer ingreso.</p>' if auto_gen else '')
+                    + '<p>Saludos,<br>Administración</p>'
+                )
+                send_email_async.delay(
+                    subject=subject,
+                    message=text_body,
+                    from_email='',
+                    recipient_list=[employee_user.email],
+                    html_message=html_body,
+                )
+        except Exception as e:
+            import logging
+            logging.getLogger('employees_api').warning('No se pudo enviar email de credenciales: %s', e)
 
     def _build_loan_description(
         self,

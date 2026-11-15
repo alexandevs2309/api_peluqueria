@@ -1617,6 +1617,19 @@ class CashRegisterViewSet(TenantScopedViewSet):
         if branch_id:
             filters['branch_id'] = branch_id
 
+        today = timezone.localdate()
+
+        # Auto-cerrar cajas abiertas de días anteriores para este usuario
+        CashRegister.objects.filter(
+            tenant=tenant,
+            user=request.user,
+            is_open=True,
+            opened_at__date__lt=today
+        ).update(is_open=False, closed_at=timezone.now(), final_cash=0)
+
+        # Solo retornar cajas abiertas HOY
+        filters['opened_at__date'] = today
+
         register = CashRegister.objects.filter(**filters).first()
         
         if not register:

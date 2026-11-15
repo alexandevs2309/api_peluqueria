@@ -235,7 +235,13 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
                     )
             SubscriptionLimitValidator.validate_appointment_limit(self.request.user, tenant=tenant)
 
-            serializer.save(**save_kwargs)
+            from django.db import IntegrityError
+            try:
+                serializer.save(**save_kwargs)
+            except IntegrityError:
+                raise serializers.ValidationError(
+                    "Ya existe una cita con el mismo cliente, estilista y horario."
+                )
 
     def perform_update(self, serializer):
         self.perform_create(serializer)

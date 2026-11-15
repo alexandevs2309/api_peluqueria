@@ -90,6 +90,7 @@ class WorkSchedule(models.Model):
         ('monday', 'Monday'), ('tuesday', 'Tuesday'), ('wednesday', 'Wednesday'),
         ('thursday', 'Thursday'), ('friday', 'Friday'), ('saturday', 'Saturday'), ('sunday', 'Sunday')
     ])
+    is_closed = models.BooleanField(default=False, help_text='Dia libre / cerrado')
     start_time = models.TimeField()
     end_time = models.TimeField()
     created_at = models.DateTimeField(auto_now_add=True)
