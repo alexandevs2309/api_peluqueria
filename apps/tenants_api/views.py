@@ -1,5 +1,7 @@
 from rest_framework import viewsets, permissions, decorators, response, status, serializers
 from django.contrib.auth import get_user_model
+from django.db import transaction
+from django.utils import timezone
 from apps.core.permissions import IsSuperAdmin
 from .models import Tenant
 from .serializers import TenantSerializer, TenantLocaleSerializer
@@ -174,6 +176,143 @@ class TenantViewSet(viewsets.ModelViewSet):
             f"Extendió suscripción {days} días ({reason})" if reason else f"Extendió suscripción {days} días",
             tenant
         )
+        serializer = self.get_serializer(tenant)
+        return response.Response(serializer.data, status=status.HTTP_200_OK)
+
+    @decorators.action(detail=True, methods=["post"], url_path="change-plan")
+    def change_plan(self, request, pk=None):
+        """Cambia el plan comercial del tenant y sincroniza suscripciones activas del tenant."""
+        tenant = self.get_object()
+        plan_id = request.data.get("subscription_plan") or request.data.get("plan_id")
+
+        if plan_id in (None, "", 0, "0"):
+            return response.Response(
+                {"error": "subscription_plan es requerido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            plan_id = int(plan_id)
+        except (TypeError, ValueError):
+            return response.Response(
+                {"error": "subscription_plan inválido."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            from apps.subscriptions_api.models import SubscriptionPlan, UserSubscription, Subscription
+        except Exception:
+            return response.Response(
+                {"error": "No se pudo cargar el módulo de suscripciones."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        try:
+            new_plan = SubscriptionPlan.objects.get(id=plan_id)
+        except SubscriptionPlan.DoesNotExist:
+            return response.Response(
+                {"error": "El plan seleccionado no existe."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if not getattr(new_plan, "is_active", True):
+            return response.Response(
+                {"error": "El plan seleccionado no está activo."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        now = timezone.now()
+        previous_plan_id = tenant.subscription_plan_id
+        previous_plan_name = getattr(getattr(tenant, "subscription_plan", None), "name", None) or tenant.plan_type
+
+        try:
+            with transaction.atomic():
+                # Aplicar plan y snapshot/límites del tenant (Tenant.save refresca en cambio de plan)
+                tenant.subscription_plan = new_plan
+                tenant.plan_type = new_plan.name
+                tenant.save()
+
+                # Sincronizar UserSubscriptions activas/vigentes de los usuarios del tenant
+                user_sub_qs = UserSubscription.objects.select_related("plan", "user").filter(
+                    user__tenant=tenant,
+                    is_active=True,
+                )
+                effective_sub = None
+                for sub in user_sub_qs:
+                    if sub.plan_id != new_plan.id:
+                        sub.plan = new_plan
+                        sub.save(update_fields=["plan"])
+                        try:
+                            from apps.subscriptions_api.utils import log_subscription_event
+                            log_subscription_event(
+                                user=request.user,
+                                subscription=sub,
+                                action="plan_changed",
+                                description=(
+                                    f"Plan cambiado administrativamente de "
+                                    f"{previous_plan_name or 'N/A'} a {new_plan.name} para tenant {tenant.id}."
+                                ),
+                            )
+                        except Exception:
+                            pass
+                    # Elegir suscripción efectiva (mayor vigencia)
+                    if effective_sub is None:
+                        effective_sub = sub
+                    else:
+                        cur_end = getattr(effective_sub, "end_date", None) or now
+                        sub_end = getattr(sub, "end_date", None) or now
+                        if sub_end >= cur_end:
+                            effective_sub = sub
+
+                # Sincronizar registros Subscription (nivel tenant) activos, si existen
+                try:
+                    Subscription.objects.filter(tenant=tenant, is_active=True).exclude(plan_id=new_plan.id).update(plan=new_plan)
+                except Exception:
+                    pass
+
+                # Alinear estado/acceso del tenant con la suscripción efectiva cuando aplique
+                tenant_update_fields = []
+                if effective_sub and getattr(effective_sub, "is_active", False):
+                    end_date = getattr(effective_sub, "end_date", None)
+                    if end_date and end_date >= now:
+                        if tenant.subscription_status in ("trial", "past_due", "suspended", "cancelled") or tenant.access_until is None:
+                            tenant.subscription_status = "active"
+                            tenant.is_active = True
+                            tenant.trial_end_date = None
+                            tenant.access_until = end_date
+                            tenant_update_fields.extend(["subscription_status", "is_active", "trial_end_date", "access_until", "updated_at"])
+                        elif tenant.access_until != end_date:
+                            tenant.access_until = end_date
+                            tenant_update_fields.extend(["access_until", "updated_at"])
+
+                if tenant_update_fields:
+                    tenant.save(update_fields=list(dict.fromkeys(tenant_update_fields)))
+
+                AuditLog.objects.create(
+                    user=request.user,
+                    action="UPDATE",
+                    description=(
+                        f"Cambió plan del tenant {tenant.name} de {previous_plan_name or previous_plan_id} a {new_plan.name}"
+                    ),
+                    content_type=ContentType.objects.get_for_model(tenant),
+                    object_id=tenant.id,
+                    ip_address=request.META.get("REMOTE_ADDR"),
+                    user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                    source="SYSTEM",
+                    extra_data={
+                        "previous_plan_id": previous_plan_id,
+                        "new_plan_id": new_plan.id,
+                        "new_plan_name": new_plan.name,
+                        "effective_user_subscription_id": getattr(effective_sub, "id", None),
+                    },
+                )
+
+        except Exception as e:
+            return response.Response(
+                {"error": "No se pudo cambiar el plan del tenant.", "detail": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = self.get_serializer(tenant)
         return response.Response(serializer.data, status=status.HTTP_200_OK)
 
