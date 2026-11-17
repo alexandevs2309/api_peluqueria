@@ -23,7 +23,7 @@ class Command(BaseCommand):
                 branch=branch,
                 business_name=tenant.name,
                 business_email=tenant.contact_email or "",
-                currency="USD",
+                currency="DOP",
                 timezone="America/Santo_Domingo"
             )
             

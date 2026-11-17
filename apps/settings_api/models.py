@@ -52,7 +52,7 @@ class Setting(models.Model):
     business_email = models.EmailField(_("Email de contacto"), blank=True, null=True)
     phone_number = models.CharField(_("Telefono"), max_length=50, blank=True, null=True)
     address = models.TextField(_("Direccion"), blank=True, null=True)
-    currency = models.CharField(_("Moneda"), max_length=10, default="USD")
+    currency = models.CharField(_("Moneda"), max_length=10, default="DOP")
     tax_percentage = models.DecimalField(
         _("Porcentaje de impuestos"),
         max_digits=5,
@@ -96,7 +96,7 @@ class SystemSettings(models.Model):
         default=7,
         validators=[MinValueValidator(0), MaxValueValidator(365)]
     )
-    default_currency = models.CharField(_("Moneda por defecto"), max_length=10, default="USD")
+    default_currency = models.CharField(_("Moneda por defecto"), max_length=10, default="DOP")
 
     # Configuracion de Plataforma
     platform_domain = models.CharField(_("Dominio principal"), max_length=255, blank=True)
@@ -264,7 +264,7 @@ class SystemSettings(models.Model):
                 'support_email': 'soporte@auronsuite.com',
                 'max_tenants': 100,
                 'trial_days': 7,
-                'default_currency': 'USD',
+                'default_currency': 'DOP',
                 'platform_domain': '',
                 'supported_languages': ['es', 'en'],
                 'platform_commission_rate': 5.00,
