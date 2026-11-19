@@ -17,6 +17,15 @@ SECRET_KEY = 'test-secret-key-not-for-production'
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEBUG = True
 
+# Clave Fernet de pruebas (32 bytes 'x' en base64). Nunca usar en producción.
+FERNET_KEY = 'eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHg='
+# Sin proveedor global: los tests activan la IA con override_settings.
+LLM_PROVIDER = ''
+LLM_API_KEY = ''
+GEMINI_API_KEY = ''
+OPENAI_API_KEY = ''
+DEEPSEEK_API_KEY = ''
+
 INSTALLED_APPS = [
     'django.contrib.admin',
     'django.contrib.auth',
@@ -57,6 +66,7 @@ INSTALLED_APPS = [
     'apps.booking_api',
     'apps.chatbot_api',
     'apps.telemetry_api',
+    'apps.mcp_api',
 ]
 
 MIDDLEWARE = [

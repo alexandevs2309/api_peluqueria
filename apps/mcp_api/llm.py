@@ -4,6 +4,8 @@ import logging
 import requests
 from django.conf import settings
 
+from .models import TenantAiCredential
+
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT_MCP = (
@@ -14,10 +16,24 @@ SYSTEM_PROMPT_MCP = (
 )
 
 
-def _resolve_provider():
+def _provider_defaults(provider):
+    """URL base y modelo por proveedor (endpoint compatible con OpenAI)."""
+    base = {
+        'deepseek': 'https://api.deepseek.com',
+        'openai': 'https://api.openai.com/v1',
+        'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai',
+    }.get(provider, 'https://api.deepseek.com')
+    model = {
+        'deepseek': getattr(settings, 'DEEPSEEK_MODEL', '') or 'deepseek-chat',
+        'openai': getattr(settings, 'OPENAI_MODEL', '') or 'gpt-4o-mini',
+        'gemini': getattr(settings, 'GEMINI_MODEL', '') or 'gemini-2.0-flash',
+    }.get(provider, 'deepseek-chat')
+    return base, model
+
+
+def _global_provider():
+    """Configuración global del producto (plan 'IA incluida' / legado)."""
     provider = getattr(settings, 'LLM_PROVIDER', '') or ''
-    model = getattr(settings, 'LLM_MODEL', '') or ''
-    base = getattr(settings, 'LLM_BASE_URL', '') or ''
     api_key = getattr(settings, 'LLM_API_KEY', '') or ''
 
     if not provider:
@@ -33,32 +49,95 @@ def _resolve_provider():
         else:
             return None
 
-    if not base:
-        base = {
-            'deepseek': 'https://api.deepseek.com',
-            'openai': 'https://api.openai.com/v1',
-            'gemini': 'https://generativelanguage.googleapis.com/v1beta/openai',
-        }.get(provider, 'https://api.deepseek.com')
-
-    if not model:
-        model = {
-            'deepseek': getattr(settings, 'DEEPSEEK_MODEL', '') or 'deepseek-chat',
-            'openai': getattr(settings, 'OPENAI_MODEL', '') or 'gpt-4o-mini',
-            'gemini': getattr(settings, 'GEMINI_MODEL', '') or 'gemini-2.0-flash',
-        }.get(provider, 'deepseek-chat')
+    base, model = _provider_defaults(provider)
+    base = getattr(settings, 'LLM_BASE_URL', '') or base
+    model = getattr(settings, 'LLM_MODEL', '') or model
 
     if not api_key:
-        api_key = getattr(settings, 'DEEPSEEK_API_KEY', '') or getattr(settings, 'OPENAI_API_KEY', '') or getattr(settings, 'GEMINI_API_KEY', '') or ''
+        api_key = {
+            'deepseek': getattr(settings, 'DEEPSEEK_API_KEY', ''),
+            'openai': getattr(settings, 'OPENAI_API_KEY', ''),
+            'gemini': getattr(settings, 'GEMINI_API_KEY', ''),
+        }.get(provider, '')
     if not api_key:
         return None
 
-    return {'base': base.rstrip('/'), 'model': model, 'key': api_key}
+    return {
+        'base': base.rstrip('/'),
+        'model': model,
+        'key': api_key,
+        'provider': provider,
+        'source': 'global',
+        'credential': None,
+    }
 
 
-def _chat_completions(messages, tools=None):
-    cfg = _resolve_provider()
+def _tenant_provider(tenant):
+    """Configuración propia del negocio (ADR-001). Fail-closed."""
+    try:
+        cred = TenantAiCredential.objects.filter(tenant=tenant, is_active=True).first()
+    except Exception:
+        logger.exception('No se pudo leer la credencial de IA del tenant')
+        return None
+    if cred is None:
+        return None
+
+    if cred.mode == TenantAiCredential.MODE_BYOK:
+        key = cred.get_api_key()
+        if not key:
+            # El negocio eligió BYOK: no se le sustituye la clave por la nuestra.
+            return None
+        base, model = _provider_defaults(cred.provider)
+        return {
+            'base': base.rstrip('/'),
+            'model': model,
+            'key': key,
+            'provider': cred.provider,
+            'source': 'byok',
+            'credential': cred,
+        }
+
+    if cred.mode == TenantAiCredential.MODE_INCLUDED:
+        cred.refresh_period()
+        if not cred.has_quota():
+            logger.warning('Cupo de IA agotado para el tenant %s', tenant.pk)
+            return None
+        cfg = _global_provider()
+        if cfg is None:
+            return None
+        cfg['source'] = 'included'
+        cfg['credential'] = cred
+        return cfg
+
+    return None
+
+
+def _resolve_provider(tenant=None):
+    """Resuelve la credencial LLM: primero la del tenant, luego la global."""
+    if tenant is not None and getattr(tenant, 'pk', None):
+        try:
+            has_own_policy = TenantAiCredential.objects.filter(tenant=tenant).exists()
+        except Exception:
+            logger.exception('No se pudo leer la política de IA del tenant')
+            return None
+        if has_own_policy:
+            # El tenant configuró su propia política (BYOK o cupo incluido).
+            # Si no hay configuración válida (sin clave / cupo agotado), se
+            # FAIL-CLOSED: nunca se usa la clave global "por defecto".
+            return _tenant_provider(tenant)
+    return _global_provider()
+
+
+def _consume_quota(cfg):
+    """Descuenta una petición solo en modo 'IA incluida'."""
+    if cfg and cfg.get('source') == 'included' and cfg.get('credential'):
+        cfg['credential'].consume_request()
+
+
+def _chat_completions(messages, tools=None, cfg=None):
+    cfg = cfg or _resolve_provider()
     if not cfg:
-        raise RuntimeError("No hay clave LLM configurada.")
+        raise RuntimeError("No hay clave LLM configurada para este negocio.")
 
     url = f"{cfg['base']}/chat/completions"
     payload = {
@@ -92,6 +171,11 @@ def run_tool_chat(tenant, history, user_message, tools, tool_map, system=None):
     if system is None:
         system = SYSTEM_PROMPT_MCP
 
+    cfg = _resolve_provider(tenant)
+    if not cfg:
+        raise RuntimeError("No hay clave LLM configurada para este negocio.")
+    _consume_quota(cfg)
+
     messages = [{"role": "system", "content": system}]
     for h in history[-20:]:
         role = h.get('role')
@@ -104,7 +188,7 @@ def run_tool_chat(tenant, history, user_message, tools, tool_map, system=None):
 
     for _ in range(3):
         try:
-            res = _chat_completions(messages, tools=tools)
+            res = _chat_completions(messages, tools=tools, cfg=cfg)
         except Exception:
             if not tool_names_called:
                 raise
@@ -138,16 +222,17 @@ def run_tool_chat(tenant, history, user_message, tools, tool_map, system=None):
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": content})
 
     try:
-        res = _chat_completions(messages)
+        res = _chat_completions(messages, cfg=cfg)
         return res["content"], tool_names_called, last_tool_data
     except Exception:
         return None, tool_names_called, last_tool_data
 
 
-def ask_llm_simple(prompt, system=None):
-    cfg = _resolve_provider()
+def ask_llm_simple(prompt, system=None, tenant=None):
+    cfg = _resolve_provider(tenant)
     if not cfg:
         return None
+    _consume_quota(cfg)
 
     messages = []
     if system:
@@ -155,7 +240,7 @@ def ask_llm_simple(prompt, system=None):
     messages.append({"role": "user", "content": prompt})
 
     try:
-        res = _chat_completions(messages)
+        res = _chat_completions(messages, cfg=cfg)
         return res["content"] or ""
     except Exception as e:
         logger.error("LLM simple error: %s", e)

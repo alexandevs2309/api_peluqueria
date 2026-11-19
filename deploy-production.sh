@@ -33,8 +33,8 @@ fi
 
 # 1. Verificar archivo .env.prod
 if [ ! -f ".env.prod" ]; then
-    warn "Archivo .env.prod no encontrado. Copiando desde .env.example..."
-    cp .env.example .env.prod
+    warn "Archivo .env.prod no encontrado. Copiando desde .env.production.example..."
+    cp .env.production.example .env.prod
     warn "⚠️  IMPORTANTE: Edita .env.prod con configuraciones de producción"
 fi
 
@@ -64,16 +64,26 @@ docker compose -f docker-compose.prod.yml run --rm web python manage.py migrate
 log "📦 Recopilando archivos estáticos..."
 docker compose -f docker-compose.prod.yml run --rm web python manage.py collectstatic --noinput
 
-# 6. Crear superusuario si no existe
-log "👤 Configurando superusuario..."
-docker compose -f docker-compose.prod.yml run --rm web python manage.py shell -c "
+# 6. Crear superusuario si no existe (sin contraseña por defecto)
+if [ -n "${DJANGO_SUPERUSER_EMAIL:-}" ] && [ -n "${DJANGO_SUPERUSER_PASSWORD:-}" ]; then
+    log "👤 Configurando superusuario desde variables de entorno..."
+    docker compose -f docker-compose.prod.yml run --rm \
+        -e DJANGO_SUPERUSER_EMAIL \
+        -e DJANGO_SUPERUSER_PASSWORD \
+        web python manage.py shell -c "
+import os
 from apps.auth_api.models import User
-if not User.objects.filter(email='admin@admin.com').exists():
-    User.objects.create_superuser('admin@admin.com', 'admin123', role='SuperAdmin')
+email = os.environ['DJANGO_SUPERUSER_EMAIL']
+password = os.environ['DJANGO_SUPERUSER_PASSWORD']
+if not User.objects.filter(email=email).exists():
+    User.objects.create_superuser(email, password, role='SuperAdmin')
     print('Superusuario creado')
 else:
     print('Superusuario ya existe')
 "
+else
+    warn "No se creó superusuario: define DJANGO_SUPERUSER_EMAIL y DJANGO_SUPERUSER_PASSWORD en .env.prod, o crea el usuario con manage.py createsuperuser."
+fi
 
 # 7. Verificar permisos finales
 log "🔍 Verificando permisos finales..."

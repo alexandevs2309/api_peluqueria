@@ -14,7 +14,8 @@ NC='\033[0m'
 BOLD='\033[1m'
 
 BACKEND_DIR="$(cd "$(dirname "$0")" && pwd)"
-FRONTEND_DIR="/home/auron/.local/share/Trash/files/auron-tailadmin"
+# El frontend es un repo hermano dentro del workspace (no vive en la papelera).
+FRONTEND_DIR="$(cd "$(dirname "$0")/.." && pwd)/auron-tailadmin"
 
 PASS=0
 FAIL=0
@@ -22,6 +23,7 @@ SKIP=0
 ERRORS=()
 
 log()   { echo -e "${CYAN}[INFO]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 pass()  { echo -e "${GREEN}[PASS]${NC} $*"; PASS=$((PASS + 1)); }
 fail()  { echo -e "${RED}[FAIL]${NC} $*"; FAIL=$((FAIL + 1)); ERRORS+=("$*"); }
 skip()  { echo -e "${YELLOW}[SKIP]${NC} $*"; SKIP=$((SKIP + 1)); }

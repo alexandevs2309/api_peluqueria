@@ -13,6 +13,7 @@ Cubre las reglas de negocio confirmadas:
   9. Los productos no generan comisión de servicios.
 """
 
+import calendar
 from datetime import timedelta
 from decimal import Decimal
 
@@ -41,7 +42,7 @@ def _period_for(employee, status='open'):
         end = today.replace(day=15)
     else:
         start = today.replace(day=16)
-        end = today.replace(day=31)
+        end = today.replace(day=calendar.monthrange(today.year, today.month)[1])
     return PayrollPeriod.objects.create(
         employee=employee,
         period_type='biweekly',

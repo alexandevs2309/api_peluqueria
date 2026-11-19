@@ -54,10 +54,17 @@ class TestSecurityRegressions:
             assert r.status_code == 403
             assert r.json() == {'error': 'Forbidden'}
 
-            # Request with wrong key
-            r = client.get('/api/cron/run/', HTTP_X_CRON_KEY='wrongkey')
-            assert r.status_code == 403
-            assert r.json() == {'error': 'Forbidden'}
+            # Request with wrong keys, including one that differs only in the last
+            # character (regresión: comparación con `!=` filtraba tiempo).
+            for wrong_key in ('wrongkey', 'supersecret_test_kex'):
+                r = client.get('/api/cron/run/', HTTP_X_CRON_KEY=wrong_key)
+                assert r.status_code == 403
+                assert r.json() == {'error': 'Forbidden'}
+
+                req = rf.get('/api/cron/run/', HTTP_X_CRON_KEY=wrong_key)
+                resp = hv.cron_run(req)
+                assert resp.status_code == 403
+                assert resp.content == b'{"error": "Forbidden"}'
 
             # Request with correct key (but missing parameters, which proves auth passed)
             r = client.get('/api/cron/run/', HTTP_X_CRON_KEY='supersecret_test_key')

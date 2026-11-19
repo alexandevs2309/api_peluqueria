@@ -26,7 +26,7 @@ import os
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'backend.settings')
 import django; django.setup()
 from django.conf import settings
-print('[build] SECRET_KEY:', settings.SECRET_KEY[:10] + '...')
+print('[build] SECRET_KEY:', 'configurada' if settings.SECRET_KEY else 'VACÍA')
 print('[build] DB_HOST:', settings.DATABASES['default']['HOST'])
 print('[build] Django import OK')
 " || echo "[build] Django import fallo (build continua)"

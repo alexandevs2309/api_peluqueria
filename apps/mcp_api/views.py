@@ -12,6 +12,7 @@ from apps.auth_api.role_utils import get_effective_role_api
 
 from . import tools
 from .llm import SYSTEM_PROMPT_MCP, _resolve_provider, run_tool_chat
+from .models import TenantAiCredential
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,87 @@ class McpToolsView(APIView):
 
     def get(self, request):
         return Response({"tools": TOOL_DEFINITIONS})
+
+
+class TenantAiCredentialView(APIView):
+    """Credencial de IA del negocio (ADR-001). La clave nunca se devuelve."""
+
+    permission_classes = [McpIsTenantAdmin]
+
+    @staticmethod
+    def _payload(cred):
+        if cred is None:
+            return {
+                "mode": TenantAiCredential.MODE_BYOK,
+                "provider": TenantAiCredential.PROVIDER_GEMINI,
+                "key_hint": "",
+                "has_key": False,
+                "monthly_request_limit": 100,
+                "requests_this_month": 0,
+                "period_month": "",
+                "is_active": False,
+                "source": "global",
+            }
+        if cred.mode == TenantAiCredential.MODE_BYOK:
+            source = "byok" if cred.get_api_key() else "none"
+        else:
+            source = "included" if cred.has_quota() else "quota_exceeded"
+        return {
+            "mode": cred.mode,
+            "provider": cred.provider,
+            "key_hint": cred.key_hint,
+            "has_key": bool(cred.get_api_key()),
+            "monthly_request_limit": cred.monthly_request_limit,
+            "requests_this_month": cred.requests_this_month,
+            "period_month": cred.period_month,
+            "is_active": cred.is_active,
+            "source": source,
+        }
+
+    def get(self, request):
+        cred = TenantAiCredential.objects.filter(tenant=request.tenant).first()
+        return Response(self._payload(cred))
+
+    def put(self, request):
+        tenant = getattr(request, "tenant", None)
+        if tenant is None or not getattr(tenant, "pk", None):
+            return Response(
+                {"error": "La sesión no tiene un negocio asociado"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        mode = request.data.get("mode", TenantAiCredential.MODE_BYOK)
+        provider = request.data.get("provider", TenantAiCredential.PROVIDER_GEMINI)
+        api_key = (request.data.get("api_key") or "").strip()
+        if mode not in dict(TenantAiCredential.MODE_CHOICES):
+            return Response({"error": "Modo no válido"}, status=status.HTTP_400_BAD_REQUEST)
+        if provider not in dict(TenantAiCredential.PROVIDER_CHOICES):
+            return Response({"error": "Proveedor no válido"}, status=status.HTTP_400_BAD_REQUEST)
+        if len(api_key) > 4096:
+            return Response({"error": "Clave demasiado larga"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            limit = int(request.data.get("monthly_request_limit", 100))
+        except (TypeError, ValueError):
+            return Response({"error": "Límite no válido"}, status=status.HTTP_400_BAD_REQUEST)
+        if limit < 0 or limit > 1_000_000:
+            return Response({"error": "Límite fuera de rango"}, status=status.HTTP_400_BAD_REQUEST)
+
+        cred = TenantAiCredential.objects.filter(tenant=tenant).first()
+        if cred is None:
+            cred = TenantAiCredential(tenant=tenant)
+        if api_key:
+            cred.set_api_key(api_key)
+        elif mode == TenantAiCredential.MODE_BYOK and not cred.get_api_key():
+            return Response(
+                {"error": "El modo BYOK requiere una clave de API"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        cred.mode = mode
+        cred.provider = provider
+        cred.monthly_request_limit = limit
+        cred.is_active = True
+        cred.save()
+        return Response(self._payload(cred))
 
 
 class McpCallView(APIView):
@@ -257,7 +339,7 @@ class McpChatView(APIView):
         tenant = getattr(request, "tenant", None)
 
         # --- 1. LLM path (tool-calling) ---
-        if _resolve_provider() is not None:
+        if _resolve_provider(tenant) is not None:
             try:
                 response_text, tool_names, tool_data = run_tool_chat(
                     tenant=tenant,

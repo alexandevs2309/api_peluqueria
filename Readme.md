@@ -1,5 +1,7 @@
 Barbershop Management API
 
+> **Estado real (2026-11-19):** este README describe solo una parte del sistema y puede estar desactualizado. La fuente de verdad del workspace es `../ESTADO_Y_PLAN.md`; los contratos vigentes están en `backend/urls.py` y `api.config.ts` del frontend.
+
 A professional, modular, and scalable RESTful API built with Django REST Framework for comprehensive barbershop management. Streamline operations with features for authentication, client and employee management, services, appointments, inventory, point of sale (POS), reporting, and role-based access control.
 
 🚀 Overview

@@ -6,6 +6,7 @@ from django.contrib import admin
 from django.core.cache import cache
 from django.db import connection
 from django.http import JsonResponse
+from django.utils.crypto import constant_time_compare
 
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
@@ -93,7 +94,7 @@ def cron_run(request):
     if not CRON_API_KEY:
         return JsonResponse({'error': 'CRON_API_KEY not configured'}, status=503)
     auth = request.META.get('HTTP_X_CRON_KEY', '')
-    if not auth or auth != CRON_API_KEY:
+    if not auth or not constant_time_compare(auth, CRON_API_KEY):
         return JsonResponse({'error': 'Forbidden'}, status=403)
 
     task_name = request.GET.get('task', '')

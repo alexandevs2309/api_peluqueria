@@ -1,3 +1,4 @@
+import calendar
 from decimal import Decimal
 from django.utils import timezone
 from datetime import timedelta
@@ -31,7 +32,7 @@ class TestPayrollCommissions:
             employee=employee,
             period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
 
@@ -69,7 +70,7 @@ class TestPayrollCommissions:
             employee=employee,
             period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
 
@@ -103,7 +104,7 @@ class TestPayrollCommissions:
             employee=employee,
             period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
 
@@ -135,7 +136,7 @@ class TestPayrollCommissions:
         period = PayrollPeriod.objects.create(
             employee=employee, period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
         sale = Sale.objects.create(
@@ -163,7 +164,7 @@ class TestPayrollCommissions:
         period = PayrollPeriod.objects.create(
             employee=employee, period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
         # Venta con tenant incorrecto sobre el mismo empleado
@@ -188,7 +189,7 @@ class TestPayrollCommissions:
         period = PayrollPeriod.objects.create(
             employee=employee, period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
         # Venta 60 días antes (fuera del período)
@@ -218,7 +219,7 @@ class TestPayrollCommissions:
             employee=employee,
             period_type='biweekly',
             period_start=today.replace(day=16) if today.day > 15 else today.replace(day=1),
-            period_end=today.replace(day=31) if today.day > 15 else today.replace(day=15),
+            period_end=today.replace(day=calendar.monthrange(today.year, today.month)[1]) if today.day > 15 else today.replace(day=15),
             status='open',
         )
 
