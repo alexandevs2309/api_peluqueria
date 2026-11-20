@@ -84,6 +84,7 @@ from .login_policy import is_login_locked_out, get_login_lockout_message
 from apps.settings_api.utils import maybe_auto_upgrade_user_limit
 
 from django.utils.timezone import now
+from django.db import transaction
 import pyotp
 import qrcode
 from io import BytesIO
@@ -231,19 +232,23 @@ class RegisterView(generics.CreateAPIView):
             if not subdomain or len(subdomain) < 3:
                 subdomain = 'barbershop'
             
-            counter = 1
             original_subdomain = subdomain
-            while Tenant.objects.filter(subdomain=subdomain).exists():
-                subdomain = f'{original_subdomain}{counter}'
-                counter += 1
-            
+            for counter in range(1, 1000):
+                if not Tenant.objects.filter(subdomain=subdomain).exists():
+                    break
+                subdomain = f'{original_subdomain[:42]}{counter}'
+            else:
+                subdomain = f'{original_subdomain[:40]}-{uuid.uuid4().hex[:8]}'
+
             # Crear nombre de tenant único
             tenant_name = f'Barbería de {full_name}'
-            counter = 1
             original_name = tenant_name
-            while Tenant.objects.filter(name=tenant_name).exists():
-                tenant_name = f'{original_name} {counter}'
-                counter += 1
+            for counter in range(1, 1000):
+                if not Tenant.objects.filter(name=tenant_name).exists():
+                    break
+                tenant_name = f'{original_name[:90]} {counter}'
+            else:
+                tenant_name = f'{original_name[:80]} {uuid.uuid4().hex[:8]}'
             
             # Crear tenant PRIMERO
             tenant = Tenant.objects.create(
@@ -1078,11 +1083,13 @@ class UserViewSet(viewsets.ModelViewSet):
         return None
 
     def _is_tenant_admin_or_superuser(self, request) -> bool:
-        """Solo SuperAdmin o Client-Admin pueden gestionar usuarios."""
+        """Solo un superusuario real o Client-Admin pueden gestionar usuarios."""
+        if getattr(request.user, 'is_superuser', False):
+            return True
         return get_effective_role_name(
             request.user,
             tenant=self._get_request_tenant(),
-        ) in {'SuperAdmin', 'Client-Admin'}
+        ) == 'Client-Admin'
     
     def destroy(self, request, *args, **kwargs):
         """Override destroy to add logging and proper deletion"""
@@ -1102,24 +1109,24 @@ class UserViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            # Log the deletion
-            AccessLog.objects.create(
-                user=request.user,
-                event_type='USER_DELETED',
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request)[:255],
-                timestamp=now()
-            )
-            
-            # Perform the deletion
-            self.perform_destroy(instance)
+            # Auditoría y borrado en la misma transacción: no puede quedar un usuario
+            # eliminado sin su registro de acceso.
+            with transaction.atomic():
+                AccessLog.objects.create(
+                    user=request.user,
+                    event_type='USER_DELETED',
+                    ip_address=get_client_ip(request),
+                    user_agent=get_user_agent(request)[:255],
+                    timestamp=now()
+                )
+                self.perform_destroy(instance)
             logger.info("User deleted successfully user_id=%s", instance.id)
-            
+
             return Response(status=status.HTTP_204_NO_CONTENT)
-        except Exception as e:
+        except Exception:
             logger.exception("Error deleting user_id=%s", instance.id)
             return Response({
-                'error': f'Failed to delete user: {str(e)}'
+                'error': 'No se pudo eliminar el usuario'
             }, status=status.HTTP_400_BAD_REQUEST)
 
     def perform_destroy(self, instance):
@@ -1427,19 +1434,34 @@ class UserViewSet(viewsets.ModelViewSet):
             )
 
         user_ids = request.data.get('user_ids', [])
-        users = self.get_queryset().filter(id__in=user_ids)
-        
+        if not isinstance(user_ids, list) or not user_ids:
+            return Response({'error': 'No user IDs provided'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(user_ids) > 20:
+            return Response({'error': 'Maximum 20 users per operation'}, status=status.HTTP_400_BAD_REQUEST)
+        if any(type(value) is not int for value in user_ids):
+            return Response({'error': 'user_ids must be a list of integers'}, status=status.HTTP_400_BAD_REQUEST)
+
+        users = list(self.get_queryset().filter(id__in=user_ids))
+
         # Prevent deleting last superuser
-        if users.filter(is_superuser=True).exists():
+        if any(user.is_superuser for user in users):
             remaining_superusers = User.objects.filter(is_superuser=True).exclude(id__in=user_ids).count()
             if remaining_superusers == 0:
                 return Response({
                     'error': 'Cannot delete all superusers'
                 }, status=status.HTTP_400_BAD_REQUEST)
-        
-        count = users.count()
-        users.delete()
-        return Response({'deleted': count})
+
+        with transaction.atomic():
+            for user in users:
+                AccessLog.objects.create(
+                    user=request.user,
+                    event_type='USER_DELETED',
+                    ip_address=get_client_ip(request),
+                    user_agent=get_user_agent(request)[:255],
+                    timestamp=now(),
+                )
+            User.objects.filter(id__in=[user.id for user in users]).delete()
+        return Response({'deleted': len(users)})
 
 
 class VerifyAuthView(APIView):

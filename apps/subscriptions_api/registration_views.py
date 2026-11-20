@@ -129,13 +129,12 @@ def generate_unique_subdomain(business_name, user_id=None):
         if not Tenant.objects.filter(subdomain=candidate).exists():
             return candidate
 
-    # Fallback determinista ante una colisión improbable.
-    counter = 1
-    candidate = base
-    while Tenant.objects.filter(subdomain=candidate).exists():
-        candidate = f'{base[:40]}{counter}'
-        counter += 1
-    return candidate
+    # Fallback determinista con tope: nunca depender de un while sin cota.
+    for counter in range(1, 1000):
+        candidate = f'{base[:40]}{counter}' if counter > 1 else base
+        if not Tenant.objects.filter(subdomain=candidate).exists():
+            return candidate
+    return f'{base[:40]}-{secrets.token_hex(4)}'
 
 
 def generate_unique_tenant_name(business_name):

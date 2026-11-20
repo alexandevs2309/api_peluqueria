@@ -213,10 +213,13 @@ def cron_run(request):
             task_func = getattr(module, func_name)
             result = task_func.delay()
             try:
-                task_result = result.get(timeout=120)
-            except Exception:
-                task_result = 'completed (no result)'
-            results[key] = {'status': 'ok', 'result': task_result}
+                # Un grupo de N tareas no debe bloquear el worker HTTP N×120 s.
+                task_result = result.get(timeout=15)
+                results[key] = {'status': 'ok', 'result': task_result}
+            except Exception as exc:
+                state = getattr(result, 'state', None)
+                status = 'error' if state in {'FAILURE', 'RETRY'} else 'timeout'
+                results[key] = {'status': status, 'error': type(exc).__name__}
         except Exception as e:
             results[key] = {'status': 'error', 'error': str(e)}
 

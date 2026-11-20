@@ -5,6 +5,7 @@ from typing import Optional
 from django.conf import settings
 
 from .payment_providers import PaymentProvider, PaymentResult, PaymentProviderConfig
+from apps.billing_api.stripe_client import configure_stripe
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,7 @@ class StripePosProvider(PaymentProvider):
     def __init__(self, config: PaymentProviderConfig = None, tenant=None):
         self.tenant = tenant
         self.config = config or self._get_config()
+        configure_stripe()
 
     def _get_config(self) -> PaymentProviderConfig:
         # 1. Intentar credenciales del tenant (per-tenant)

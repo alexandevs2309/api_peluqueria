@@ -1,15 +1,15 @@
 import stripe
 from celery import shared_task
-from django.conf import settings
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
 from apps.billing_api.models import Invoice
 from apps.billing_api.reconciliation_models import ReconciliationLog, ReconciliationAlert
+from apps.billing_api.stripe_client import configure_stripe
 import logging
 
 logger = logging.getLogger(__name__)
-stripe.api_key = settings.STRIPE_SECRET_KEY
+configure_stripe()
 
 
 @shared_task(bind=True, max_retries=3)

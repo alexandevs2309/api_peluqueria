@@ -385,59 +385,88 @@ class TenantViewSet(viewsets.ModelViewSet):
             return response.Response(payload, status=status.HTTP_200_OK)
         return response.Response({"error": "No tenant assigned", "code": "NO_TENANT"}, status=403)
     
-    @decorators.action(detail=False, methods=["post"])
-    def bulk_activate(self, request):
-        """Bulk activate tenants"""
-        tenant_ids = request.data.get('tenant_ids', [])
-        tenants = Tenant.objects.filter(id__in=tenant_ids, deleted_at__isnull=True)
-        tenants.update(is_active=True)
-        return response.Response({"activated": len(tenants)})
-    
-    @decorators.action(detail=False, methods=["post"])
-    def bulk_deactivate(self, request):
-        """Bulk deactivate tenants"""
-        tenant_ids = request.data.get('tenant_ids', [])
-        tenants = Tenant.objects.filter(id__in=tenant_ids, deleted_at__isnull=True)
-        tenants.update(is_active=False)
-        return response.Response({"deactivated": len(tenants)})
-    
-    @decorators.action(detail=False, methods=["post"])
-    def bulk_delete(self, request):
-        """Bulk soft delete tenants"""
-        tenant_ids = request.data.get('tenant_ids', [])
-        
-        if not tenant_ids:
-            return response.Response(
-                {"error": "No tenant IDs provided"}, 
-                status=status.HTTP_400_BAD_REQUEST
+    MAX_BULK_TENANTS = 20
+
+    def _validate_bulk_tenant_ids(self, tenant_ids):
+        """Devuelve (ids, error_response). Deniega tipos inesperados y lotes grandes."""
+        if not isinstance(tenant_ids, list) or not tenant_ids:
+            return None, response.Response(
+                {"error": "No tenant IDs provided"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        if len(tenant_ids) > 20:
-            return response.Response(
-                {"error": "Maximum 20 tenants per operation"}, 
-                status=status.HTTP_400_BAD_REQUEST
+        if len(tenant_ids) > self.MAX_BULK_TENANTS:
+            return None, response.Response(
+                {"error": f"Maximum {self.MAX_BULK_TENANTS} tenants per operation"},
+                status=status.HTTP_400_BAD_REQUEST,
             )
-        
-        tenants = Tenant.objects.filter(id__in=tenant_ids, deleted_at__isnull=True)
-        deleted_count = 0
-        
+        if any(type(value) is not int for value in tenant_ids):
+            return None, response.Response(
+                {"error": "tenant_ids must be a list of integers"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return tenant_ids, None
+
+    def _bulk_audit(self, request, action, tenants):
+        content_type = ContentType.objects.get_for_model(Tenant)
         for tenant in tenants:
-            tenant.soft_delete()
-            
             AuditLog.objects.create(
                 user=request.user,
-                action='BULK_DELETE',
-                description=f"Eliminó tenant en bulk: {tenant.name}",
-                content_type=ContentType.objects.get_for_model(tenant),
+                action=action,
+                description=f"{action} tenant: {tenant.name}",
+                content_type=content_type,
                 object_id=tenant.id,
                 ip_address=request.META.get('REMOTE_ADDR'),
                 user_agent=request.META.get('HTTP_USER_AGENT', ''),
                 source='SYSTEM',
-                extra_data={
-                    'tenant_id': tenant.id,
-                    'tenant_name': tenant.name
-                }
+                extra_data={'tenant_id': tenant.id, 'tenant_name': tenant.name},
             )
-            deleted_count += 1
-        
-        return response.Response({"deleted": deleted_count})
+
+    @decorators.action(detail=False, methods=["post"])
+    def bulk_activate(self, request):
+        """Bulk activate tenants"""
+        tenant_ids, error = self._validate_bulk_tenant_ids(request.data.get('tenant_ids', []))
+        if error:
+            return error
+
+        with transaction.atomic():
+            tenants = list(self.get_queryset().filter(
+                id__in=tenant_ids, deleted_at__isnull=True
+            ))
+            updated = self.get_queryset().filter(
+                id__in=[tenant.id for tenant in tenants]
+            ).update(is_active=True)
+            self._bulk_audit(request, 'BULK_ACTIVATE', tenants)
+        return response.Response({"activated": updated})
+
+    @decorators.action(detail=False, methods=["post"])
+    def bulk_deactivate(self, request):
+        """Bulk deactivate tenants"""
+        tenant_ids, error = self._validate_bulk_tenant_ids(request.data.get('tenant_ids', []))
+        if error:
+            return error
+
+        with transaction.atomic():
+            tenants = list(self.get_queryset().filter(
+                id__in=tenant_ids, deleted_at__isnull=True
+            ))
+            updated = self.get_queryset().filter(
+                id__in=[tenant.id for tenant in tenants]
+            ).update(is_active=False)
+            self._bulk_audit(request, 'BULK_DEACTIVATE', tenants)
+        return response.Response({"deactivated": updated})
+
+    @decorators.action(detail=False, methods=["post"])
+    def bulk_delete(self, request):
+        """Bulk soft delete tenants"""
+        tenant_ids, error = self._validate_bulk_tenant_ids(request.data.get('tenant_ids', []))
+        if error:
+            return error
+
+        with transaction.atomic():
+            tenants = list(self.get_queryset().filter(
+                id__in=tenant_ids, deleted_at__isnull=True
+            ))
+            for tenant in tenants:
+                tenant.soft_delete()
+            self._bulk_audit(request, 'BULK_DELETE', tenants)
+        return response.Response({"deleted": len(tenants)})

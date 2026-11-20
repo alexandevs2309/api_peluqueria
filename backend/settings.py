@@ -233,7 +233,7 @@ REST_FRAMEWORK = {
         'rest_framework.filters.SearchFilter',
         'rest_framework.filters.OrderingFilter',
     ],
-    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.LimitOffsetPagination',
+    'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.BoundedLimitOffsetPagination',
     'PAGE_SIZE': 25,
     'MAX_PAGE_SIZE': 100,
     'EXCEPTION_HANDLER': 'apps.core.exceptions_handler.exception_handler',
@@ -372,18 +372,24 @@ else:
         }
     }
 
-# Cache configuration: Redis cuando esté disponible, LocMem como fallback
+# Cache configuration: Redis cuando esté disponible, LocMem solo para desarrollo local.
 _redis_url = env('REDIS_URL', default='redis://localhost:6379/0')
-_redis_available = _redis_url and 'localhost' not in _redis_url
-
-_redis_available = _redis_url and 'localhost' not in _redis_url
+_redis_is_local = bool(_redis_url) and any(
+    marker in _redis_url for marker in ('localhost', '127.0.0.1', '::1')
+)
+_redis_available = bool(_redis_url) and not _redis_is_local
+# Evita que un Redis lento bloquee todos los requests que pasan por los middleware.
+_redis_cache_timeout = env.float('REDIS_CACHE_TIMEOUT', default=0.5)
 if _redis_available:
     CACHES = {
         'default': {
             'BACKEND': 'django_redis.cache.RedisCache',
             'LOCATION': _redis_url,
+            'TIMEOUT': _redis_cache_timeout,
             'OPTIONS': {
                 'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+                'socket_connect_timeout': _redis_cache_timeout,
+                'socket_timeout': _redis_cache_timeout,
             },
         }
     }

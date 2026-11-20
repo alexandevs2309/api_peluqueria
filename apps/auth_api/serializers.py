@@ -307,15 +307,22 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
         # internamente; deben poder iniciar sesion sin verificacion publica.
         validated_data.setdefault('is_email_verified', True)
 
-        # SuperAdmin debe tener is_superuser=True
-        if validated_data.get('role') == 'SuperAdmin':
-            validated_data['is_superuser'] = True
-            validated_data['is_staff'] = True
-        
         # Asignar tenant desde el request (siempre, campo read_only)
         request = self.context.get('request')
-        logger.debug('EmployeeUserSerializer.create request_user_id=%s', getattr(getattr(request, 'user', None), 'id', None))
-        
+        creator = getattr(request, 'user', None) if request is not None else None
+        creator_is_superuser = bool(getattr(creator, 'is_superuser', False))
+        logger.debug('EmployeeUserSerializer.create request_user_id=%s', getattr(creator, 'id', None))
+
+        # Solo un superusuario real puede crear otro superusuario. El nombre de rol
+        # legacy 'SuperAdmin' no concede is_superuser por sí mismo.
+        if validated_data.get('role') in {'SuperAdmin', 'Super-Admin'}:
+            if not creator_is_superuser:
+                raise serializers.ValidationError({
+                    'role': 'Solo un superusuario real puede crear otro superusuario.'
+                })
+            validated_data['is_superuser'] = True
+            validated_data['is_staff'] = True
+
         tenant = getattr(request, 'tenant', None) or (request.user.tenant if hasattr(request, 'user') and request.user.tenant else None)
         if request and tenant:
             validated_data['tenant'] = tenant

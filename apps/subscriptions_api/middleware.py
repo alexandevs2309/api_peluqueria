@@ -5,16 +5,25 @@ from datetime import datetime
 from apps.subscriptions_api.models import UserSubscription
 from django.core.cache import cache
 import logging
+import threading
+import time
 from apps.tenants_api.subscription_lifecycle import sync_subscription_state
-from apps.auth_api.role_utils import get_effective_role_name
 
 logger = logging.getLogger(__name__)
+
+# Contador de emergencia, por proceso, usado solo cuando el backend de caché falla.
+# Evita que una caída de Redis convierta el límite por plan en un límite inexistente.
+_EMERGENCY_RATE_LIMIT_LOCK = threading.Lock()
+_EMERGENCY_RATE_LIMIT_COUNTERS = {}
+_EMERGENCY_RATE_LIMIT_TTL = 3600
 
 BILLING_WEBHOOK_PATHS = [
     '/api/billing/webhooks/stripe/',
     '/api/payments/stripe/webhook/',
 ]
 
+# Se conserva por compatibilidad de importaciones. Estas rutas siguen exentas del
+# paywall, pero desde el endurecimiento consumen el límite por plan.
 BILLING_ACCESS_PATHS = [
     '/api/payments/payments/create_subscription_payment/',
     '/api/subscriptions/renew/',
@@ -72,8 +81,8 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
         if not hasattr(request, 'user') or not request.user.is_authenticated:
             return None
             
-        # SuperAdmin siempre tiene acceso
-        if get_effective_role_name(request.user, tenant=getattr(request, 'tenant', None)) == 'SuperAdmin':
+        # SuperAdmin siempre tiene acceso; is_superuser es la fuente de verdad.
+        if getattr(request.user, 'is_superuser', False):
             return None
             
         # Validar tenant y plan
@@ -86,11 +95,17 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             
         tenant = getattr(request, 'tenant', request.user.tenant)
 
-        # Cache sync: solo sincronizar cada 5 minutos para evitar query + save en cada request
+        # Cache sync: solo sincronizar cada 5 minutos para evitar query + save en cada request.
+        # cache.add es atómico en Redis y LocMem: evita que varias peticiones concurrentes
+        # ejecuten la sincronización y se pisen mutuamente.
         _sync_cache_key = f'sub_sync:{tenant.id}'
-        if cache.get(_sync_cache_key) is None:
+        try:
+            _should_sync = cache.add(_sync_cache_key, True, 300)
+        except Exception as exc:
+            logger.warning("Subscription sync cache unavailable, syncing inline: %s", exc)
+            _should_sync = True
+        if _should_sync:
             sync_subscription_state(tenant, save=True)
-            cache.set(_sync_cache_key, True, 300)  # 5 min TTL
         
         if tenant.subscription_status in {'archived', 'cancelled'}:
             return JsonResponse({
@@ -139,8 +154,10 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'renewal_url': '/client/payment'
             }, status=402)
             
-        # Validar suscripciones de usuario expiradas (con cache 5 min)
-        _usub_cache_key = f'usub:{request.user.id}'
+        # Validar suscripciones de usuario expiradas (con cache 5 min).
+        # La clave incluye el tenant para no mezclar entitlements de un mismo user.id
+        # entre negocios distintos.
+        _usub_cache_key = f'usub:{tenant.id}:{request.user.id}'
         user_subscription = cache.get(_usub_cache_key)
         if user_subscription is None:
             user_subscription = UserSubscription.objects.filter(
@@ -162,7 +179,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
             if user_subscription.end_date and user_subscription.end_date < timezone.now():
                 user_subscription.is_active = False
                 user_subscription.save()
-                cache.delete(f'usub:{request.user.id}')
+                cache.delete(_usub_cache_key)
                 
                 return JsonResponse({
                     'error': 'Subscription expired',
@@ -186,13 +203,14 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
 class APIRateLimitMiddleware(MiddlewareMixin):
     """
     Middleware para rate limiting diferenciado por plan de suscripción.
-    Diseño:
-    - Límites separados para lectura y escritura.
-    - Exclusión de endpoints de polling/estado frecuentes.
-    - Contadores por hora, por usuario y por scope.
+
+    El contador es atómico (`cache.add` + `cache.incr`). Si el backend de caché
+    falla, se usa un contador local por proceso con el mismo límite (degradación
+    controlada, fail-closed): nunca se permite tráfico ilimitado por indisponibilidad
+    de Redis.
     """
-    
-    # Límites por plan (requests por hora)
+
+    # Límites por plan (requests por hora). No se modifican los valores comerciales.
     RATE_LIMITS = {
         'basic': {'read': 10000, 'write': 500},
         'standard': {'read': 50000, 'write': 5000},
@@ -218,43 +236,57 @@ class APIRateLimitMiddleware(MiddlewareMixin):
         '/api/tenants/current/',
         '/api/auth/verify/',
     ]
-    
+
+    @staticmethod
+    def _emergency_increment(cache_key, rate_limit):
+        """Contador local thread-safe usado únicamente si falla el caché."""
+        now = time.monotonic()
+        cutoff = now - _EMERGENCY_RATE_LIMIT_TTL
+        with _EMERGENCY_RATE_LIMIT_LOCK:
+            expired = [key for key, (_, updated_at) in _EMERGENCY_RATE_LIMIT_COUNTERS.items()
+                       if updated_at < cutoff]
+            for key in expired:
+                _EMERGENCY_RATE_LIMIT_COUNTERS.pop(key, None)
+
+            count, _ = _EMERGENCY_RATE_LIMIT_COUNTERS.get(cache_key, (0, now))
+            count += 1
+            # El límite local nunca puede exceder el límite del plan: así el contador
+            # queda saturado y las peticiones posteriores son rechazadas.
+            _EMERGENCY_RATE_LIMIT_COUNTERS[cache_key] = (min(count, rate_limit + 1), now)
+            return _EMERGENCY_RATE_LIMIT_COUNTERS[cache_key][0]
+
     def process_request(self, request):
         # Solo aplicar a rutas /api/
         if not request.path.startswith('/api/'):
             return None
-        
-        # Excluir rutas públicas
+
         for exempt_path in self.EXEMPT_PREFIXES:
             if request.path.startswith(exempt_path):
                 return None
-        
-        # Solo aplicar a usuarios autenticados
+
         if not hasattr(request, 'user') or not request.user.is_authenticated:
             return None
 
-        for exempt_path in BILLING_ACCESS_PATHS:
-            if request.path.startswith(exempt_path):
-                return None
-        
-        # SuperAdmin sin límite
-        if request.user.is_superuser:
+        # Las rutas de cobro siguen exentas del paywall (PAYWALL_SAFE_PREFIXES),
+        # pero consumen cuota del plan: un plan básico no puede crear sesiones de
+        # pago externas sin límite.
+        user = request.user
+        tenant = getattr(request, 'tenant', None) or getattr(user, 'tenant', None)
+        # La única excepción es el flag is_superuser (fuente de verdad según AGENTS.md).
+        # No confiar en un nombre de rol legado evita bypasses por payload.
+        if getattr(user, 'is_superuser', False):
             return None
-        
-        # Obtener plan del usuario
-        tenant = getattr(request.user, 'tenant', None)
+
         if not tenant:
             return None
-        
+
         subscription_plan = getattr(tenant, 'subscription_plan', None)
         if not subscription_plan:
             return None
-        
+
         plan_name = subscription_plan.name
         plan_limits = self.RATE_LIMITS.get(plan_name)
-        
-        # Plan enterprise sin límite
-        if plan_limits is None:
+        if plan_limits is None:  # enterprise
             return None
 
         is_read = request.method in ('GET', 'HEAD', 'OPTIONS')
@@ -268,22 +300,30 @@ class APIRateLimitMiddleware(MiddlewareMixin):
         if rate_limit is None:
             return None
 
-        # Clave de cache por usuario/scope y por hora para evitar crecimiento infinito
+        # Clave por tenant + usuario + scope + hora. El tenant lo fija el backend,
+        # nunca el payload del cliente.
         current_hour_bucket = timezone.now().strftime('%Y%m%d%H')
-        cache_key = f'api_rate_limit:{request.user.id}:{scope}:{current_hour_bucket}'
+        cache_key = f'api_rate_limit:{tenant.id}:{user.id}:{scope}:{current_hour_bucket}'
 
-        # Obtener contador actual (fail-open controlado si Redis/cache falla)
+        degraded = False
         try:
-            current_count = cache.get(cache_key, 0)
+            cache.add(cache_key, 0, 3600)
+            current_count = cache.incr(cache_key, 1)
         except Exception as exc:
-            logger.error("RateLimit cache get failed: %s", str(exc))
-            return None
+            degraded = True
+            logger.warning("RateLimit cache unavailable, using local limiter: %s", exc)
+            current_count = self._emergency_increment(cache_key, rate_limit)
 
-        # Verificar límite
-        if current_count >= rate_limit:
+        request.rate_limit_remaining = max(0, rate_limit - current_count)
+        request.rate_limit_limit = rate_limit
+        request.rate_limit_scope = scope
+        request.rate_limit_degraded = degraded
+
+        if current_count > rate_limit:
             logger.warning(
-                "RATE_LIMIT_EXCEEDED user=%s path=%s plan=%s scope=%s count=%d limit=%d",
-                request.user.id, request.path, plan_name, scope, current_count, rate_limit,
+                "RATE_LIMIT_EXCEEDED user=%s tenant=%s path=%s plan=%s scope=%s count=%d limit=%d degraded=%s",
+                user.id, tenant.id, request.path, plan_name, scope,
+                current_count, rate_limit, degraded,
             )
             return JsonResponse({
                 'error': 'Rate limit exceeded',
@@ -294,21 +334,9 @@ class APIRateLimitMiddleware(MiddlewareMixin):
                 'scope': scope,
                 'action_required': 'upgrade_plan' if plan_name != 'enterprise' else 'wait'
             }, status=429)
-        
-        # Incrementar contador (expira en 1 hora)
-        try:
-            cache.set(cache_key, current_count + 1, 3600)
-        except Exception as exc:
-            logger.error("RateLimit cache set failed: %s", str(exc))
-            return None
-        
-        # Agregar headers de rate limit
-        request.rate_limit_remaining = rate_limit - current_count - 1
-        request.rate_limit_limit = rate_limit
-        request.rate_limit_scope = scope
-        
+
         return None
-    
+
     def process_response(self, request, response):
         # Agregar headers de rate limit a la respuesta
         if hasattr(request, 'rate_limit_remaining'):
@@ -316,5 +344,7 @@ class APIRateLimitMiddleware(MiddlewareMixin):
             response['X-RateLimit-Remaining'] = str(request.rate_limit_remaining)
             response['X-RateLimit-Reset'] = str(3600)  # 1 hora en segundos
             response['X-RateLimit-Scope'] = str(getattr(request, 'rate_limit_scope', 'read'))
-        
+            if getattr(request, 'rate_limit_degraded', False):
+                response['X-RateLimit-Degraded'] = '1'
+
         return response

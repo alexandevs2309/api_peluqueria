@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 from datetime import datetime
 
 import redis.asyncio as aioredis
@@ -13,9 +14,19 @@ logger = logging.getLogger(__name__)
 
 REDIS_PUBSUB_CHANNEL_TPL = "notifications:user:{}"
 SSE_HEARTBEAT_INTERVAL = 30
+SSE_SOCKET_TIMEOUT = 30
+# Cota de inactividad y cota absoluta de vida: un flujo con actividad constante
+# tampoco puede quedar abierto indefinidamente.
+SSE_MAX_HEARTBEATS = 60
+SSE_MAX_LIFETIME_SECONDS = 30 * 60
 
 
 _redis_url = None
+
+
+def _stream_clock():
+    """Reloj inyectable para poder probar la cota de vida del stream."""
+    return time.monotonic()
 
 
 def _get_redis_url():
@@ -106,7 +117,7 @@ async def notification_sse(request):
             _get_redis_url(),
             decode_responses=True,
             socket_connect_timeout=5,
-            socket_timeout=None,
+            socket_timeout=SSE_SOCKET_TIMEOUT,
         )
         pubsub = r.pubsub()
         await pubsub.subscribe(channel)
@@ -119,23 +130,36 @@ async def notification_sse(request):
             }
             yield f"event: init\ndata: {json.dumps(init_payload)}\n\n"
 
-            while True:
+            heartbeats = 0
+            stream_started_at = _stream_clock()
+            while heartbeats < SSE_MAX_HEARTBEATS:
+                if _stream_clock() - stream_started_at >= SSE_MAX_LIFETIME_SECONDS:
+                    logger.info("SSE stream closed after max lifetime for user %s", user.id)
+                    break
                 try:
-                    message = await pubsub.get_message(
-                        timeout=SSE_HEARTBEAT_INTERVAL,
-                        ignore_subscribe_messages=True,
+                    message = await asyncio.wait_for(
+                        pubsub.get_message(
+                            timeout=SSE_HEARTBEAT_INTERVAL,
+                            ignore_subscribe_messages=True,
+                        ),
+                        timeout=SSE_SOCKET_TIMEOUT + SSE_HEARTBEAT_INTERVAL,
                     )
                     if message and message.get("type") == "message":
+                        heartbeats = 0
                         data = json.loads(message["data"])
                         event_type = data.pop("type", "notification")
                         yield f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
                     else:
+                        heartbeats += 1
                         yield ": heartbeat\n\n"
                 except asyncio.TimeoutError:
+                    heartbeats += 1
                     yield ": heartbeat\n\n"
                 except Exception:
                     logger.exception("SSE stream error for user %s", user.id)
                     break
+            else:
+                logger.info("SSE stream closed after max lifetime for user %s", user.id)
         except GeneratorExit:
             pass
         finally:

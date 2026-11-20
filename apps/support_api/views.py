@@ -34,7 +34,7 @@ class SupportTicketPermission(TenantPermissionByAction):
         if not action:
             return False
 
-        if action == 'close':
+        if action in ('close', 'reply'):
             return (
                 _check_permission_in_db(request.user, tenant, 'support_api', 'change_supportticket') or
                 _check_permission_in_db(request.user, tenant, 'support_api', 'view_supportticket')
@@ -50,7 +50,7 @@ class SupportTicketPermission(TenantPermissionByAction):
             return True
 
         action = self._resolve_action(request, view)
-        if action == 'close':
+        if action in ('close', 'reply'):
             tenant = resolve_request_tenant(request)
             if _check_permission_in_db(request.user, tenant, 'support_api', 'change_supportticket'):
                 return True
@@ -77,6 +77,7 @@ class SupportTicketViewSet(TenantScopedViewSet):
         'partial_update': 'support_api.change_supportticket',
         'destroy': 'support_api.delete_supportticket',
         'close': 'support_api.change_supportticket',
+        'reply': 'support_api.change_supportticket',
     }
 
     def perform_create(self, serializer):

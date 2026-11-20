@@ -26,6 +26,73 @@ def resolve_request_tenant(request):
     return None
 
 
+# Relaciones habituales de los modelos hijos que no guardan `tenant_id` propio.
+# La resolución es recursiva y acotada para no seguir relaciones circulares.
+_OBJECT_TENANT_PATHS = (
+    'tenant',
+    'employee',
+    'user',
+    'client',
+    'stylist',
+    'created_by',
+    'barbershop',
+    'service',
+    'appointment',
+    'sale',
+    'payment',
+    'invoice',
+    'subscription',
+    'ticket',
+    'recipient',
+    'role_target',
+)
+
+
+def resolve_object_tenant(view, obj, _seen=None, _root=True):
+    """Resuelve el tenant de un objeto, incluso si es un modelo hijo.
+
+    Un ViewSet puede declarar ``get_object_tenant(obj)`` para relaciones propias.
+    Si no se puede resolver, devuelve ``None`` y el permiso se deniega salvo
+    declaración explícita de catálogo global.
+    """
+    if _root:
+        custom_resolver = getattr(view, 'get_object_tenant', None)
+        if callable(custom_resolver):
+            custom_tenant = custom_resolver(obj)
+            if custom_tenant is not None:
+                return custom_tenant
+
+    if _seen is None:
+        _seen = set()
+    marker = (type(obj).__name__, id(obj))
+    if marker in _seen:
+        return None
+    _seen.add(marker)
+
+    for attr in _OBJECT_TENANT_PATHS:
+        try:
+            related = getattr(obj, attr)
+        except (AttributeError, TypeError):
+            continue
+        if related is None:
+            continue
+        if attr == 'tenant':
+            return related
+        nested = resolve_object_tenant(view, related, _seen, _root=False)
+        if nested is not None:
+            return nested
+    return None
+
+
+def _same_tenant(object_tenant, request_tenant):
+    """Compara tenant por id para aceptar tanto instancias como ids."""
+    if object_tenant is None or request_tenant is None:
+        return False
+    return getattr(object_tenant, 'id', object_tenant) == getattr(
+        request_tenant, 'id', request_tenant
+    )
+
+
 def _check_permission_in_db(user, tenant, app_label, codename):
     """Verificar permisos explicitos via UserRole -> Role -> Permission."""
     user_roles = UserRole.objects.filter(
@@ -82,10 +149,13 @@ class HasTenantPermission(BasePermission):
             return False
 
         tenant = resolve_request_tenant(request)
-        if hasattr(obj, 'tenant'):
-            return obj.tenant == tenant
+        object_tenant = resolve_object_tenant(view, obj)
+        if object_tenant is not None:
+            return _same_tenant(object_tenant, tenant)
 
-        return True
+        # Solo los views que declaran explícitamente trabajar con objetos globales
+        # pueden omitir el chequeo de tenant.
+        return bool(getattr(view, 'allow_tenantless_objects', False))
 
 
 def tenant_permission(perm):
@@ -152,9 +222,10 @@ class TenantPermissionByAction(BasePermission):
             return True
 
         tenant = resolve_request_tenant(request)
-        if hasattr(obj, 'tenant'):
-            return obj.tenant == tenant
-        if hasattr(obj, 'user') and hasattr(obj.user, 'tenant'):
-            return obj.user.tenant == tenant
+        object_tenant = resolve_object_tenant(view, obj)
+        if object_tenant is not None:
+            return _same_tenant(object_tenant, tenant)
 
-        return True
+        # Deny-by-default: un objeto sin tenant no hereda permisos por arte de magia.
+        # Los catálogos globales legítimos lo declaran explícitamente en la vista.
+        return bool(getattr(view, 'allow_tenantless_objects', False))

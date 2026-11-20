@@ -1,11 +1,11 @@
 import stripe
-from django.conf import settings
 from django.utils import timezone
 from .models import Invoice, PaymentAttempt
 from apps.subscriptions_api.models import UserSubscription
 from apps.tenants_api.models import Tenant
+from apps.billing_api.stripe_client import configure_stripe
 
-stripe.api_key = settings.STRIPE_SECRET_KEY
+configure_stripe()
 
 class StripeService:
     @staticmethod

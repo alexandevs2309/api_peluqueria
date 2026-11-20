@@ -223,8 +223,10 @@ class TestSettingsAPI:
             tenant=tenant, 
             whatsapp_instance_name="tenant_test"
         )
-        
-        url = reverse("barbershop-settings-whatsapp-webhook")
+        settings.whatsapp_webhook_secret = "webhook-token"
+        settings.save(update_fields=["whatsapp_webhook_secret"])
+
+        url = reverse("barbershop-settings-whatsapp-webhook") + "?token=webhook-token"
         payload = {
             "event": "connection.update",
             "instance": "tenant_test",

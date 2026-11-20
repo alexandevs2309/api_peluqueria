@@ -55,10 +55,15 @@ def validate_role_assignment(creator_role, target_role, creator_is_superuser=Fal
     Returns:
         tuple: (is_valid, error_message)
     """
-    # SuperAdmin puede asignar cualquier rol
+    # SuperAdmin real (is_superuser) puede asignar cualquier rol.
     if creator_is_superuser:
         return True, None
-    
+
+    # Un nombre de rol legado nunca habilita la creación de otro superusuario:
+    # solo el flag is_superuser es fuente de verdad.
+    if target_role in {'SuperAdmin', 'Super-Admin'}:
+        return False, 'Un rol legado no puede asignar rol SuperAdmin: se requiere is_superuser.'
+
     # Validar que el rol del creador existe
     if creator_role not in ROLE_HIERARCHY:
         return False, f'Rol de creador inválido: {creator_role}'
@@ -88,11 +93,14 @@ def get_allowed_roles(creator_role, creator_is_superuser=False):
     """
     if creator_is_superuser:
         return list(ROLE_HIERARCHY.keys())
-    
+
     if creator_role not in ROLE_HIERARCHY:
         return []
-    
-    return ROLE_HIERARCHY[creator_role]['can_create']
+
+    return [
+        role for role in ROLE_HIERARCHY[creator_role]['can_create']
+        if role not in {'SuperAdmin', 'Super-Admin'}
+    ]
 
 
 def can_modify_user(modifier_role, target_user_role, modifier_is_superuser=False):

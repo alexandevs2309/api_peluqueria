@@ -152,8 +152,8 @@ class TestWhatsAppProvider:
 class TestWhatsAppWebhook:
     """Webhook must verify signature when secret is configured."""
 
-    def test_webhook_accepts_without_secret(self):
-        """Webhook should work without signature if no secret is configured."""
+    def test_webhook_rejects_without_secret_and_token(self):
+        """Webhook must fail closed when no secret/token is configured."""
         from apps.tenants_api.models import Tenant
         from django.test import RequestFactory
 
@@ -184,7 +184,9 @@ class TestWhatsAppWebhook:
         from apps.settings_api.barbershop_views import BarbershopSettingsViewSet
         view = BarbershopSettingsViewSet.as_view({'post': 'whatsapp_webhook'})
         response = view(request)
-        assert response.status_code == 200
+        assert response.status_code == 401
+        settings.refresh_from_db()
+        assert settings.whatsapp_status != 'connected'
 
     def test_webhook_rejects_bad_signature(self):
         """Webhook should reject invalid signature when secret is configured."""
@@ -207,7 +209,7 @@ class TestWhatsAppWebhook:
         factory = RequestFactory()
         body = '{"event": "connection.update", "instance": "test_instance_sig", "data": {"state": "open"}}'
         request = factory.post(
-            '/api/settings/barbershop/whatsapp_webhook/',
+            '/api/settings/barbershop/whatsapp_webhook/?token=my_secret_key',
             data=body,
             content_type='application/json',
             HTTP_X_WEBHOOK_SIGNATURE='invalid_signature',
@@ -242,7 +244,7 @@ class TestWhatsAppWebhook:
 
         factory = RequestFactory()
         request = factory.post(
-            '/api/settings/barbershop/whatsapp_webhook/',
+            '/api/settings/barbershop/whatsapp_webhook/?token=my_secret_key',
             data=body,
             content_type='application/json',
             HTTP_X_WEBHOOK_SIGNATURE=signature,

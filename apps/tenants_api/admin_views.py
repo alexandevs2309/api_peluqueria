@@ -2,6 +2,7 @@ from rest_framework import viewsets, permissions, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
+from django.db import transaction
 from django.db.models import Q, Count
 from apps.auth_api.models import User
 from apps.auth_api.serializers import UserListSerializer
@@ -77,21 +78,23 @@ class AdminUserManagementViewSet(viewsets.ModelViewSet):
         try:
             new_role = Role.objects.get(name=new_role_name)
             
-            # No permitir asignar Super-Admin
-            if new_role.name == 'Super-Admin':
+            # Bloquear ambos nombres legacy y cualquier rol GLOBAL. El rol
+            # 'SuperAdmin' sin is_superuser era escalable vía create-user.
+            if new_role.name in {'SuperAdmin', 'Super-Admin'} or new_role.scope == 'GLOBAL':
                 return Response({
-                    'error': 'No se puede asignar rol Super-Admin'
+                    'error': 'No se puede asignar un rol global de superadministrador'
                 }, status=status.HTTP_403_FORBIDDEN)
-            
-            # Remover roles actuales y asignar nuevo
-            UserRole.objects.filter(user=user).delete()
-            from apps.roles_api.default_permissions import ensure_role_default_permissions
-            ensure_role_default_permissions(new_role)
-            UserRole.objects.create(user=user, role=new_role)
-            
-            # Actualizar campo role del usuario
-            user.role = new_role_name
-            user.save()
+
+            # Remover roles actuales y asignar nuevo, de forma atómica y con tenant.
+            with transaction.atomic():
+                UserRole.objects.filter(user=user, tenant=user.tenant).delete()
+                from apps.roles_api.default_permissions import ensure_role_default_permissions
+                ensure_role_default_permissions(new_role)
+                UserRole.objects.create(user=user, role=new_role, tenant=user.tenant)
+
+                # Actualizar campo role del usuario
+                user.role = new_role_name
+                user.save(update_fields=['role'])
             
             return Response({
                 'message': f'Rol cambiado a {new_role_name} para {user.email}'

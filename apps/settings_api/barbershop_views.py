@@ -473,7 +473,8 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         
         import secrets
         token = settings.whatsapp_token or secrets.token_hex(16)
-        
+        webhook_secret = settings.whatsapp_webhook_secret or secrets.token_urlsafe(32)
+
         from .whatsapp_provider import get_whatsapp_provider
         provider = get_whatsapp_provider()
         
@@ -482,8 +483,12 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         if result.get('success'):
             settings.whatsapp_instance_name = instance_name
             settings.whatsapp_token = result.get('token')
+            settings.whatsapp_webhook_secret = webhook_secret
             settings.whatsapp_status = 'connecting'
-            settings.save(update_fields=['whatsapp_instance_name', 'whatsapp_token', 'whatsapp_status'])
+            settings.save(update_fields=[
+                'whatsapp_instance_name', 'whatsapp_token',
+                'whatsapp_webhook_secret', 'whatsapp_status',
+            ])
             
             # Configurar webhook
             platform_domain = getattr(django_settings, 'PLATFORM_DOMAIN', None)
@@ -496,7 +501,13 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 else:
                     platform_domain = "http://localhost:8000"
             
-            webhook_url = f"{platform_domain}/api/settings/barbershop/whatsapp_webhook/"
+            # El token se configura en la propia URL del webhook: Evolution API solo
+            # necesita llamar a esa URL, sin cambios en su configuración.
+            from urllib.parse import urlencode
+            webhook_url = (
+                f"{platform_domain}/api/settings/barbershop/whatsapp_webhook/"
+                f"?{urlencode({'token': webhook_secret})}"
+            )
             provider.set_webhook(instance_name, webhook_url)
 
             
@@ -529,6 +540,7 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         settings.whatsapp_enabled = False
         settings.whatsapp_instance_name = ''
         settings.whatsapp_token = ''
+        settings.whatsapp_webhook_secret = ''
         settings.whatsapp_status = 'disconnected'
         settings.whatsapp_phone = ''
         settings.save()
@@ -540,7 +552,8 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
         """
         POST /api/settings/barbershop/whatsapp_webhook/
         Webhook público llamado por Evolution API para notificar cambios de conexión.
-        Verifica firma HMAC si el tenant tiene webhook_secret configurado.
+        Exige el token generado en whatsapp_connect (en la URL o en X-Webhook-Token);
+        la firma HMAC se verifica además cuando se envía.
         """
         import hmac
         import hashlib
@@ -556,14 +569,24 @@ class BarbershopSettingsViewSet(viewsets.ViewSet):
                 whatsapp_instance_name=instance_name
             ).first()
             if settings_obj:
-                # Verify webhook signature if secret is configured
-                if settings_obj.whatsapp_webhook_secret:
-                    signature = request.headers.get('X-Webhook-Signature') or request.headers.get('x-webhook-signature')
-                    if not signature:
-                        logger.warning("WhatsApp webhook missing signature for instance %s", instance_name)
-                        return Response({'success': False, 'error': 'Missing signature'}, status=401)
+                # Fail-closed: sin token secreto no se escribe el estado de otro tenant.
+                provided_token = (
+                    request.query_params.get('token') or
+                    request.headers.get('X-Webhook-Token') or
+                    request.headers.get('x-webhook-token') or ''
+                )
+                expected_token = settings_obj.whatsapp_webhook_secret or ''
+                if not expected_token or not provided_token or not hmac.compare_digest(
+                    str(provided_token), expected_token
+                ):
+                    logger.warning("WhatsApp webhook rejected for instance %s", instance_name)
+                    return Response({'success': False, 'error': 'Invalid webhook token'}, status=401)
+
+                # La firma HMAC se mantiene como segunda capa cuando Evolution la envía.
+                signature = request.headers.get('X-Webhook-Signature') or request.headers.get('x-webhook-signature')
+                if signature:
                     expected = hmac.new(
-                        settings_obj.whatsapp_webhook_secret.encode(),
+                        expected_token.encode(),
                         request.body,
                         hashlib.sha256
                     ).hexdigest()

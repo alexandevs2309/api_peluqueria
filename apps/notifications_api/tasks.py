@@ -6,6 +6,9 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+NO_SHOW_BATCH_SIZE = 500
+MAX_NO_SHOW_BATCHES = 200
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
 def mark_expired_appointments(self):
     """Mark appointments as no_show if they passed and are still scheduled"""
@@ -17,58 +20,67 @@ def mark_expired_appointments(self):
         grace_minutes = getattr(settings, 'APPOINTMENT_NO_SHOW_GRACE_MINUTES', 15)
         cutoff_time = now - timedelta(minutes=grace_minutes)
 
-        expired_appointments = Appointment.objects.filter(
-            date_time__lt=cutoff_time,
-            status='scheduled'
-        ).select_related('stylist', 'client')
-        
-        if not expired_appointments.exists():
-            logger.info("No expired appointments to mark as no_show")
-            return "Marked 0 appointments as no_show"
+        updated_count = 0
+        notified_count = 0
+        last_id = 0
+        # Procesar por lotes acotados para no materializar todas las citas vencidas
+        # en memoria ni construir un IN con miles de IDs. Un máximo de lotes evita
+        # que un worker quede atrapado indefinidamente; la siguiente ejecución
+        # continúa porque el filtro usa id__gt.
+        for _ in range(MAX_NO_SHOW_BATCHES):
+            batch = list(
+                Appointment.objects.filter(
+                    id__gt=last_id,
+                    date_time__lt=cutoff_time,
+                    status='scheduled',
+                ).select_related('stylist', 'client').order_by('id')[:NO_SHOW_BATCH_SIZE]
+            )
+            if not batch:
+                break
 
-        expired_data = list(expired_appointments)
-        appointment_ids = [appt.id for appt in expired_data]
+            appointment_ids = [appointment.id for appointment in batch]
+            last_id = appointment_ids[-1]
+            updated_count += Appointment.objects.filter(
+                id__in=appointment_ids,
+                status='scheduled',
+            ).update(status='no_show')
 
-        updated_count = Appointment.objects.filter(
-            id__in=appointment_ids,
-            status='scheduled'
-        ).update(status='no_show')
+            for appointment in batch:
+                client_name = appointment.client.full_name if appointment.client else 'Cliente'
+                dt_label = appointment.date_time.strftime('%d/%m/%Y %H:%M') if appointment.date_time else ''
+                recipients = []
+                if appointment.stylist_id:
+                    recipients.append((appointment.stylist_id, f"El cliente {client_name} no asistió a la cita del {dt_label}"))
+                client_user = getattr(appointment.client, 'user', None) if appointment.client else None
+                if client_user and getattr(client_user, 'id', None):
+                    recipients.append((client_user.id, f"Tu cita del {dt_label} fue marcada como no asistida."))
+                try:
+                    tenant_id = getattr(appointment, 'tenant_id', None)
+                    if tenant_id:
+                        from apps.auth_api.models import User
+                        for uid in User.objects.filter(
+                            tenant_id=tenant_id, roles__name='Client-Admin', is_active=True
+                        ).distinct().values_list('id', flat=True):
+                            recipients.append((uid, f"Cita marcada como no asistida: {client_name} · {dt_label}"))
+                except Exception:
+                    pass
+                seen = set()
+                for rid, msg in recipients:
+                    if rid in seen:
+                        continue
+                    seen.add(rid)
+                    InAppNotification.objects.create(
+                        recipient_id=rid,
+                        type='appointment',
+                        title='Cliente no asistió',
+                        message=msg,
+                    )
+                    notified_count += 1
 
-        count = 0
-        for appointment in expired_data:
-            client_name = appointment.client.full_name if appointment.client else 'Cliente'
-            dt_label = appointment.date_time.strftime('%d/%m/%Y %H:%M') if appointment.date_time else ''
-            recipients = []
-            if appointment.stylist_id:
-                recipients.append((appointment.stylist_id, f"El cliente {client_name} no asistió a la cita del {dt_label}"))
-            client_user = getattr(appointment.client, 'user', None) if appointment.client else None
-            if client_user and getattr(client_user, 'id', None):
-                recipients.append((client_user.id, f"Tu cita del {dt_label} fue marcada como no asistida."))
-            try:
-                tenant_id = getattr(appointment, 'tenant_id', None)
-                if tenant_id:
-                    from apps.auth_api.models import User
-                    for uid in User.objects.filter(tenant_id=tenant_id, roles__name='Client-Admin', is_active=True).values_list('id', flat=True):
-                        recipients.append((uid, f"Cita marcada como no asistida: {client_name} · {dt_label}"))
-            except Exception:
-                pass
-            seen = set()
-            for rid, msg in recipients:
-                if rid in seen:
-                    continue
-                seen.add(rid)
-                InAppNotification.objects.create(
-                    recipient_id=rid,
-                    type='appointment',
-                    title='Cliente no asistió',
-                    message=msg
-                )
-            count += 1
-        
         logger.info(
             "Marked expired appointments as no_show updated=%s notifications=%s grace_minutes=%s",
             updated_count,
-            count,
+            notified_count,
             grace_minutes,
         )
         return f"Marked {updated_count} appointments as no_show"

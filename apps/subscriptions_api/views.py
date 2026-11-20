@@ -33,6 +33,37 @@ stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 logger = logging.getLogger(__name__)
 
 
+def _completion_owner_cache_key(cache_key):
+    return f'{cache_key}:owner'
+
+
+def _cached_completion_belongs_to(request, tenant, cache_key):
+    """Evita devolver una confirmación cacheada a otro usuario/tenant.
+
+    La propiedad se guarda en una clave auxiliar para no modificar el contrato
+    de la respuesta. Las entradas antiguas sin dueño se descartan y se vuelven
+    a verificar con PayPal.
+    """
+    owner = cache.get(_completion_owner_cache_key(cache_key))
+    expected = {'user_id': request.user.id, 'tenant_id': tenant.id}
+    if owner != expected:
+        cache.delete(cache_key)
+        cache.delete(_completion_owner_cache_key(cache_key))
+        return False
+    return True
+
+
+def _cache_completion(cache_key, response_payload, request, tenant):
+    """Guarda la confirmación y su dueño con el mismo TTL."""
+    timeout = 60 * 60 * 24 * 7
+    cache.set(cache_key, response_payload, timeout=timeout)
+    cache.set(
+        _completion_owner_cache_key(cache_key),
+        {'user_id': request.user.id, 'tenant_id': tenant.id},
+        timeout=timeout,
+    )
+
+
 def send_purchase_confirmation(user, tenant, plan, amount, months, payment_method='stripe'):
     """Enviar confirmación de compra de plan"""
     from apps.auth_api.tasks import send_email_async
@@ -79,6 +110,9 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
     queryset = SubscriptionPlan.objects.all()
     serializer_class = SubscriptionPlanSerializer
     permission_classes = [TenantPermissionByAction]
+    # Los planes son catálogo global: no tienen tenant, pero el permiso por acción
+    # ya fue verificado antes de llegar al objeto.
+    allow_tenantless_objects = True
     permission_map = {
         'list': 'subscriptions_api.view_subscriptionplan',
         'retrieve': 'subscriptions_api.view_subscriptionplan',
@@ -106,8 +140,8 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
         if self.action in ['list', 'public_catalog']:
             from rest_framework.permissions import AllowAny
             return [AllowAny()]
-        # Solo SuperAdmin puede crear/eliminar/modificar planes
-        if self.action in ['create', 'destroy', 'update', 'partial_update']:
+        # Solo SuperAdmin puede crear/eliminar/modificar/desactivar planes globales
+        if self.action in ['create', 'destroy', 'update', 'partial_update', 'deactivate_plan']:
             from apps.core.permissions import IsSuperAdmin
             return [IsSuperAdmin()]
         return super().get_permissions()
@@ -174,12 +208,25 @@ class SubscriptionPlanViewSet(viewsets.ModelViewSet):
                 'message': 'El plan ya está desactivado'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Desactivar el plan
-        plan.is_active = False
-        plan.save()
-        
-        # Contar suscripciones afectadas
-        active_subs = plan.user_subscriptions.filter(is_active=True).count()
+        # Desactivar el plan y auditar en la misma transacción.
+        from django.contrib.contenttypes.models import ContentType
+        from apps.audit_api.models import AuditLog
+
+        with transaction.atomic():
+            plan.is_active = False
+            plan.save(update_fields=['is_active'])
+            active_subs = plan.user_subscriptions.filter(is_active=True).count()
+            AuditLog.objects.create(
+                user=request.user,
+                action='DEACTIVATE_PLAN',
+                description=f"Desactivó plan global: {plan.name}",
+                content_type=ContentType.objects.get_for_model(plan),
+                object_id=plan.id,
+                ip_address=request.META.get('REMOTE_ADDR'),
+                user_agent=request.META.get('HTTP_USER_AGENT', ''),
+                source='SYSTEM',
+                extra_data={'plan_id': plan.id, 'affected_subscriptions': active_subs},
+            )
         
         return Response({
             'message': 'Plan desactivado correctamente',
@@ -799,7 +846,7 @@ class RenewSubscriptionView(APIView):
         cache_key = PayPalService.capture_cache_key(order_id)
 
         cached_completion = cache.get(cache_key)
-        if cached_completion:
+        if cached_completion and _cached_completion_belongs_to(request, tenant, cache_key):
             return Response(cached_completion)
 
         cached_order = cache.get(PayPalService.order_cache_key(order_id))
@@ -891,7 +938,7 @@ class RenewSubscriptionView(APIView):
             payment_method='paypal'
         )
 
-        cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
+        _cache_completion(cache_key, response_payload, request, tenant)
         cache.delete(PayPalService.order_cache_key(order_id))
         return Response(response_payload)
 
@@ -904,7 +951,7 @@ class RenewSubscriptionView(APIView):
         cache_key = PayPalService.capture_cache_key(subscription_id)
 
         cached_completion = cache.get(cache_key)
-        if cached_completion:
+        if cached_completion and _cached_completion_belongs_to(request, tenant, cache_key):
             return Response(cached_completion)
 
         cached_order = cache.get(PayPalService.order_cache_key(subscription_id))
@@ -966,7 +1013,7 @@ class RenewSubscriptionView(APIView):
                 'access_until': access_until,
             }
 
-            cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
+            _cache_completion(cache_key, response_payload, request, tenant)
             cache.delete(PayPalService.order_cache_key(subscription_id))
             return Response(response_payload, status=status.HTTP_200_OK)
 
@@ -989,10 +1036,10 @@ class RenewSubscriptionView(APIView):
                 'provider': 'paypal_subscription',
                 'plan': plan.name,
                 'status': 'pending',
-                'subscription_id': subscription_id
+                'subscription_id': subscription_id,
             }
 
-            cache.set(cache_key, response_payload, timeout=60 * 60 * 24 * 7)
+            _cache_completion(cache_key, response_payload, request, tenant)
             cache.delete(PayPalService.order_cache_key(subscription_id))
             return Response(response_payload, status=status.HTTP_202_ACCEPTED)
 
