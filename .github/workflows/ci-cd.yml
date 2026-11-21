@@ -72,11 +72,10 @@ jobs:
         python manage.py migrate --no-input
     
     - name: Run tests with coverage
+      # BE-18/CR-17: un solo intento y umbral bloqueante. Los reintentos
+      # silenciaban el primer fallo y el coverage no tenía gate real.
       run: |
-        python -m pytest --cov=apps --cov=backend --cov-report=xml --cov-report=term-missing || {
-          echo "::warning::First pytest run failed (possible in-memory SQLite lock flake); retrying once..."
-          python -m pytest --cov=apps --cov=backend --cov-report=xml --cov-report=term-missing
-        }
+        python -m pytest --cov=apps --cov=backend --cov-report=xml --cov-report=term-missing --cov-fail-under=50
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -99,17 +98,22 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Run security checks
+      # BE-18/CR-17: sin allow-failure; cualquier CVE conocido falla el job.
       uses: pypa/gh-action-pip-audit@v1.0.8
       with:
         inputs: requirements.txt
-        internal-be-careful-allow-failure: "true"
-    
+      continue-on-error: false
+
     - name: Run Bandit security linter
+      # BE-18/CR-17: bandit debe bloquear; el reporte se sube aunque falle.
       run: |
-        pip install bandit
-        bandit -r apps/ backend/ -f json -o bandit-report.json || true
+        python -m pip install --upgrade pip
+        python -m pip install bandit
+        bandit -r apps/ backend/ -f json -o bandit-report.json
+      continue-on-error: false
     
     - name: Upload security report
+      if: always()
       uses: actions/upload-artifact@v4
       with:
         name: security-report

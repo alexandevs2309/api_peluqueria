@@ -220,9 +220,11 @@ else:
     }
 
 REST_FRAMEWORK = {
+    # BE-17: una única clase fija el tenant desde el JWT (header o cookie).
+    # El antiguo fallback JWT plano no asignaba request.tenant y permitía vistas
+    # sin tenant; DualJWTAuthentication queda deprecado y fuera del default.
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'apps.auth_api.authentication.DualJWTAuthentication',  # DEPRECATED: migrar a solo CookieJWTAuthentication (target: Q3 2026)
-        'rest_framework_simplejwt.authentication.JWTAuthentication',  # Fallback — eliminar junto con DualJWT
+        'apps.auth_api.authentication.CookieJWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -235,7 +237,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.BoundedLimitOffsetPagination',
     'PAGE_SIZE': 25,
-    'MAX_PAGE_SIZE': 100,
+    'MAX_PAGE_SIZE': 200,  # BE-15: alineado con BoundedLimitOffsetPagination.max_limit
     'EXCEPTION_HANDLER': 'apps.core.exceptions_handler.exception_handler',
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.UserRateThrottle',
@@ -258,6 +260,20 @@ PAYPAL_WEBHOOK_ID = env('PAYPAL_WEBHOOK_ID', default='')
 GEO_LOCK_ENABLED = env.bool('GEO_LOCK_ENABLED', default=False)
 
 JWT_SIGNING_KEY = env('JWT_SIGNING_KEY', default=SECRET_KEY)
+
+# PA-07: clave DEDICADA para los JWT efímeros del agente de impresión.
+# No reutilizar SECRET_KEY: el agente corre en el puesto del cliente y un
+# compromiso suyo no debe exponer la clave raíz de Django. El agente verifica
+# con la misma variable AURON_PRINT_JWT_SECRET inyectada por install.ps1.
+AURON_PRINT_JWT_SECRET = env('AURON_PRINT_JWT_SECRET', default='')
+
+# CR-08: endpoint WebSocket del agente de impresión. El puerto debe coincidir
+# con `ws_port` en C:\AuronPrintAgent\config.yaml. Se puede fijar un URL
+# completo con AURON_PRINT_AGENT_WS_ENDPOINT o derivarlo de host/puerto/ruta.
+AURON_PRINT_AGENT_WS_ENDPOINT = env('AURON_PRINT_AGENT_WS_ENDPOINT', default='')
+AURON_PRINT_AGENT_HOST = env('AURON_PRINT_AGENT_HOST', default='localhost')
+AURON_PRINT_AGENT_WS_PORT = env.int('AURON_PRINT_AGENT_WS_PORT', default=8081)
+AURON_PRINT_AGENT_WS_PATH = env('AURON_PRINT_AGENT_WS_PATH', default='/ws')
 
 SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
