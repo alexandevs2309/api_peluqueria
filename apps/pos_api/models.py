@@ -8,6 +8,7 @@ from apps.clients_api.models import Client
 from apps.services_api.models import Service
 from apps.inventory_api.models import Product
 from apps.roles_api.models import Role
+from apps.core.models import TenantModel
 from django.utils.crypto import get_random_string
 
 
@@ -438,6 +439,41 @@ class Payment(models.Model):
         ], default='cash')
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     provider_transaction_id = models.CharField(max_length=255, null=True, blank=True, help_text='Transaction ID from payment provider (Stripe, CardNET, etc.)')
+
+
+class RefundOperation(TenantModel):
+    """Registro de idempotencia de un reembolso (BE-07).
+
+    Se crea ANTES de cualquier efecto (stock, comisiones, importe). La
+    restricción única por tenant garantiza que dos peticiones concurrentes con
+    la misma clave no puedan aplicar dos veces el mismo reembolso, incluso
+    cuando la venta no tiene componentes de comisión.
+    """
+
+    tenant = models.ForeignKey(
+        'tenants_api.Tenant', on_delete=models.CASCADE, related_name='refund_operations'
+    )
+    sale = models.ForeignKey(Sale, on_delete=models.PROTECT, related_name='refund_operations')
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    is_full_refund = models.BooleanField(default=False)
+    result = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_refund_tenant_idempotency_key',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Refund {self.sale_id} {self.idempotency_key or "-"} {self.amount}'
+
 
 class CashRegister(models.Model):
     tenant = models.ForeignKey('tenants_api.Tenant', on_delete=models.CASCADE, related_name='cash_registers', null=True)

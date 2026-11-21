@@ -7,13 +7,14 @@ from rest_framework.response import Response
 from django.utils import timezone
 from apps.core.tenant_permissions import TenantPermissionByAction
 from apps.tenants_api.base_viewsets import TenantScopedViewSet
-from .models import Sale, SaleDetail, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon
+from .models import Sale, SaleDetail, CashRegister, CashCount, Promotion, Receipt, PosConfiguration, NCFSequence, Coupon, RefundOperation
 from .serializers import SaleSerializer, CashRegisterSerializer, CashCountSerializer, PromotionSerializer, ReceiptSerializer, PosConfigurationSerializer, NCFSequenceSerializer, CouponSerializer, CouponValidationSerializer, PrinterSerializer
 from django.db.models import Sum, Q, F
 from decimal import Decimal, InvalidOperation, ROUND_DOWN
 from apps.core.permissions import IsSuperAdmin
 from apps.settings_api.barbershop_models import BarbershopSettings
 from django.conf import settings
+from django.db import transaction, IntegrityError
 from apps.audit_api.models import AuditLog
 from django.core.exceptions import ValidationError as DjangoValidationError
 from apps.subscriptions_api.permissions import HasFeaturePermission
@@ -1126,7 +1127,25 @@ class SaleViewSet(TenantScopedViewSet):
                     {'error': 'Venta no encontrada o sin permisos'},
                     status=status.HTTP_404_NOT_FOUND
                 )
-            
+
+            # ── Replay ANTES del check de venta cerrada (BE-07) ───────────────
+            # Un reembolso completo cierra la venta. Si el replay se evaluara
+            # después de ese check, una repeated request con la MISMA clave
+            # devolvería 400 en lugar del resultado original, rompiendo el
+            # contrato de idempotencia. El tenant es el de la venta (un
+            # SuperAdmin legítimo no tiene request.tenant).
+            replay_key = (request.data.get('idempotency_key') or '').strip()[:64] or None
+            if replay_key:
+                prior = RefundOperation.objects.filter(
+                    tenant_id=sale.tenant_id, idempotency_key=replay_key
+                ).first()
+                if prior is not None:
+                    return Response({
+                        **(prior.result or {}),
+                        'idempotent': True,
+                        'sale_id': sale.id,
+                    })
+
             if sale.closed:
                 return Response(
                     {'error': 'No se puede reembolsar una venta cerrada'}, 
@@ -1169,18 +1188,37 @@ class SaleViewSet(TenantScopedViewSet):
             is_full_refund = refund_amount >= max_refundable
             refund_ratio = (refund_amount / sale.total) if sale.total else Decimal('0')
 
-            # ── Idempotencia: repetir la misma clave no duplica ajustes ───
+            # ── Idempotencia persistida ANTES de cualquier efecto (BE-07) ───
+            # El tenant es el de la venta: un SuperAdmin no tiene request.tenant.
             idempotency_key = (request.data.get('idempotency_key') or '').strip()[:64] or None
             if idempotency_key:
-                already = CommissionAdjustment.objects.filter(
-                    idempotency_key=idempotency_key
-                ).first()
-                if already is not None:
+                try:
+                    with transaction.atomic():
+                        operation = RefundOperation.objects.create(
+                            tenant=sale.tenant,
+                            sale=sale,
+                            idempotency_key=idempotency_key,
+                            amount=refund_amount,
+                            is_full_refund=is_full_refund,
+                            created_by=request.user,
+                        )
+                except IntegrityError:
+                    operation = RefundOperation.objects.get(
+                        tenant=sale.tenant, idempotency_key=idempotency_key
+                    )
                     return Response({
-                        'detail': 'Reembolso ya procesado',
+                        **(operation.result or {}),
                         'idempotent': True,
                         'sale_id': sale.id,
                     })
+            else:
+                operation = RefundOperation.objects.create(
+                    tenant=sale.tenant,
+                    sale=sale,
+                    amount=refund_amount,
+                    is_full_refund=is_full_refund,
+                    created_by=request.user,
+                )
 
             # ── Devolución de inventario (proporcional) ───────────────────
             for detail in sale_details:
@@ -1188,7 +1226,7 @@ class SaleViewSet(TenantScopedViewSet):
                     continue
                 from apps.inventory_api.models import Product, StockMovement
                 product = Product.objects.select_for_update().filter(
-                    id=detail.object_id, tenant=self.request.tenant
+                    id=detail.object_id, tenant=sale.tenant_id
                 ).first()
                 if product is None:
                     continue
@@ -1302,7 +1340,7 @@ class SaleViewSet(TenantScopedViewSet):
                 }
             )
             
-            return Response({
+            response_data = {
                 'detail': (
                     'Venta reembolsada correctamente' if is_full_refund
                     else 'Reembolso parcial procesado correctamente'
@@ -1310,35 +1348,51 @@ class SaleViewSet(TenantScopedViewSet):
                 'refunded_amount': str(refund_amount),
                 'is_full_refund': is_full_refund,
                 'commission_adjustments': len(components),
-            })
-    
-    @action(detail=True, methods=['get'])
-    def print_receipt(self, request, pk=None):
-        """Generar e imprimir recibo"""
-        sale = self.get_object()
-        
-        # Crear o actualizar recibo
-        receipt, created = Receipt.objects.get_or_create(
-            sale=sale,
-            defaults={
-                'receipt_number': f"R{sale.id:06d}",
-                'template_used': 'default'
             }
-        )
-        
-        # Actualizar contador de impresiones
-        receipt.printed_count += 1
-        receipt.last_printed = timezone.now()
-        receipt.save()
-        
-        # Generar datos del recibo
-        receipt_data = {
+            operation.result = response_data
+            operation.save(update_fields=['result'])
+            return Response(response_data)
+
+    @action(detail=True, methods=['get', 'post'])
+    def print_receipt(self, request, pk=None):
+        """Datos del recibo (CR-13).
+
+        GET es de solo lectura: no crea `Receipt` ni incrementa `printed_count`
+        (un prefetch podía imprimir de más). POST es la acción explícita que
+        registra la impresión. La URL y la forma de la respuesta no cambian.
+        """
+        sale = self.get_object()
+
+        if request.method == 'POST':
+            with transaction.atomic():
+                receipt, _created = Receipt.objects.get_or_create(
+                    sale=sale,
+                    defaults={
+                        'receipt_number': f"R{sale.id:06d}",
+                        'template_used': 'default'
+                    }
+                )
+                # Bloquear la fila para no perder incrementos concurrentes.
+                receipt = Receipt.objects.select_for_update().get(pk=receipt.pk)
+                receipt.printed_count += 1
+                receipt.last_printed = timezone.now()
+                receipt.save(update_fields=['printed_count', 'last_printed'])
+        else:
+            # Vista previa: objeto en memoria, sin efectos en la BD.
+            receipt = Receipt.objects.filter(sale=sale).first()
+            if receipt is None:
+                receipt = Receipt(
+                    sale=sale,
+                    receipt_number=f"R{sale.id:06d}",
+                    template_used='default',
+                    printed_count=0,
+                )
+
+        return Response({
             'receipt': ReceiptSerializer(receipt).data,
             'sale': SaleSerializer(sale).data,
             'business_info': self._get_business_info(request)
-        }
-        
-        return Response(receipt_data)
+        })
 
     @action(detail=False, methods=['get'], permission_classes=[TenantPermissionByAction])
     def printers(self, request):
@@ -1377,9 +1431,20 @@ class SaleViewSet(TenantScopedViewSet):
         import jwt
         from django.conf import settings
         from datetime import datetime, timedelta
-        
+
+        # PA-07: firmar con una clave DEDICADA, nunca con SECRET_KEY. Sin la
+        # variable configurada no se emite token (fail-closed): el agente y el
+        # backend deben compartir AURON_PRINT_JWT_SECRET, distinta de la clave
+        # raíz de Django.
+        print_secret = getattr(settings, 'AURON_PRINT_JWT_SECRET', '')
+        if not print_secret:
+            return Response({
+                'error': 'print_jwt_secret_not_configured',
+                'detail': 'Configure AURON_PRINT_JWT_SECRET en el backend y en el agente de impresión',
+            }, status=503)
+
         tenant = getattr(request, 'tenant', None) or getattr(request.user, 'tenant', None)
-        
+
         payload = {
             'sub': str(request.user.id),
             'tenant_id': str(tenant.id) if tenant else None,
@@ -1387,13 +1452,25 @@ class SaleViewSet(TenantScopedViewSet):
             'iat': datetime.utcnow(),
             'exp': datetime.utcnow() + timedelta(minutes=5),
         }
-        
-        token = jwt.encode(payload, settings.SECRET_KEY, algorithm='HS256')
-        
+
+        token = jwt.encode(payload, print_secret, algorithm='HS256')
+
+        # CR-08: el endpoint del agente se deriva de la configuración para que
+        # un cambio de `ws_port` en config.yaml no rompa el POS. El valor
+        # explícito AURON_PRINT_AGENT_WS_ENDPOINT tiene prioridad.
+        ws_endpoint = getattr(settings, 'AURON_PRINT_AGENT_WS_ENDPOINT', '')
+        if not ws_endpoint:
+            agent_host = getattr(settings, 'AURON_PRINT_AGENT_HOST', 'localhost')
+            agent_port = getattr(settings, 'AURON_PRINT_AGENT_WS_PORT', 8081)
+            agent_path = getattr(settings, 'AURON_PRINT_AGENT_WS_PATH', '/ws')
+            if not str(agent_path).startswith('/'):
+                agent_path = f'/{agent_path}'
+            ws_endpoint = f'ws://{agent_host}:{agent_port}{agent_path}'
+
         return Response({
             'token': token,
             'expires_in': 300,
-            'ws_endpoint': 'ws://localhost:8081/ws'  # Endpoint del agente local
+            'ws_endpoint': ws_endpoint
         })
 
     @action(detail=False, methods=['get'])
@@ -1595,9 +1672,15 @@ class CashRegisterViewSet(TenantScopedViewSet):
                 {'error': 'Ya tienes una caja abierta. Ciérrala antes de abrir otra.'}
             )
 
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get', 'post'])
     def current(self, request):
-        """Obtener la caja abierta actual del usuario"""
+        """Obtener la caja abierta actual del usuario (CR-13).
+
+        GET no escribe: no cierra cajas de días anteriores ni normaliza campos.
+        POST es la acción explícita que realiza ese mantenimiento. La URL y la
+        respuesta son idénticas; el frontend debe usar POST para conservar el
+        auto-cierre.
+        """
         tenant = self._get_request_tenant()
         
         branch_id = request.query_params.get('branch_id') or request.query_params.get('branch')
@@ -1619,13 +1702,15 @@ class CashRegisterViewSet(TenantScopedViewSet):
 
         today = timezone.localdate()
 
-        # Auto-cerrar cajas abiertas de días anteriores para este usuario
-        CashRegister.objects.filter(
-            tenant=tenant,
-            user=request.user,
-            is_open=True,
-            opened_at__date__lt=today
-        ).update(is_open=False, closed_at=timezone.now(), final_cash=0)
+        # Auto-cerrar cajas abiertas de días anteriores SOLO en POST (CR-13).
+        if request.method == 'POST':
+            with transaction.atomic():
+                CashRegister.objects.filter(
+                    tenant=tenant,
+                    user=request.user,
+                    is_open=True,
+                    opened_at__date__lt=today
+                ).update(is_open=False, closed_at=timezone.now(), final_cash=Decimal('0'))
 
         # Solo retornar cajas abiertas HOY
         filters['opened_at__date'] = today
@@ -1635,14 +1720,18 @@ class CashRegisterViewSet(TenantScopedViewSet):
         if not register:
             return Response({'register': None, 'is_open': False})
         
-        # Asegurar valores no null
-        if register.initial_cash is None:
-            register.initial_cash = Decimal('0')
-            register.save(update_fields=['initial_cash'])
-        if register.final_cash is None:
-            register.final_cash = Decimal('0')
-            register.save(update_fields=['final_cash'])
-            
+        # Normalizar valores legacy SOLO en la acción explícita (GET sin efectos).
+        if request.method == 'POST':
+            updated_fields = []
+            if register.initial_cash is None:
+                register.initial_cash = Decimal('0')
+                updated_fields.append('initial_cash')
+            if register.final_cash is None:
+                register.final_cash = Decimal('0')
+                updated_fields.append('final_cash')
+            if updated_fields:
+                register.save(update_fields=updated_fields)
+
         return Response(CashRegisterSerializer(register).data)
 
     @action(detail=True, methods=['post'])
@@ -1670,42 +1759,78 @@ class CashRegisterViewSet(TenantScopedViewSet):
     
     @action(detail=True, methods=['post'])
     def cash_count(self, request, pk=None):
-        """Arqueo de caja - conteo físico"""
+        """Arqueo de caja - conteo físico (CR-12).
+
+        Toda la validación se hace ANTES de borrar o escribir. El borrado de los
+        conteos anteriores y la creación de los nuevos ocurren en una sola
+        transacción: si `counts` es inválido, no se pierde el arqueo previo.
+        """
         register = self.get_object()
         counts_data = request.data.get('counts', [])
+        if not isinstance(counts_data, list):
+            return Response({'error': 'counts debe ser una lista'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Guard: initial_cash None (datos viejos)
-        if register.initial_cash is None:
-            register.initial_cash = Decimal('0')
-            register.save(update_fields=['initial_cash'])
-
-        # Mapear quantity → count (frontend envía "quantity", modelo usa "count")
-        for cd in counts_data:
-            if 'quantity' in cd and 'count' not in cd:
-                cd['count'] = cd.pop('quantity')
-
-        # Limpiar conteos anteriores
-        register.cash_counts.all().delete()
-
-        total_counted = Decimal('0')
-        for count_data in counts_data:
+        # 1) Validación previa: no se toca la BD hasta que TODO sea válido.
+        validated_serializers = []
+        seen_denominations = set()
+        for index, raw in enumerate(counts_data):
+            if not isinstance(raw, dict):
+                return Response(
+                    {'error': f'counts[{index}] debe ser un objeto'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            count_data = dict(raw)
+            # El frontend envía "quantity"; el modelo usa "count".
+            if 'quantity' in count_data and 'count' not in count_data:
+                count_data['count'] = count_data.pop('quantity')
             count_data['cash_register'] = register.id
-            serializer = CashCountSerializer(data=count_data)
-            if serializer.is_valid():
-                count = serializer.save()
-                total_counted += count.total
-            else:
-                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # Calcular diferencia
-        expected_cash = (register.initial_cash or Decimal('0')) + self._calculate_cash_sales(register)
-        difference = total_counted - expected_cash
+            serializer = CashCountSerializer(data=count_data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            denomination = serializer.validated_data['denomination']
+            count = serializer.validated_data['count']
+            if denomination <= 0 or count < 0:
+                return Response(
+                    {'error': f'counts[{index}]: denomination debe ser positiva y count no negativo'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if denomination in seen_denominations:
+                return Response(
+                    {'error': f'Denominación duplicada: {denomination}'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            seen_denominations.add(denomination)
+            validated_serializers.append(serializer)
+
+        # 2) Reemplazo atómico. select_for_update evita dos arqueos concurrentes.
+        try:
+            with transaction.atomic():
+                locked = CashRegister.objects.select_for_update().get(pk=register.pk)
+                if locked.initial_cash is None:
+                    locked.initial_cash = Decimal('0')
+                    locked.save(update_fields=['initial_cash'])
+
+                locked.cash_counts.all().delete()
+                total_counted = Decimal('0')
+                for serializer in validated_serializers:
+                    saved_count = serializer.save()
+                    total_counted += saved_count.total
+
+                expected_cash = (locked.initial_cash or Decimal('0')) + self._calculate_cash_sales(locked)
+                difference = total_counted - expected_cash
+                counts_payload = CashCountSerializer(locked.cash_counts.all(), many=True).data
+        except IntegrityError:
+            return Response(
+                {'error': 'No se pudo guardar el arqueo; no se realizaron cambios'},
+                status=status.HTTP_409_CONFLICT,
+            )
 
         return Response({
             'total_counted': total_counted,
             'expected_cash': expected_cash,
             'difference': difference,
-            'counts': CashCountSerializer(register.cash_counts.all(), many=True).data
+            'counts': counts_payload,
         })
 
     def _calculate_cash_sales(self, register):
