@@ -537,13 +537,16 @@ def reschedule_appointment(request, pk):
                 from apps.clients_api.models import Client
                 Client.objects.select_for_update().get(pk=appointment.client.pk)
 
+            # BE-06: select_related() bajo FOR UPDATE provoca en PostgreSQL
+            # "FOR UPDATE cannot be applied to the nullable side of an outer join"
+            # porque service es nullable. Se carga por separado al iterar.
             conflicting_appointments = Appointment.objects.select_for_update().filter(
                 tenant=appointment.tenant,
                 stylist=appointment.stylist,
                 date_time__gte=day_start,
                 date_time__lt=day_end,
                 status__in=['scheduled', 'completed']
-            ).exclude(id=appointment.id).select_related('service')
+            ).exclude(id=appointment.id)
 
             new_duration = appointment.service.duration if appointment.service else 30
             new_start = new_dt
@@ -567,7 +570,7 @@ def reschedule_appointment(request, pk):
                     date_time__gte=day_start,
                     date_time__lt=day_end,
                     status__in=['scheduled', 'completed']
-                ).exclude(id=appointment.id).select_related('service')
+                ).exclude(id=appointment.id)
 
                 for exist in client_conflicts:
                     exist_duration = exist.service.duration if exist.service else 30

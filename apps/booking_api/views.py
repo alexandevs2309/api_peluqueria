@@ -1,5 +1,6 @@
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.db import IntegrityError, transaction
 from django.db.models import Q, Prefetch
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, throttle_classes
@@ -155,6 +156,24 @@ def availability(request, subdomain):
 def book_appointment(request, subdomain):
     tenant = get_tenant_or_404(subdomain)
 
+    # BE-08: el booking público está exento del paywall de middleware porque el
+    # visitante es anónimo y no hay JWT. Aplicamos aquí la misma regla sobre el
+    # tenant resuelto por subdomain (nunca desde el payload del cliente).
+    if tenant.subscription_status in {'past_due', 'suspended'}:
+        return Response(
+            {
+                'error': 'La suscripción del negocio no está vigente',
+                'code': 'PAYMENT_REQUIRED',
+                'action_required': 'renew_subscription',
+            },
+            status=402,
+        )
+    if tenant.subscription_status in {'archived', 'cancelled'}:
+        return Response(
+            {'error': 'El negocio no está disponible', 'code': 'TENANT_UNAVAILABLE'},
+            status=403,
+        )
+
     serializer = PublicBookingSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=400)
@@ -174,71 +193,102 @@ def book_appointment(request, subdomain):
         is_active=True,
     )
 
-    client_email = data.get('client_email', '').strip().lower()
-    client_phone = data.get('client_phone', '').strip()
-
-    if client_email:
-        existing = Client.objects.filter(
-            tenant=tenant,
-            email=client_email,
-        ).first()
-        if existing:
-            client = existing
-        else:
-            client = Client.objects.create(
-                tenant=tenant,
-                full_name=data['client_name'],
-                email=client_email,
-                phone=client_phone or None,
-                source='Public Booking',
-            )
-    elif client_phone:
-        existing = Client.objects.filter(
-            tenant=tenant,
-            phone=client_phone,
-        ).first()
-        if existing:
-            client = existing
-        else:
-            client = Client.objects.create(
-                tenant=tenant,
-                full_name=data['client_name'],
-                phone=client_phone,
-                source='Public Booking',
-            )
-    else:
-        client = Client.objects.create(
-            tenant=tenant,
-            full_name=data['client_name'],
-            source='Public Booking',
-        )
-
     date_time = timezone.make_aware(
         datetime.combine(data['date'], data['time']),
         timezone.get_current_timezone(),
     )
 
-    conflict = employee.user.stylist_appointments.filter(
-        date_time=date_time,
-        status__in=['scheduled', 'completed'],
-    ).exists()
-    if conflict:
-        return Response(
-            {'error': 'El horario seleccionado ya no está disponible'},
-            status=409,
-        )
-
     from apps.appointments_api.models import Appointment
-    appointment = Appointment.objects.create(
-        tenant=tenant,
-        branch=employee.branch,
-        client=client,
-        stylist=employee.user,
-        service=service,
-        date_time=date_time,
-        status='scheduled',
-        description=data.get('notes', ''),
-    )
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    # CR-16/BE-08: exists()+create() es una carrera. Serializamos todas las
+    # reservas del estilista bloqueando su fila de usuario dentro de atomic().
+    # En PostgreSQL un segundo POST espera a que el primero confirme y entonces
+    # vuelve a evaluar el conflicto.
+    # BE-08: una Response devuelta DENTRO de atomic() confirma la transacción;
+    # por eso los rechazos se marcan con set_rollback(True) y la respuesta se
+    # devuelve después del bloque. Así no queda un Client huérfano cuando la
+    # cita no se pudo crear (p. ej. IntegrityError por la constraint única).
+    conflict_response = None
+
+    with transaction.atomic():
+        User.objects.select_for_update().get(pk=employee.user_id)
+
+        client_email = data.get('client_email', '').strip().lower()
+        client_phone = data.get('client_phone', '').strip()
+
+        if client_email:
+            existing = Client.objects.filter(
+                tenant=tenant,
+                email=client_email,
+            ).first()
+            if existing:
+                client = existing
+            else:
+                client = Client.objects.create(
+                    tenant=tenant,
+                    full_name=data['client_name'],
+                    email=client_email,
+                    phone=client_phone or None,
+                    source='Public Booking',
+                )
+        elif client_phone:
+            existing = Client.objects.filter(
+                tenant=tenant,
+                phone=client_phone,
+            ).first()
+            if existing:
+                client = existing
+            else:
+                client = Client.objects.create(
+                    tenant=tenant,
+                    full_name=data['client_name'],
+                    phone=client_phone,
+                    source='Public Booking',
+                )
+        else:
+            client = Client.objects.create(
+                tenant=tenant,
+                full_name=data['client_name'],
+                source='Public Booking',
+            )
+
+        conflict = employee.user.stylist_appointments.filter(
+            date_time=date_time,
+            status__in=['scheduled', 'completed'],
+        ).exists()
+        if conflict:
+            conflict_response = Response(
+                {'error': 'El horario seleccionado ya no está disponible'},
+                status=409,
+            )
+            transaction.set_rollback(True)
+        else:
+            try:
+                appointment = Appointment.objects.create(
+                    tenant=tenant,
+                    branch=employee.branch,
+                    client=client,
+                    stylist=employee.user,
+                    service=service,
+                    date_time=date_time,
+                    status='scheduled',
+                    description=data.get('notes', ''),
+                )
+            except IntegrityError:
+                # Defensa en profundidad: la restricción única existente
+                # (tenant, stylist, client, date_time) gana la carrera si el
+                # lock no se aplicó. set_rollback(True) evita que el Client
+                # creado antes quede persistido sin su cita (BE-08).
+                conflict_response = Response(
+                    {'error': 'El horario seleccionado ya no está disponible'},
+                    status=409,
+                )
+                transaction.set_rollback(True)
+
+    if conflict_response is not None:
+        return conflict_response
 
     return Response({
         'id': appointment.id,
