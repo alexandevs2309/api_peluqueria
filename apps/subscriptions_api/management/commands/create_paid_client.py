@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.db import transaction
 from django.utils import timezone
 from apps.auth_api.models import User
@@ -11,7 +12,7 @@ from apps.roles_api.default_permissions import ensure_role_default_permissions
 import secrets
 import string
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Crear usuario Client-Admin con plan pagado'
 
     def add_arguments(self, parser):

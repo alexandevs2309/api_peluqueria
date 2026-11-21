@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.contrib.auth import get_user_model
 from django.utils.http import urlsafe_base64_encode
 from django.utils.encoding import force_bytes
@@ -8,7 +9,7 @@ from apps.tenants_api.models import Tenant
 User = get_user_model()
 
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Genera un enlace de recuperacion de contrasena para testing'
 
     def add_arguments(self, parser):

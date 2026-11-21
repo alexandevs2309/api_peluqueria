@@ -1,11 +1,12 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.utils import timezone
 
 from apps.tenants_api.models import Tenant
 from apps.tenants_api.subscription_lifecycle import sync_subscription_state
 
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = (
         "Audit and optionally sync tenant subscription lifecycle states. "
         "Runs in dry-run mode unless --apply is provided."

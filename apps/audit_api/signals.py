@@ -3,6 +3,7 @@ from django.db.models.signals import post_save, post_delete
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
+from apps.core.tenant_rls import rls_bypass
 from .utils import create_audit_log
 from django.contrib.auth import get_user_model
 
@@ -59,8 +60,10 @@ def audit_log_on_save(sender, instance, created, **kwargs):
     elif hasattr(instance, 'user') and instance.user:
         user = instance.user
     
-    # Diferir auditoría hasta después del commit
-    transaction.on_commit(lambda: create_audit_log(
+    # Diferir auditoría hasta después del commit. El callback abre su propio
+    # bypass: con PgBouncer los GUC locales mueren al hacer COMMIT, así que un
+    # on_commit sin contexto no podría escribir la fila de auditoría.
+    transaction.on_commit(lambda: _write_audit_log(
         user=user,
         action=action,
         description=f"{sender._meta.verbose_name} {action.lower()}d",
@@ -68,22 +71,30 @@ def audit_log_on_save(sender, instance, created, **kwargs):
         extra_data={'changes': changes}
     ))
 
+
+def _write_audit_log(**kwargs):
+    """Escritura de auditoría bajo bypass explícito y restauración segura."""
+    with rls_bypass():
+        return create_audit_log(**kwargs)
+
+
 def _audit_user_creation(user_instance):
     """Auditar creación de usuario después del commit"""
     try:
-        # Refrescar instancia para obtener datos actualizados
-        user_instance.refresh_from_db()
-        create_audit_log(
-            user=None,  # Usuario sistema para creación de usuarios
-            action='CREATE',
-            description=f"Usuario creado: {user_instance.email}",
-            content_object=user_instance,
-            extra_data={
-                'email': user_instance.email,
-                'role': user_instance.role,
-                'tenant_id': user_instance.tenant_id if user_instance.tenant else None
-            }
-        )
+        with rls_bypass():
+            # Refrescar instancia para obtener datos actualizados
+            user_instance.refresh_from_db()
+            create_audit_log(
+                user=None,  # Usuario sistema para creación de usuarios
+                action='CREATE',
+                description=f"Usuario creado: {user_instance.email}",
+                content_object=user_instance,
+                extra_data={
+                    'email': user_instance.email,
+                    'role': user_instance.role,
+                    'tenant_id': user_instance.tenant_id if user_instance.tenant else None
+                }
+            )
     except Exception as e:
         # Log error pero no fallar
         import logging
@@ -108,7 +119,7 @@ def audit_log_on_delete(sender, instance, **kwargs):
     # Diferir auditoría hasta después del commit
     deleted_object_label = _safe_instance_label(instance)
 
-    transaction.on_commit(lambda: create_audit_log(
+    transaction.on_commit(lambda: _write_audit_log(
         user=user,
         action='DELETE',
         description=f"{sender._meta.verbose_name} eliminado",

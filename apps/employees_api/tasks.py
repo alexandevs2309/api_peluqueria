@@ -5,8 +5,10 @@ from datetime import datetime, timedelta, time
 from .models import Employee, WorkSchedule, AttendanceRecord
 from apps.settings_api.models import Setting
 from apps.employees_api.earnings_models import PayrollConfiguration, PayrollPeriod
+from apps.core.rls_internal import internal_task
 
 @shared_task
+@internal_task
 def auto_process_daily_absences():
     """
     Cron diario que marca inasistencias automáticas al final de la jornada.
@@ -65,6 +67,7 @@ def auto_process_daily_absences():
     return f"Procesadas {created_count} inasistencias"
 
 @shared_task
+@internal_task
 def auto_checkout_end_of_day():
     """
     Cierra registros de check-in que se hayan quedado abiertos (sin check_out_at).
@@ -118,6 +121,7 @@ def auto_checkout_end_of_day():
 
 
 @shared_task
+@internal_task
 def auto_close_payroll_periods():
     """
     Cron diario que cierra períodos de nómina abiertos que ya terminaron.

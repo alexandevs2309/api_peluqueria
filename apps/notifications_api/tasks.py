@@ -2,6 +2,7 @@ from celery import shared_task
 from django.utils import timezone
 from datetime import timedelta
 from django.conf import settings
+from apps.core.rls_internal import internal_task
 import logging
 
 logger = logging.getLogger(__name__)
@@ -10,6 +11,7 @@ NO_SHOW_BATCH_SIZE = 500
 MAX_NO_SHOW_BATCHES = 200
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
+@internal_task
 def mark_expired_appointments(self):
     """Mark appointments as no_show if they passed and are still scheduled"""
     try:
@@ -89,6 +91,7 @@ def mark_expired_appointments(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
+@internal_task
 def send_daily_appointment_reminders(self):
     """Send reminders for appointments scheduled for today"""
     try:
@@ -148,6 +151,7 @@ def send_daily_appointment_reminders(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600, retry_jitter=True)
+@internal_task
 def notify_upcoming_appointments(self):
     """Notify about appointments starting in 1 hour"""
     try:
@@ -204,6 +208,7 @@ def notify_upcoming_appointments(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600)
+@internal_task
 def send_sms(self, phone, message):
     """Send SMS asynchronously via Twilio"""
     try:
@@ -214,6 +219,7 @@ def send_sms(self, phone, message):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True, retry_backoff_max=3600)
+@internal_task
 def send_whatsapp(self, phone, message):
     """Send WhatsApp message asynchronously via Twilio"""
     try:
@@ -224,6 +230,7 @@ def send_whatsapp(self, phone, message):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, retry_backoff=True)
+@internal_task
 def send_appointment_reminders(self):
     """Send SMS and email reminders for tomorrow's appointments"""
     try:
@@ -316,6 +323,7 @@ def send_appointment_reminders(self):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def cleanup_old_notifications(self):
     """Delete read notifications older than 30 days"""
     try:

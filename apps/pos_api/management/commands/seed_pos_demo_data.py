@@ -1,11 +1,12 @@
 import os
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from apps.tenants_api.models import Tenant
 from apps.services_api.models import Service, ServiceCategory
 from apps.inventory_api.models import Product, ProductCategory
 from apps.clients_api.models import Client
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Puebla el POS con clientes, productos y servicios de Barbería/Peluquería con imágenes de alta calidad y captions.'
 
     def handle(self, *args, **options):

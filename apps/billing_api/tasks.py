@@ -6,6 +6,7 @@ from decimal import Decimal
 from apps.billing_api.models import Invoice
 from apps.billing_api.reconciliation_models import ReconciliationLog, ReconciliationAlert
 from apps.billing_api.stripe_client import configure_stripe
+from apps.core.rls_internal import internal_task
 import logging
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,7 @@ configure_stripe()
 
 
 @shared_task(bind=True, max_retries=3)
+@internal_task
 def daily_financial_reconciliation(self):
     """
     Reconciliación diaria Stripe ↔ DB

@@ -33,13 +33,19 @@ DECLARE
         'pos_api_posconfiguration','pos_api_promotion','pos_api_refundoperation','pos_api_sale',
         'services_api_service','services_api_servicecategory','settings_api_barbershopsettings',
         'settings_api_branch','settings_api_settingsauditlog','subscriptions_api_promotionalcredit',
-        'subscriptions_api_subscription','support_api_supportticket','tenants_api_tenant'
+        'subscriptions_api_subscription','support_api_supportticket','tenants_api_tenant',
+        'pos_api_saledetail','inventory_api_stockmovement',
+        'notifications_api_inappnotification'
     ];
 BEGIN
     FOREACH t IN ARRAY tables LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_class c
                        WHERE c.relname = t AND c.relrowsecurity = true) THEN
             missing := missing || ' RLS_OFF:' || t;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_class c
+                       WHERE c.relname = t AND c.relforcerowsecurity = true) THEN
+            missing := missing || ' FORCE_OFF:' || t;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_policies p WHERE p.tablename = t) THEN
             missing := missing || ' NO_POLICY:' || t;
@@ -48,11 +54,14 @@ BEGIN
     IF missing <> '' THEN
         RAISE EXCEPTION 'RLS structural check failed:%', missing;
     END IF;
-    RAISE NOTICE 'STRUCTURAL OK: 33 tablas con RLS y policy';
+    RAISE NOTICE 'STRUCTURAL OK: 36 tablas con RLS, FORCE y policy';
 END $$;
 
--- 3) Dos tenants y un cliente por tenant (el owner sí puede insertar: RLS no
---    aplica al propietario salvo FORCE; el gate usa un rol distinto a continuación).
+-- 3) Dos tenants y un cliente por tenant. Con FORCE ROW LEVEL SECURITY el
+--    propietario también está sujeto a las policies: la siembra del gate usa
+--    un bypass explícito y temporal, y se desactiva antes de las aserciones.
+SET LOCAL app.tenant_id = '';
+SET LOCAL app.rls_bypass = 'on';
 INSERT INTO tenants_api_tenant
     (name, subdomain, locale, currency, date_format, time_zone, plan_type,
      subscription_status, trial_notifications_sent, billing_info, settings,
@@ -74,6 +83,7 @@ VALUES
     (:tenant_b, 'Cliente RLS B', '', 0, true, now(), now());
 
 SET LOCAL app.rls_probe_other = :tenant_b;
+SET LOCAL app.rls_bypass = 'off';
 
 SET ROLE auron_rls_probe;
 

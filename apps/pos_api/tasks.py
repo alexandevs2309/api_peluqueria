@@ -2,9 +2,11 @@ from celery import shared_task
 from django.utils import timezone
 from apps.pos_api.models import CashRegister
 from apps.tenants_api.models import Tenant
+from apps.core.rls_internal import internal_task
 
 
 @shared_task
+@internal_task
 def auto_close_old_cash_registers():
     """
     Tarea Celery diaria que cierra automáticamente las cajas que quedaron

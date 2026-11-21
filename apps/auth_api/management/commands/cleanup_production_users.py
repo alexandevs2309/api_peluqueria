@@ -9,6 +9,7 @@ Propósito:
 """
 
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.db import transaction
 from django.contrib.auth import get_user_model
 
@@ -31,7 +32,7 @@ from apps.auth_api.models import User
 User = get_user_model()
 
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Limpia la base de datos de producción eliminando todos los usuarios excepto dos clave'
 
     def add_arguments(self, parser):

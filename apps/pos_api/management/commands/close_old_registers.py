@@ -1,10 +1,11 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.utils import timezone
 from apps.pos_api.models import CashRegister
 from apps.tenants_api.models import Tenant
 
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Close old cash registers that are still open'
 
     def handle(self, *args, **options):

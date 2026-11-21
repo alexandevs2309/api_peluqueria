@@ -9,6 +9,7 @@ from apps.settings_api.policy_utils import should_auto_suspend_expired
 import logging
 import stripe
 from stripe import StripeError
+from apps.core.rls_internal import internal_task
 
 stripe.api_key = getattr(settings, 'STRIPE_SECRET_KEY', None)
 
@@ -43,6 +44,7 @@ def _build_html_email(tenant, title, message_lines):
     })
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def daily_subscription_check(self):
     """
     Task diaria para normalizar lifecycle de suscripciones.
@@ -71,6 +73,7 @@ def daily_subscription_check(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def check_trial_expirations(self):
     """
     Task diario para verificar trials expirados
@@ -116,6 +119,7 @@ def check_trial_expirations(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def cleanup_expired_trials(self):
     """
     Task para limpiar trials expirados y datos obsoletos
@@ -145,6 +149,7 @@ def cleanup_expired_trials(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def send_trial_expiration_warnings(self):
     """
     Task para enviar avisos de expiración próxima
@@ -179,6 +184,7 @@ def send_trial_expiration_warnings(self):
         raise self.retry(exc=e)
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def send_subscription_expiry_warnings(self):
     """
     Task diaria para enviar avisos de expiración de suscripciones pagadas.
@@ -308,6 +314,7 @@ def _send_subscription_expiry_email(tenant, days_remaining):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def check_expired_subscriptions(self):
     """Verificar y desactivar suscripciones expiradas"""
     try:
@@ -375,6 +382,7 @@ def send_trial_expired_email(tenant):
         logger.error(f"Error sending trial expired email to {recipient}: {str(e)}")
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=300)
+@internal_task
 def send_trial_warning_email(self, tenant_id=None, days_remaining=None, days_left=None):
     """Enviar email de aviso antes de que expire el trial"""
     if days_remaining is None:

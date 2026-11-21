@@ -1,8 +1,9 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from apps.tenants_api.models import Tenant
 from apps.settings_api.models import Branch, Setting
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Crear sucursales por defecto para tenants existentes'
 
     def handle(self, *args, **options):

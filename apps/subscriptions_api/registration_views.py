@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from django.contrib.auth import get_user_model
 
 from apps.tenants_api.models import Tenant
+from apps.core.tenant_rls import rls_bypass, set_tenant_context
 from apps.roles_api.models import Role, UserRole
 from apps.roles_api.default_permissions import ensure_role_default_permissions
 from apps.settings_api.models import Branch, Setting, SystemSettings
@@ -277,6 +278,12 @@ def register_with_plan(request):
     provided_password = data.get('password') or ''
     billing_interval = data['billingInterval']
 
+    # La unicidad de nombre/subdomain se resuelve antes de existir el tenant:
+    # bypass explícito, temporal y con restauración del contexto previo.
+    with rls_bypass():
+        tenant_name = generate_unique_tenant_name(data['businessName'])
+        tenant_subdomain = generate_unique_subdomain(data['businessName'])
+
     try:
         with transaction.atomic():
             from decimal import Decimal
@@ -287,16 +294,21 @@ def register_with_plan(request):
             from apps.subscriptions_api.models import UserSubscription
 
             # 1. Tenant primero (owner se asigna después de crear el usuario).
-            tenant = Tenant.objects.create(
-                name=generate_unique_tenant_name(data['businessName']),
-                subdomain=generate_unique_subdomain(data['businessName']),
-                owner=None,
-                contact_email=email,
-                contact_phone=data.get('phone') or '',
-                address=data.get('address') or '',
-                subscription_plan=subscription_plan,
-                is_active=True,
-            )
+            # El alta es una operación pública sin contexto previo: bypass
+            # explícito y temporal, nunca derivado del payload.
+            with rls_bypass():
+                tenant = Tenant.objects.create(
+                    name=tenant_name,
+                    subdomain=tenant_subdomain,
+                    owner=None,
+                    contact_email=email,
+                    contact_phone=data.get('phone') or '',
+                    address=data.get('address') or '',
+                    subscription_plan=subscription_plan,
+                    is_active=True,
+                )
+            # A partir de aquí todas las escrituras ya tienen contexto tenant.
+            set_tenant_context(tenant.id)
             logger.info('Tenant created tenant_id=%s', tenant.id)
 
             # 2. Usuario propietario, sin privilegios de staff/superusuario.

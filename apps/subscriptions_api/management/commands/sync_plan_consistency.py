@@ -1,4 +1,5 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 
 from apps.subscriptions_api.models import SubscriptionPlan
 from apps.subscriptions_api.plan_consistency import (
@@ -9,7 +10,7 @@ from apps.subscriptions_api.plan_consistency import (
 from apps.tenants_api.models import Tenant
 
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = (
         "Normalize SubscriptionPlan features and safely audit/sync tenant snapshots. "
         "Runs in dry-run mode unless --apply is provided."

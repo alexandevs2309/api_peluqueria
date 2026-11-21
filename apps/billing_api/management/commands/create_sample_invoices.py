@@ -1,11 +1,12 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.contrib.auth import get_user_model
 from apps.billing_api.models import Invoice
 from datetime import datetime, timedelta
 
 User = get_user_model()
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Create sample invoices for testing'
 
     def handle(self, *args, **options):

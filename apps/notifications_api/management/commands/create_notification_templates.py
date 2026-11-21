@@ -1,7 +1,8 @@
 from django.core.management.base import BaseCommand, CommandError
+from apps.core.rls_internal import RLSInternalCommand
 from apps.notifications_api.models import NotificationTemplate
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Crear templates básicos de notificaciones (globales o por tenant)'
 
     def add_arguments(self, parser):

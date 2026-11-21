@@ -26,6 +26,8 @@ El valor NUNCA se toma del payload, query param ni de un tool MCP.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from django.conf import settings
 from django.db import connection, transaction
 
@@ -94,6 +96,57 @@ def clear_tenant_context() -> None:
     _set(BYPASS_GUC, "off", local=local)
 
 
+def _get_guc(guc: str) -> str | None:
+    """Lee el valor efectivo de un GUC. ``None`` si no está definido."""
+    if not _rls_supported():
+        return None
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT current_setting(%s, true)", [guc])
+        value = cursor.fetchone()[0]
+    return value if value not in (None, "") else None
+
+
+def _restore_context(previous_tenant: str | None, previous_bypass: str | None) -> None:
+    if previous_bypass == "on":
+        set_rls_bypass()
+    elif previous_tenant is not None:
+        set_tenant_context(previous_tenant)
+    else:
+        clear_tenant_context()
+
+
+@contextmanager
+def rls_bypass():
+    """Bypass **explícito y temporal** para operaciones internas autorizadas.
+
+    Restaura el contexto anterior al salir, incluso si la operación lanza una
+    excepción. Está pensado para los tres casos donde todavía no existe tenant
+    (resolución de subdomain en booking, alta de tenant en registro) y para
+    tareas/commands internos autorizados. Nunca se activa desde datos del cliente.
+
+    Con PgBouncer los GUC son locales a la transacción: este context manager
+    abre una transacción si hace falta (por ejemplo en un worker, que no tiene
+    el ``atomic()`` del middleware). Un ``atomic()`` ya existente se reutiliza.
+    """
+    previous_tenant = _get_guc(TENANT_GUC)
+    previous_bypass = _get_guc(BYPASS_GUC)
+    if _local():
+        # La restauración va DESPUÉS de que el atomic termine (commit o
+        # rollback). Si se hiciera en el `finally` interior, los callbacks de
+        # `transaction.on_commit()` (p. ej. la auditoría de creación de usuario)
+        # correrían con el GUC ya restaurado y no verían el tenant.
+        with transaction.atomic():
+            set_rls_bypass()
+            yield
+        _restore_context(previous_tenant, previous_bypass)
+    else:
+        set_rls_bypass()
+        try:
+            yield
+        finally:
+            _restore_context(previous_tenant, previous_bypass)
+
+
 def _tenant_from_jwt(request) -> None:
     """Resuelve el tenant desde el JWT verificado cuando DRF aún no ha corrido."""
     token = request.META.get("HTTP_AUTHORIZATION", "")
@@ -141,11 +194,14 @@ def _apply(request) -> None:
         if len(parts) >= 3:
             from apps.tenants_api.models import Tenant
 
-            tenant = (
-                Tenant.objects.filter(subdomain=parts[2], deleted_at__isnull=True)
-                .only("id")
-                .first()
-            )
+            # Resolución de tenant por subdomain: todavía no hay contexto.
+            # El bypass es temporal y no depende de ningún dato del body/query.
+            with rls_bypass():
+                tenant = (
+                    Tenant.objects.filter(subdomain=parts[2], deleted_at__isnull=True)
+                    .only("id")
+                    .first()
+                )
             if tenant is not None:
                 set_tenant_context(tenant.id)
         return
@@ -183,8 +239,8 @@ class TenantRLSMiddleware:
                 _apply(request)
                 return self.get_response(request)
 
-        _apply(request)
         try:
+            _apply(request)
             return self.get_response(request)
         finally:
             clear_tenant_context()

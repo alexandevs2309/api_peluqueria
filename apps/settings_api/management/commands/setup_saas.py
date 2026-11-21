@@ -1,6 +1,7 @@
 import os
 from django.utils.crypto import get_random_string
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.contrib.auth import get_user_model
 from apps.roles_api.models import Role
 from apps.roles_api.default_permissions import sync_default_role_permissions
@@ -10,7 +11,7 @@ from apps.subscriptions_api.models import SubscriptionPlan
 
 User = get_user_model()
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Configurar sistema SaaS con datos iniciales'
 
     def add_arguments(self, parser):

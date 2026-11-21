@@ -1,9 +1,10 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from django.utils import timezone
 from apps.tenants_api.models import Tenant
 from apps.settings_api.policy_utils import should_auto_suspend_expired
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Normaliza tenants con trial expirado al estado suspendido/inactivo'
 
     def add_arguments(self, parser):

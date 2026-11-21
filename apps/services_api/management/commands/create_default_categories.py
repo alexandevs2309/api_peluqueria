@@ -1,10 +1,11 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 from apps.services_api.models import ServiceCategory
 from apps.inventory_api.models import ProductCategory
 from apps.tenants_api.models import Tenant
 
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Crear categorias de servicios y productos por defecto para todos los tenants'
 
     DEFAULT_SERVICE_CATEGORIES = [

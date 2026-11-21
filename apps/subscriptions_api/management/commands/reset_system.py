@@ -1,10 +1,11 @@
 from django.core.management.base import BaseCommand
+from apps.core.rls_internal import RLSInternalCommand
 
 from apps.auth_api.models import User
 from apps.subscriptions_api.models import Subscription, SubscriptionPlan, UserSubscription
 from apps.tenants_api.models import Tenant
 
-class Command(BaseCommand):
+class Command(RLSInternalCommand):
     help = 'Reset all tenants and subscription plans (DESTRUCTIVE)'
 
     def add_arguments(self, parser):

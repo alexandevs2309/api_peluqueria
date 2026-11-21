@@ -72,6 +72,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from apps.tenants_api.models import Tenant
+from apps.core.tenant_rls import rls_bypass, set_tenant_context
 from apps.subscriptions_api.models import SubscriptionPlan
 from apps.roles_api.models import Role, UserRole
 from apps.roles_api.default_permissions import ensure_role_default_permissions
@@ -237,7 +238,9 @@ class RegisterView(generics.CreateAPIView):
             
             original_subdomain = subdomain
             for counter in range(1, 1000):
-                if not Tenant.objects.filter(subdomain=subdomain).exists():
+                with rls_bypass():
+                    subdomain_taken = Tenant.objects.filter(subdomain=subdomain).exists()
+                if not subdomain_taken:
                     break
                 subdomain = f'{original_subdomain[:42]}{counter}'
             else:
@@ -247,21 +250,26 @@ class RegisterView(generics.CreateAPIView):
             tenant_name = f'Barbería de {full_name}'
             original_name = tenant_name
             for counter in range(1, 1000):
-                if not Tenant.objects.filter(name=tenant_name).exists():
+                with rls_bypass():
+                    tenant_name_taken = Tenant.objects.filter(name=tenant_name).exists()
+                if not tenant_name_taken:
                     break
                 tenant_name = f'{original_name[:90]} {counter}'
             else:
                 tenant_name = f'{original_name[:80]} {uuid.uuid4().hex[:8]}'
             
-            # Crear tenant PRIMERO
-            tenant = Tenant.objects.create(
-                name=tenant_name,
-                subdomain=subdomain,
-                owner=None,
-                subscription_plan=starter_plan,
-                is_active=True
-            )
-            
+            # Crear tenant PRIMERO: operación pública sin contexto previo.
+            with rls_bypass():
+                tenant = Tenant.objects.create(
+                    name=tenant_name,
+                    subdomain=subdomain,
+                    owner=None,
+                    subscription_plan=starter_plan,
+                    is_active=True
+                )
+            # El resto del registro ya opera con el contexto del nuevo tenant.
+            set_tenant_context(tenant.id)
+
             # Crear usuario con tenant asignado
             user = serializer.save(tenant=tenant)
             user.email_verification_token = uuid.uuid4().hex
