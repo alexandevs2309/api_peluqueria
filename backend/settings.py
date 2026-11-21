@@ -179,6 +179,8 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'apps.auth_api.middleware.CSRFProtectionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    # BE-11/V-05: fija el contexto RLS antes de cualquier consulta de negocio.
+    'apps.core.tenant_rls.TenantRLSMiddleware',
     'apps.settings_api.middleware.MaintenanceModeMiddleware',
     'apps.tenants_api.middleware.TenantMiddleware',
     'apps.subscriptions_api.middleware.SubscriptionValidationMiddleware',
@@ -348,6 +350,8 @@ WSGI_APPLICATION = 'backend.wsgi.application'
 # DB_SCHEMA — separar tablas por schema (útil para staging en misma DB)
 _db_schema = env('DB_SCHEMA', default='')
 _pgbouncer_enabled = env.bool('PGBOUNCER_ENABLED', default=False)
+# BE-11/V-05: el middleware RLS necesita saber si la conexión es transaction-pooled.
+PGBOUNCER_ENABLED = _pgbouncer_enabled
 
 # Con PgBouncer en modo transaction: CONN_MAX_AGE=0 para no dejar conexiones abiertas
 _conn_max_age = 0 if _pgbouncer_enabled else env.int('CONN_MAX_AGE', default=600)

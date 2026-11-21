@@ -1,0 +1,79 @@
+name: CI - staging (api_peluqueria)
+
+# BE-11/V-05 y CR-17: la rama staging debe tener gates propios. Este workflow
+# NUNCA despliega: sólo valida. El deploy sigue siendo workflow_dispatch.
+on:
+  push:
+    branches: ['staging/**']
+  pull_request:
+    branches: ['staging/**']
+
+env:
+  PYTHON_VERSION: '3.13'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest-cov pytest-django "psycopg[binary]"
+      - name: Configurar entorno de prueba
+        run: |
+          echo "SECRET_KEY=staging-ci-secret-key" > .env
+          echo "DEBUG=True" >> .env
+          echo "DATABASE_URL=postgres://postgres:postgres@postgres:5432/test_db" >> .env
+          # Hostname del servicio (no localhost): así se usa RedisCache y no
+          # aparece django_ratelimit.E003 con LocMemCache.
+          echo "REDIS_URL=redis://redis:6379/0" >> .env
+          echo "CELERY_TASK_ALWAYS_EAGER=True" >> .env
+          echo "FERNET_KEY=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())')" >> .env
+      - name: Preparar rol PostgreSQL no propietario (BE-11/V-05)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h postgres -U postgres -d test_db -v ON_ERROR_STOP=1 -c \
+            "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='auron_rls_probe') THEN CREATE ROLE auron_rls_probe LOGIN PASSWORD 'rls_probe_ci'; END IF; END \$\$;"
+      - name: Migraciones
+        run: python manage.py migrate --no-input
+      - name: Comprobación RLS con rol no propietario
+        env:
+          PGPASSWORD: postgres
+        run: psql -h postgres -U postgres -d test_db -v ON_ERROR_STOP=1 -f tests/rls/verify.sql
+      - name: Tests con cobertura (informativa; gate es el exit code)
+        run: python -m pytest --cov=apps --cov=backend --cov-report=term-missing
+      - name: Migraciones sin cambios pendientes
+        # --skip-checks: django_ratelimit.E003 con LocMemCache en este entorno.
+        run: python manage.py makemigrations --check --dry-run --skip-checks
+      - name: Django security check
+        # Los warnings de deploy (HSTS/SSL con DEBUG=True) no bloquean staging.
+        run: python manage.py check --deploy --fail-level ERROR
