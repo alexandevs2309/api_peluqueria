@@ -10,7 +10,6 @@ import logging
 
 from django.contrib.gis.geoip2 import GeoIP2
 from apps.auth_api.utils import get_client_ip
-from apps.auth_api.role_utils import get_effective_role_name
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +26,19 @@ PAYWALL_SAFE_READONLY_PREFIXES = [
     '/api/notifications/',
 ]
 
+# Rutas que deben seguir accesibles para regularizar una suscripción limitada.
+PAYWALL_RECOVERY_PREFIXES = (
+    '/api/auth/',
+    '/api/subscriptions/renew/',
+    '/api/subscriptions/plans/',
+    '/api/tenants/subscription-status/',
+    '/api/payments/payments/create_subscription_payment/',
+    '/api/billing/webhooks/',
+    '/api/payments/stripe/webhook/',
+    '/api/payments/azul/webhook/',
+)
+
+
 class TenantMiddleware(MiddlewareMixin):
     """
     Middleware para manejar multitenancy basado en JWT claims o usuario autenticado
@@ -34,13 +46,33 @@ class TenantMiddleware(MiddlewareMixin):
 
     @staticmethod
     def _is_superadmin(user) -> bool:
-        if not getattr(user, 'is_authenticated', False):
+        # BE-10: is_superuser es la única fuente de verdad. El rol legacy
+        # 'SuperAdmin' con is_superuser=False NO concede bypass de tenant/paywall.
+        return bool(getattr(user, 'is_authenticated', False) and getattr(user, 'is_superuser', False))
+
+    @staticmethod
+    def _is_limited_business_write(request) -> bool:
+        if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
             return False
-        # is_superuser es la fuente de verdad para el dueño del SaaS.
-        # No depender de roles que pueden no existir en una DB nueva.
-        if getattr(user, 'is_superuser', False):
-            return True
-        return get_effective_role_name(user) == 'SuperAdmin'
+        return not any(request.path.startswith(prefix) for prefix in PAYWALL_RECOVERY_PREFIXES)
+
+    @staticmethod
+    def _limited_subscription_response(request, status_value, tenant=None):
+        request.subscription_limited = True
+        request.subscription_status = status_value
+        return JsonResponse({
+            'error': 'Subscription past due' if status_value == 'past_due' else 'Subscription expired',
+            'code': 'PAYMENT_REQUIRED',
+            'message': (
+                'Su cuenta tiene facturas pendientes de pago. Por favor complete el pago '
+                'para restablecer las operaciones de escritura.'
+                if status_value == 'past_due' else
+                'Su suscripción está suspendida. Por favor renueve para restablecer las operaciones de escritura.'
+            ),
+            'renewal_url': '/client/payment',
+            'subscription_status': status_value,
+            'tenant_id': getattr(tenant, 'id', None),
+        }, status=402)
 
     @staticmethod
     def _inactive_tenant_response(tenant=None):
@@ -207,7 +239,15 @@ class TenantMiddleware(MiddlewareMixin):
                 elif hasattr(request.user, 'tenant') and request.user.tenant:
                     # Validar que el tenant del usuario esté activo
                     user_tenant = request.user.tenant
-                    
+
+                    # BE-04: past_due/suspended deben devolver 402 en escrituras de
+                    # negocio, incluso cuando is_active ya fue puesto a False.
+                    if (user_tenant.subscription_status in {'past_due', 'suspended'}
+                            and self._is_limited_business_write(request)):
+                        return self._limited_subscription_response(
+                            request, user_tenant.subscription_status, user_tenant
+                        )
+
                     if user_tenant.deleted_at is not None or not user_tenant.is_active:
                         if user_tenant.deleted_at is None and self._is_paywall_safe_request(request):
                             request.tenant = user_tenant
@@ -260,6 +300,15 @@ class TenantMiddleware(MiddlewareMixin):
                         return None
 
                 sync_subscription_state(request.tenant, save=True)
+
+                # BE-04: reevaluar con el estado ya sincronizado. El flag
+                # subscription_limited queda consumido en la respuesta 402.
+                if (request.tenant.subscription_status in {'past_due', 'suspended'}
+                        and self._is_limited_business_write(request)):
+                    return self._limited_subscription_response(
+                        request, request.tenant.subscription_status, request.tenant
+                    )
+
                 access_level = request.tenant.get_access_level()
                 
                 if access_level == 'hidden':

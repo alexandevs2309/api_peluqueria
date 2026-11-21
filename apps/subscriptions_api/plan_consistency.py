@@ -6,6 +6,20 @@ from typing import Any
 
 PLAN_SETTINGS_FEATURES_KEY = "plan_features"
 
+# Features que sólo puede conceder el plan vigente. Si el snapshot las trae pero
+# el plan actual no las declare, se consideran revocadas (BE-03).
+PREMIUM_ONLY_FEATURES = frozenset({
+    "payroll",
+    "promotions",
+    "multi_location",
+    "custom_branding",
+    "advanced_reports",
+    "priority_support",
+    "whatsapp_notifications",
+    "export_reports",
+    "client_history",
+})
+
 FEATURE_ALIASES = {
     "cash_register": ("pos", "pos_system"),
     "pos": ("cash_register", "pos_system"),
@@ -128,53 +142,58 @@ def get_plan_features(plan, expected_keys: list[str] | tuple[str, ...] | None = 
 
 
 def get_tenant_plan_features(tenant, expected_keys: list[str] | tuple[str, ...] | None = None) -> dict[str, bool]:
+    """Resuelve features desde el plan vigente, nunca desde un snapshot heredado.
+
+    BE-03: el snapshot de ``settings['plan_features']`` puede contener claves de un
+    plan superior tras un downgrade. Si hay plan vigente, ese plan es la única
+    fuente de verdad. El mapeo R1 de 'pro' se conserva sólo cuando el plan vigente
+    es 'pro' (o no hay plan y el legado 'pro' es lo único que queda).
+    """
     expected_keys = list(expected_keys or [])
     settings = getattr(tenant, "settings", None) or {}
     stored_features = settings.get(PLAN_SETTINGS_FEATURES_KEY)
     subscription_plan = getattr(tenant, "subscription_plan", None)
+    plan_name = str(getattr(subscription_plan, "name", "") or "").strip().lower()
     tenant_plan_type = str(getattr(tenant, "plan_type", "") or "").lower()
 
-    # Mapeo aprobado R1 (solo resolución): tenants legacy con plan_type='pro' conservan
-    # derechos equivalentes a Premium sin degradación (compatibilidad ante fuente inconsistente).
-    if tenant_plan_type == "pro":
+    is_legacy_pro = plan_name == "pro" or (subscription_plan is None and tenant_plan_type == "pro")
+    if is_legacy_pro:
         premium_like = normalize_features_dict({
             "payroll": True, "reports": True, "inventory": True, "promotions": True,
             "appointments": True, "basic_reports": True, "cash_register": True, "client_history": True,
             "export_reports": True, "multi_location": True, "custom_branding": True,
             "advanced_reports": True, "priority_support": True, "whatsapp_notifications": True,
         }, expected_keys)
-        if isinstance(stored_features, dict):
-            merged = dict(premium_like)
-            for k, v in stored_features.items():
-                if k not in merged:
-                    merged[k] = v
+        if subscription_plan is None:
+            snapshot = stored_features if isinstance(stored_features, dict) else {}
+            merged = dict(snapshot)
             for k, v in premium_like.items():
                 if v:
                     merged[k] = True
             return normalize_features_dict(merged, expected_keys)
-        if subscription_plan is not None:
-            plan_features = get_plan_features(subscription_plan)
-            merged = dict(plan_features)
-            for k, v in premium_like.items():
-                if v:
-                    merged[k] = True
-            return normalize_features_dict(merged, expected_keys)
-        return premium_like
 
-    if isinstance(stored_features, dict):
-        if subscription_plan is not None:
-            plan_features = get_plan_features(subscription_plan)
-            merged = dict(plan_features)
-            for k, v in stored_features.items():
-                if k not in plan_features:
-                    merged[k] = v
-            return normalize_features_dict(merged, expected_keys)
-        return normalize_features_dict(stored_features, expected_keys)
+        merged = dict(get_plan_features(subscription_plan))
+        for k, v in premium_like.items():
+            if v:
+                merged[k] = True
+        return normalize_features_dict(merged, expected_keys)
 
     if subscription_plan is not None:
-        return get_plan_features(subscription_plan, expected_keys)
+        # Downgrade: las features premium NO pueden sobrevivir en el snapshot
+        # cuando el plan vigente no las concede. El resto de claves del snapshot
+        # se conserva por compatibilidad con despliegues que sólo guardan ahí
+        # features básicas.
+        plan_features = get_plan_features(subscription_plan)
+        merged = dict(plan_features)
+        if isinstance(stored_features, dict):
+            for k, v in stored_features.items():
+                if k not in merged and k not in PREMIUM_ONLY_FEATURES:
+                    merged[k] = v
+        for k in PREMIUM_ONLY_FEATURES:
+            merged.setdefault(k, False)
+        return normalize_features_dict(merged, expected_keys)
 
-    return normalize_features_dict({}, expected_keys)
+    return normalize_features_dict(stored_features, expected_keys)
 
 
 def tenant_has_feature(tenant, feature_name: str, default: bool = False) -> bool:

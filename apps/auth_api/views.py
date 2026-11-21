@@ -89,7 +89,7 @@ import pyotp
 import qrcode
 from io import BytesIO
 from base64 import b64encode
-from .authentication import DualJWTAuthentication
+from .authentication import CookieJWTAuthentication
 
 
 from apps.roles_api.role_hierarchy import validate_role_assignment, get_allowed_roles, can_modify_user
@@ -218,13 +218,16 @@ class RegisterView(generics.CreateAPIView):
         
         # Transacción atómica para garantizar tenant antes de usuario
         with transaction.atomic():
-            # Usar el plan seleccionado por el usuario o Basic como default para trial
-            plan_name = self.request.data.get('planType', '').lower() or 'basic'
-            starter_plan = SubscriptionPlan.objects.filter(name=plan_name).first()
+            # CR-15: el registro público sólo puede elegir planes publicados.
+            # Un planType 'enterprise' (o cualquier plan interno) cae al plan
+            # público 'basic', igual que hace register_with_plan.
+            plan_name = (self.request.data.get('planType') or '').strip().lower() or 'basic'
+            public_plans = SubscriptionPlan.objects.filter(is_active=True, is_public=True)
+            starter_plan = public_plans.filter(name=plan_name).first()
             if not starter_plan:
-                starter_plan = SubscriptionPlan.objects.filter(name='basic').first()
+                starter_plan = public_plans.filter(name='basic').first()
             if not starter_plan:
-                starter_plan = SubscriptionPlan.objects.first()
+                starter_plan = public_plans.order_by('price').first()
             
             # Crear subdomain único
             full_name = serializer.validated_data.get('full_name', 'barbershop')
@@ -1465,8 +1468,12 @@ class UserViewSet(viewsets.ModelViewSet):
 
 
 class VerifyAuthView(APIView):
-    """Verificar autenticación con cookies httpOnly"""
-    authentication_classes = [DualJWTAuthentication]
+    """Identidad para el widget MCP y el gateway: Bearer o cookie httpOnly.
+
+    CR-18: CookieJWTAuthentication fija ``request.tenant`` desde el token y
+    mantiene el soporte de ``Authorization: Bearer`` que usa auron-mcp.
+    """
+    authentication_classes = [CookieJWTAuthentication]
     permission_classes = [IsAuthenticated]
     
     def get(self, request):

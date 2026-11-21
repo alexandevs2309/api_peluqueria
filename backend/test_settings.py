@@ -119,8 +119,7 @@ STRIPE_WEBHOOK_SECRET = 'whsec_test_secret'
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'apps.auth_api.authentication.DualJWTAuthentication',
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.auth_api.authentication.CookieJWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -132,6 +131,7 @@ REST_FRAMEWORK = {
     ],
     'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.BoundedLimitOffsetPagination',
     'PAGE_SIZE': 25,
+    'MAX_PAGE_SIZE': 200,  # BE-15: mismo techo que backend/settings.py y el paginador
     'DEFAULT_THROTTLE_CLASSES': [
         'rest_framework.throttling.UserRateThrottle',
         'rest_framework.throttling.AnonRateThrottle',

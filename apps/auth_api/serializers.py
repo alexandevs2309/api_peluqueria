@@ -282,13 +282,8 @@ class EmployeeUserSerializer(serializers.ModelSerializer):
     def validate_password(self, value):
         return validate_password_policy(value)
 
-    def validate_email(self, value):
-        qs = User.objects.filter(email__iexact=value)
-        if self.instance is not None:
-            qs = qs.exclude(pk=self.instance.pk)
-        if qs.exists():
-            raise serializers.ValidationError('Este email ya está registrado en otro negocio.')
-        return value
+    # BE-12: una sola validación de email, con filtro por tenant. La definición
+    # duplicada sobrescribía ésta y convertía el duplicado en un error global.
 
     def create(self, validated_data):
         requested_business_role = validated_data.get('business_role')

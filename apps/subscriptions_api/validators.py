@@ -1,6 +1,5 @@
 from rest_framework.exceptions import ValidationError
 from .utils import get_user_active_subscription
-from apps.auth_api.role_utils import get_effective_role_name
 
 class SubscriptionLimitValidator:
     """Validador para límites de suscripción"""
@@ -12,7 +11,7 @@ class SubscriptionLimitValidator:
         current_tenant = tenant or getattr(user, 'tenant', None)
         
         # Super-Admin sin límites
-        if get_effective_role_name(user, tenant=current_tenant) == 'SuperAdmin':
+        if getattr(user, 'is_superuser', False):
             return True
             
         # Obtener suscripción activa
@@ -53,7 +52,7 @@ class SubscriptionLimitValidator:
         current_tenant = tenant or getattr(user, 'tenant', None)
         
         # Super-Admin sin límites
-        if get_effective_role_name(user, tenant=current_tenant) == 'SuperAdmin':
+        if getattr(user, 'is_superuser', False):
             return True
             
         subscription = get_user_active_subscription(user)
@@ -89,7 +88,7 @@ class SubscriptionLimitValidator:
         current_tenant = tenant or getattr(user, 'tenant', None)
         
         # Super-Admin sin límites
-        if get_effective_role_name(user, tenant=current_tenant) == 'SuperAdmin':
+        if getattr(user, 'is_superuser', False):
             return True
             
         subscription = get_user_active_subscription(user)

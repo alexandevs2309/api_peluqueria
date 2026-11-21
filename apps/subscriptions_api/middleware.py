@@ -41,6 +41,40 @@ PAYWALL_SAFE_READONLY_PREFIXES = [
     '/api/notifications/',
 ]
 
+# Escrituras que permiten regularizar la cuenta: no deben quedar bloqueadas por
+# el paywall (renovación, webhooks de cobro y cierre de sesión).
+PAYWALL_RECOVERY_PREFIXES = tuple(dict.fromkeys(
+    PAYWALL_SAFE_PREFIXES
+    + BILLING_ACCESS_PATHS
+    + BILLING_WEBHOOK_PATHS
+    + ['/api/auth/cookie-logout/', '/api/auth/cookie-refresh/']
+))
+
+
+def is_limited_business_write(request) -> bool:
+    """Escritura de negocio sujeta al bloqueo por suscripción limitada."""
+    if request.method not in ('POST', 'PUT', 'PATCH', 'DELETE'):
+        return False
+    return not any(request.path.startswith(prefix) for prefix in PAYWALL_RECOVERY_PREFIXES)
+
+
+def payment_required_response(status_value: str, tenant=None):
+    """Respuesta 402 homogénea para past_due y suspended."""
+    return JsonResponse({
+        'error': 'Subscription past due' if status_value == 'past_due' else 'Subscription expired',
+        'code': 'PAYMENT_REQUIRED',
+        'message': (
+            'Su cuenta tiene facturas pendientes de pago. Por favor complete el pago '
+            'para restablecer las operaciones de escritura.'
+            if status_value == 'past_due' else
+            'Su suscripción está suspendida. Por favor renueve para restablecer las operaciones de escritura.'
+        ),
+        'renewal_url': '/client/payment',
+        'subscription_status': status_value,
+        'tenant_id': getattr(tenant, 'id', None),
+    }, status=402)
+
+
 class SubscriptionValidationMiddleware(MiddlewareMixin):
     """
     Middleware para validar estado de suscripción y expiración de planes
@@ -55,7 +89,7 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 if request.path.startswith(prefix):
                     return None
 
-        for exempt_path in BILLING_WEBHOOK_PATHS:
+        for exempt_path in BILLING_WEBHOOK_PATHS + BILLING_ACCESS_PATHS:
             if request.path.startswith(exempt_path):
                 return None
 
@@ -113,6 +147,17 @@ class SubscriptionValidationMiddleware(MiddlewareMixin):
                 'code': 'TENANT_ARCHIVED',
                 'action_required': 'contact_support'
             }, status=403)
+
+        # BE-04: consumir el estado limitado antes de cualquier escritura de negocio.
+        # TenantMiddleware ya marca el flag en el grace period; aquí se fuerza también
+        # para past_due/suspended aunque el flag no haya llegado a setearse.
+        limited_status = tenant.subscription_status
+        if limited_status not in {'past_due', 'suspended'} and getattr(request, 'subscription_limited', False):
+            limited_status = getattr(request, 'subscription_status', None) or 'past_due'
+        if limited_status in {'past_due', 'suspended'} and is_limited_business_write(request):
+            request.subscription_limited = True
+            request.subscription_status = limited_status
+            return payment_required_response(limited_status, tenant)
 
         # Validar si tenant está activo
         if not tenant.is_active and tenant.subscription_status not in {'past_due'}:
@@ -211,10 +256,14 @@ class APIRateLimitMiddleware(MiddlewareMixin):
     """
 
     # Límites por plan (requests por hora). No se modifican los valores comerciales.
+    # 'pro' conserva los límites de Premium según el mapeo legacy aprobado R1.
+    BASIC_RATE_LIMITS = {'read': 10000, 'write': 500}
+    PREMIUM_RATE_LIMITS = {'read': 150000, 'write': 30000}
     RATE_LIMITS = {
-        'basic': {'read': 10000, 'write': 500},
+        'basic': BASIC_RATE_LIMITS,
         'standard': {'read': 50000, 'write': 5000},
-        'premium': {'read': 150000, 'write': 30000},
+        'premium': PREMIUM_RATE_LIMITS,
+        'pro': PREMIUM_RATE_LIMITS,
         'enterprise': None,  # Ilimitado
     }
 
@@ -281,13 +330,19 @@ class APIRateLimitMiddleware(MiddlewareMixin):
             return None
 
         subscription_plan = getattr(tenant, 'subscription_plan', None)
-        if not subscription_plan:
+        # BE-02: un tenant sin plan NO queda sin límite; cae al plan básico.
+        plan_name = str(getattr(subscription_plan, 'name', '') or '').strip().lower()
+        if plan_name == 'enterprise':
             return None
 
-        plan_name = subscription_plan.name
-        plan_limits = self.RATE_LIMITS.get(plan_name)
-        if plan_limits is None:  # enterprise
-            return None
+        plan_limits = self.RATE_LIMITS.get(plan_name, self.BASIC_RATE_LIMITS)
+        if plan_limits is None:  # defensivo: enterprise ya se resolvió arriba
+            plan_limits = self.BASIC_RATE_LIMITS
+        if plan_name not in self.RATE_LIMITS:
+            logger.warning(
+                "Unknown subscription plan %r for tenant=%s; applying basic rate limit",
+                plan_name, tenant.id,
+            )
 
         is_read = request.method in ('GET', 'HEAD', 'OPTIONS')
         if is_read:

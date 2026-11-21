@@ -4,8 +4,8 @@ from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.exceptions import ValidationError
-from django.views.decorators.csrf import csrf_exempt
-from django.utils.decorators import method_decorator
+from urllib.parse import urlsplit
+import fnmatch
 from django_ratelimit.decorators import ratelimit
 from django_ratelimit.core import is_ratelimited
 from django.conf import settings
@@ -193,6 +193,7 @@ class CookieLoginView(APIView):
         user_role = get_effective_role_api(user, tenant=tenant)
 
         response_data = {
+            'success': True,
             'user': {
                 'id': user.id,
                 'email': user.email,
@@ -261,7 +262,9 @@ class CookieLogoutView(APIView):
                 
                 # Expirar sesión activa
                 try:
-                    session = ActiveSession.objects.get(refresh_token=refresh_token)
+                    # CR-04: la sesión se guardó con hash_token(); buscar en claro
+                    # nunca la encontraba y el logout no la expiraba.
+                    session = ActiveSession.objects.get(refresh_token=hash_token(refresh_token))
                     session.expire_session()
                     
                     # Log de logout si tenemos usuario
@@ -353,12 +356,49 @@ class CookieRefreshView(APIView):
 
 
 class LookupSubdomainView(APIView):
+    """Consulta pública de subdominio por correo de contacto.
+
+    BE-16: se elimina ``csrf_exempt`` y se exige un Origin del mismo host o de
+    ``CSRF_TRUSTED_ORIGINS``. El throttle de login sigue limitando los intentos.
+    """
     permission_classes = [AllowAny]
     throttle_classes = [CookieLoginThrottle]
 
-    @method_decorator(csrf_exempt)
-    def dispatch(self, *args, **kwargs):
-        return super().dispatch(*args, **kwargs)
+    @staticmethod
+    def _origin_is_allowed(request) -> bool:
+        origin = (request.META.get('HTTP_ORIGIN') or '').strip()
+        if not origin:
+            return False
+        parsed = urlsplit(origin)
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        if request.is_secure() and parsed.scheme != 'https':
+            return False
+        hostname = (parsed.hostname or '').lower()
+        if not hostname:
+            return False
+
+        own_host = (request.get_host() or '').split(':', 1)[0].lower()
+        allowed_hosts = {own_host}
+        wildcard_hosts = set()
+        for trusted in getattr(settings, 'CSRF_TRUSTED_ORIGINS', ()) or ():
+            trusted_parsed = urlsplit(trusted)
+            trusted_host = (trusted_parsed.hostname or '').lower()
+            if not trusted_host:
+                continue
+            if trusted_host.startswith('*.'):
+                wildcard_hosts.add(trusted_host)
+            else:
+                allowed_hosts.add(trusted_host)
+
+        return hostname in allowed_hosts or any(
+            fnmatch.fnmatch(hostname, pattern) for pattern in wildcard_hosts
+        )
+
+    def dispatch(self, request, *args, **kwargs):
+        if not self._origin_is_allowed(request):
+            return Response({'detail': 'Origen no autorizado.'}, status=403)
+        return super().dispatch(request, *args, **kwargs)
 
     def post(self, request):
         from apps.tenants_api.models import Tenant

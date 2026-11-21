@@ -8,6 +8,12 @@ import time
 from celery import current_app
 from datetime import datetime, timedelta
 
+
+def _safe_error(exc):
+    """Devuelve solo el tipo de error, nunca mensajes ni trazas internas."""
+    return type(exc).__name__
+
+
 def health_check(request):
     """
     Health endpoint completo para monitoreo
@@ -18,28 +24,29 @@ def health_check(request):
     status = "healthy"
     checks = {}
     
-    # 1. Database Check
+    # 1. Database Check (BE-14: db_start debe existir ANTES de medir)
+    db_start = time.time()
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 1")
             cursor.fetchone()
         checks["database"] = {"status": "ok", "response_time_ms": round((time.time() - db_start) * 1000, 2)}
     except Exception as e:
-        checks["database"] = {"status": "error", "error": str(e)}
+        checks["database"] = {"status": "error", "error": _safe_error(e)}
         status = "unhealthy"
     
-    # 2. Redis Check
-    db_start = time.time()
+    # 2. Redis/Cache Check
+    cache_start = time.time()
     try:
         cache.set("health_check", "ok", 30)
         result = cache.get("health_check")
         if result == "ok":
-            checks["redis"] = {"status": "ok", "response_time_ms": round((time.time() - db_start) * 1000, 2)}
+            checks["redis"] = {"status": "ok", "response_time_ms": round((time.time() - cache_start) * 1000, 2)}
         else:
             checks["redis"] = {"status": "error", "error": "Cache test failed"}
             status = "unhealthy"
     except Exception as e:
-        checks["redis"] = {"status": "error", "error": str(e)}
+        checks["redis"] = {"status": "error", "error": _safe_error(e)}
         status = "unhealthy"
     
     # 3. Celery Check
@@ -61,7 +68,7 @@ def health_check(request):
             if status == "healthy":
                 status = "degraded"
     except Exception as e:
-        checks["celery"] = {"status": "error", "error": str(e)}
+        checks["celery"] = {"status": "error", "error": _safe_error(e)}
         status = "unhealthy"
     
     # 4. Disk Space Check
@@ -82,7 +89,7 @@ def health_check(request):
         else:
             checks["disk"] = {"status": "ok", "usage_percent": round(usage_percent, 1), "free_gb": round(free_gb, 1)}
     except Exception as e:
-        checks["disk"] = {"status": "error", "error": str(e)}
+        checks["disk"] = {"status": "error", "error": _safe_error(e)}
     
     response_data = {
         "status": status,
