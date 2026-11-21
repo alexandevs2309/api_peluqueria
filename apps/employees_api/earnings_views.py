@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.core.exceptions import ValidationError
 from .earnings_models import PayrollPeriod, PayrollDeduction, PayrollConfiguration
 from .earnings_serializers import PayrollPeriodSerializer, PayrollDeductionSerializer, PayrollConfigurationSerializer
-from django.db import transaction
+from django.db import transaction, IntegrityError
 from django.db.models import Q, Count, Sum, F
 from decimal import Decimal
 from apps.core.tenant_permissions import TenantPermissionByAction
@@ -16,6 +16,18 @@ from datetime import date, timedelta
 from calendar import monthrange
 
 logger = logging.getLogger(__name__)
+
+
+def _money_str(value):
+    """Serializa importes monetarios como ``str(Decimal)`` (BE-13).
+
+    ``float()`` pierde precisión en importes con dos decimales y en valores
+    grandes; las respuestas de nómina deben conservar el Decimal exacto.
+    """
+    if isinstance(value, Decimal):
+        return str(value)
+    return str(Decimal(str(value if value is not None else 0)))
+
 
 class PayrollViewSet(viewsets.ViewSet):
     """ViewSet para gestión de nómina"""
@@ -563,8 +575,8 @@ class PayrollViewSet(viewsets.ViewSet):
                 'employee_id': r.employee_id,
                 'employee_name': r.employee.user.full_name or r.employee.user.email,
                 'year': r.year,
-                'ordinary_salary_annual': float(r.ordinary_salary_annual),
-                'amount': float(r.amount),
+                'ordinary_salary_annual': _money_str(r.ordinary_salary_annual),
+                'amount': _money_str(r.amount),
                 'is_tax_exempt': r.is_tax_exempt,
                 'status': r.status,
                 'paid_at': r.paid_at.isoformat() if r.paid_at else None,
@@ -578,15 +590,22 @@ class PayrollViewSet(viewsets.ViewSet):
         """Marca una regalía como pagada."""
         self._require_admin_role(request)
         tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
-        from apps.employees_api.earnings_models import RegaliaPascual
+        from apps.employees_api.earnings_models import RegaliaPascual, AlreadyPaidError
         try:
             regalia = RegaliaPascual.objects.get(id=regalia_id, tenant=tenant)
         except RegaliaPascual.DoesNotExist:
             return Response({'error': 'Regalía no encontrada'}, status=404)
-        if regalia.status == 'paid':
-            return Response({'error': 'Ya fue pagada'}, status=400)
-        regalia.mark_as_paid(request.user, request.data.get('reference'))
-        return Response({'message': 'Regalía pagada', 'amount': float(regalia.amount)})
+        try:
+            regalia.mark_as_paid(
+                request.user,
+                request.data.get('reference'),
+                idempotency_key=request.data.get('idempotency_key'),
+            )
+        except AlreadyPaidError:
+            return Response({'error': 'Ya fue pagada'}, status=409)
+        except IntegrityError:
+            return Response({'error': 'Clave de idempotencia ya utilizada'}, status=409)
+        return Response({'message': 'Regalía pagada', 'amount': str(regalia.amount)})
 
     @action(detail=False, methods=['post'], url_path='client/payroll/generate-vacations')
     def generate_vacations(self, request):
@@ -627,7 +646,7 @@ class PayrollViewSet(viewsets.ViewSet):
                 'days_entitled': v.days_entitled,
                 'days_taken': v.days_taken,
                 'days_remaining': v.days_entitled - v.days_taken,
-                'paid_amount': float(v.paid_amount),
+                'paid_amount': _money_str(v.paid_amount),
                 'status': v.status,
                 'start_date': v.start_date.isoformat() if v.start_date else None,
                 'end_date': v.end_date.isoformat() if v.end_date else None,
@@ -668,7 +687,7 @@ class PayrollViewSet(viewsets.ViewSet):
         if vac.status == 'compensated':
             return Response({'error': 'Ya fue compensada'}, status=400)
         vac.compensate(request.user, request.data.get('termination_type'), None)
-        return Response({'message': 'Vacación compensada', 'paid_amount': float(vac.paid_amount)})
+        return Response({'message': 'Vacación compensada', 'paid_amount': _money_str(vac.paid_amount)})
 
     @action(detail=False, methods=['post'], url_path='client/payroll/generate-liquidacion')
     def generate_liquidacion(self, request):
@@ -707,12 +726,12 @@ class PayrollViewSet(viewsets.ViewSet):
         )
         return Response({
             'id': liq.id,
-            'total': float(liq.total),
-            'preaviso': float(liq.preaviso_amount),
-            'cesantia': float(liq.cesantia_amount),
-            'vacaciones': float(liq.vacation_amount),
-            'regalia': float(liq.regalia_proporcional),
-            'participacion': float(liq.participacion_beneficios),
+            'total': _money_str(liq.total),
+            'preaviso': _money_str(liq.preaviso_amount),
+            'cesantia': _money_str(liq.cesantia_amount),
+            'vacaciones': _money_str(liq.vacation_amount),
+            'regalia': _money_str(liq.regalia_proporcional),
+            'participacion': _money_str(liq.participacion_beneficios),
         })
 
     @action(detail=False, methods=['get'], url_path='client/payroll/liquidaciones')
@@ -729,7 +748,7 @@ class PayrollViewSet(viewsets.ViewSet):
                 'employee_name': l.employee.user.full_name or l.employee.user.email,
                 'termination_date': l.termination_date.isoformat(),
                 'termination_type': l.termination_type,
-                'total': float(l.total),
+                'total': _money_str(l.total),
                 'status': l.status,
                 'paid_at': l.paid_at.isoformat() if l.paid_at else None,
             }
@@ -741,15 +760,22 @@ class PayrollViewSet(viewsets.ViewSet):
     def pay_liquidacion(self, request, liq_id=None):
         self._require_admin_role(request)
         tenant = getattr(request, 'tenant', getattr(request.user, 'tenant', None))
-        from apps.employees_api.earnings_models import Liquidacion
+        from apps.employees_api.earnings_models import Liquidacion, AlreadyPaidError
         try:
             liq = Liquidacion.objects.get(id=liq_id, tenant=tenant)
         except Liquidacion.DoesNotExist:
             return Response({'error': 'Liquidación no encontrada'}, status=404)
-        if liq.status == 'paid':
-            return Response({'error': 'Ya fue pagada'}, status=400)
-        liq.mark_as_paid(request.user, request.data.get('reference'))
-        return Response({'message': 'Liquidación pagada', 'total': float(liq.total)})
+        try:
+            liq.mark_as_paid(
+                request.user,
+                request.data.get('reference'),
+                idempotency_key=request.data.get('idempotency_key'),
+            )
+        except AlreadyPaidError:
+            return Response({'error': 'Ya fue pagada'}, status=409)
+        except IntegrityError:
+            return Response({'error': 'Clave de idempotencia ya utilizada'}, status=409)
+        return Response({'message': 'Liquidación pagada', 'total': str(liq.total)})
     @action(detail=False, methods=['get'], url_path='client/payroll/my-earnings')
     def my_earnings(self, request):
         """Mis períodos de nómina (filtrado por empleado logueado)"""

@@ -123,8 +123,15 @@ class TestPayrollDoubleApprove:
         period.refresh_from_db()
         assert period.status == 'approved'
 
+    @pytest.mark.django_db(transaction=True)
     def test_approve_period_concurrent_threads_notification_once(self, setup_data):
-        """Concurrencia real: varias aprobaciones simultáneas producen UNA notificación."""
+        """Concurrencia real: varias aprobaciones simultáneas producen UNA notificación.
+
+        Requiere transacción NO envuelta: los hilos usan conexiones propias y
+        necesitan ver los datos confirmados. Con el marker de clase (sin
+        transaction=True) PostgreSQL devolvía 404 en todos los hilos y el test
+        fallaba aunque la implementación fuera correcta.
+        """
         from django.db import connection
         if connection.vendor == 'sqlite':
             pytest.skip('SQLite no soporta select_for_update concurrente real')

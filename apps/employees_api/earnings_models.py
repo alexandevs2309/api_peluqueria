@@ -1,9 +1,14 @@
-from django.db import models
+from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
 from django.core.validators import MinValueValidator, MaxValueValidator
 from datetime import datetime, timedelta
 from decimal import Decimal
+
+
+class AlreadyPaidError(Exception):
+    """Se intenta pagar dos veces una obligación ya liquidada (BE-01)."""
+
 
 # ============================================
 # TABLAS FISCALES VERSIONADAS (ISR)
@@ -890,6 +895,10 @@ class RegaliaPascual(models.Model):
         related_name='regalias_paid',
     )
     payment_reference = models.CharField(max_length=100, null=True, blank=True)
+    # BE-01: clave de idempotencia persistida. Un reintento con la misma clave
+    # devuelve el resultado original; una clave distinta sobre la misma
+    # obligación ya pagada se rechaza con 409.
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -901,6 +910,13 @@ class RegaliaPascual(models.Model):
     class Meta:
         unique_together = ('employee', 'year')
         ordering = ['-year']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_regalia_tenant_idempotency_key',
+            ),
+        ]
 
     def __str__(self):
         return f"Regalía {self.year} - {self.employee} - ${self.amount}"
@@ -959,13 +975,39 @@ class RegaliaPascual(models.Model):
         )
         return obj
 
-    def mark_as_paid(self, paid_by, reference=None):
-        from django.utils import timezone
-        self.status = 'paid'
-        self.paid_at = timezone.now()
-        self.paid_by = paid_by
-        self.payment_reference = reference
-        self.save(update_fields=['status', 'paid_at', 'paid_by', 'payment_reference', 'updated_at'])
+    def mark_as_paid(self, paid_by, reference=None, idempotency_key=None):
+        """Transición `calculated` → `paid` condicional, atómica e idempotente.
+
+        BE-01: dos peticiones que leyeron `calculated` no pueden pagar dos
+        veces. El `UPDATE ... WHERE status='calculated'` garantiza que sólo
+        una gane incluso en PostgreSQL con dos transacciones reales.
+        """
+        key = (idempotency_key or '').strip() or None
+
+        # Replay sobre la propia instancia: misma clave y ya pagada.
+        if key and self.status == 'paid' and self.idempotency_key == key:
+            return self
+
+        with transaction.atomic():
+            locked = RegaliaPascual.objects.select_for_update().get(pk=self.pk)
+            if locked.status == 'paid':
+                if key and locked.idempotency_key == key:
+                    self.refresh_from_db()
+                    return self
+                raise AlreadyPaidError('Esta regalía ya fue pagada')
+
+            updated = RegaliaPascual.objects.filter(pk=locked.pk, status='calculated').update(
+                status='paid',
+                paid_at=timezone.now(),
+                paid_by=paid_by,
+                payment_reference=reference,
+                idempotency_key=key,
+            )
+            if updated == 0:
+                raise AlreadyPaidError('Esta regalía ya fue pagada')
+
+        self.refresh_from_db()
+        return self
 
 
 class Liquidacion(models.Model):
@@ -1018,11 +1060,20 @@ class Liquidacion(models.Model):
         related_name='liquidaciones_paid',
     )
     payment_reference = models.CharField(max_length=100, null=True, blank=True)
+    # BE-01: idempotencia persistida por tenant (ver RegaliaPascual).
+    idempotency_key = models.CharField(max_length=64, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ['-termination_date']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_liquidacion_tenant_idempotency_key',
+            ),
+        ]
 
     def __str__(self):
         return f"Liquidación {self.employee} - {self.termination_type} - ${self.total}"
@@ -1176,13 +1227,33 @@ class Liquidacion(models.Model):
         )
         return obj
 
-    def mark_as_paid(self, paid_by, reference=None):
-        from django.utils import timezone
-        self.status = 'paid'
-        self.paid_at = timezone.now()
-        self.paid_by = paid_by
-        self.payment_reference = reference
-        self.save(update_fields=['status', 'paid_at', 'paid_by', 'payment_reference', 'updated_at'])
+    def mark_as_paid(self, paid_by, reference=None, idempotency_key=None):
+        """Transición `calculated` → `paid` condicional, atómica e idempotente (BE-01)."""
+        key = (idempotency_key or '').strip() or None
+
+        if key and self.status == 'paid' and self.idempotency_key == key:
+            return self
+
+        with transaction.atomic():
+            locked = Liquidacion.objects.select_for_update().get(pk=self.pk)
+            if locked.status == 'paid':
+                if key and locked.idempotency_key == key:
+                    self.refresh_from_db()
+                    return self
+                raise AlreadyPaidError('Esta liquidación ya fue pagada')
+
+            updated = Liquidacion.objects.filter(pk=locked.pk, status='calculated').update(
+                status='paid',
+                paid_at=timezone.now(),
+                paid_by=paid_by,
+                payment_reference=reference,
+                idempotency_key=key,
+            )
+            if updated == 0:
+                raise AlreadyPaidError('Esta liquidación ya fue pagada')
+
+        self.refresh_from_db()
+        return self
 
 
 class Vacation(models.Model):
