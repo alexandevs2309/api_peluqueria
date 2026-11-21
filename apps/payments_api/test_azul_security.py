@@ -93,6 +93,36 @@ class TestAzulWebhookIntegrity(TestCase):
             )
         assert response.status_code == 401
 
+    def test_webhook_rejected_when_credentials_are_not_configured(self):
+        """Fase 4: sin AUTH1/AUTH2 configurados el webhook debe fallar cerrado.
+
+        Con las credenciales esperadas vacías, un atacante podía enviar las
+        cabeceras también vacías y superar la primera capa.
+        """
+        from types import SimpleNamespace
+
+        unconfigured = SimpleNamespace(
+            azul_auth1='',
+            azul_auth2='',
+            azul_merchant_id='MERCHANT',
+            azul_store_id='STORE',
+            azul_sandbox=True,
+        )
+        with patch(
+            'apps.settings_api.integration_service.IntegrationService.get_system_settings',
+            return_value=unconfigured,
+        ), patch(
+            'apps.payments_api.services.AzulService.verify_transaction'
+        ) as verify:
+            response = self._post_webhook(
+                {'responseCode': '00', 'txnNumber': 'TXN-VALID', 'orderNumber': 'ORDER-VALID'},
+                auth1='', auth2='',
+            )
+        assert response.status_code == 401
+        verify.assert_not_called()
+        self.payment.refresh_from_db()
+        assert self.payment.status == 'pending'
+
 
 @pytest.mark.django_db
 class TestAzulCardAmountType(TestCase):

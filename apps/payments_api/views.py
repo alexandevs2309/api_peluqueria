@@ -408,11 +408,17 @@ def azul_webhook(request):
     auth1 = request.META.get('HTTP_AUTH1', '')
     auth2 = request.META.get('HTTP_AUTH2', '')
     system = IntegrationService.get_system_settings()
-    if not (
-        hmac.compare_digest(auth1, system.azul_auth1 or '')
-        and hmac.compare_digest(auth2, system.azul_auth2 or '')
+    expected_auth1 = system.azul_auth1 or ''
+    expected_auth2 = system.azul_auth2 or ''
+    # Fail-closed: sin credenciales configuradas no se evalúan cabeceras vacías
+    # como válidas. El webhook permanece deshabilitado hasta que se configuren.
+    if (
+        not expected_auth1
+        or not expected_auth2
+        or not hmac.compare_digest(auth1, expected_auth1)
+        or not hmac.compare_digest(auth2, expected_auth2)
     ):
-        logger.warning('Azul webhook: credenciales inválidas desde %s',
+        logger.warning('Azul webhook: credenciales inválidas o no configuradas desde %s',
                        request.META.get('REMOTE_ADDR', 'unknown'))
         return JsonResponse({'error': 'Unauthorized'}, status=401)
 
