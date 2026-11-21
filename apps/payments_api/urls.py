@@ -4,6 +4,7 @@ from .views import (
     PaymentViewSet,
     StripeWebhookView,
     azul_checkout,
+    azul_card_checkout,
     azul_verify,
     azul_webhook,
     payment_availability,
@@ -20,6 +21,7 @@ urlpatterns = [
     path('stripe/webhook/', StripeWebhookView.as_view(), name='stripe-webhook'),
     # Azul — payment processor primario para RD
     path('azul/checkout/', azul_checkout, name='azul-checkout'),
+    path('azul/card/', azul_card_checkout, name='azul-card-checkout'),
     path('azul/verify/', azul_verify, name='azul-verify'),
     path('azul/webhook/', azul_webhook, name='azul-webhook'),
     # Disponibilidad real de metodos de pago (para el checkout)

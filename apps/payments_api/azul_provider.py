@@ -332,6 +332,26 @@ class AzulProvider(PaymentProvider):
                 raw_response=data,
             )
 
+        # CR-11: los mismos códigos que el webhook ya interpreta como terminales
+        # deben reflejarse en el cobro con tarjeta. Antes todo código distinto de
+        # '00' se convertía en 'failed', haciendo inalcanzables las ramas
+        # `cancelled`/`expired` de azul_card_checkout.
+        if response_code in ('99', 'TF'):
+            terminal_status = 'cancelled' if response_code == '99' else 'expired'
+            logger.warning(
+                "Azul charge %s code=%s txn=%s", terminal_status, response_code, txn_number
+            )
+            return PaymentResult(
+                success=False,
+                transaction_id=txn_number,
+                authorization_code='',
+                status=terminal_status,
+                amount=amount,
+                currency=currency,
+                error_message=ERROR_MAP.get(response_code, iso_response or terminal_status),
+                raw_response=data,
+            )
+
         logger.warning("Azul charge denied code=%s iso=%s txn=%s", response_code, iso_response, txn_number)
         return PaymentResult(
             success=False,

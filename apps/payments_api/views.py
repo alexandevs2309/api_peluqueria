@@ -1,5 +1,6 @@
 import json
-from decimal import Decimal
+import hmac
+from decimal import Decimal, InvalidOperation
 
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
@@ -9,15 +10,17 @@ from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.http import HttpResponse, JsonResponse, FileResponse, Http404
 from django.conf import settings
-from django.db import transaction
+from django.db import transaction, IntegrityError
+from django.utils import timezone
 import mimetypes
 import logging
 
 import stripe
 
 from apps.core.tenant_permissions import TenantPermissionByAction
-from .models import Payment, PaymentProvider, PaymentProof
+from .models import Payment, PaymentProvider, PaymentProof, AzulTransaction
 from .services import StripeService, AzulService
+from .azul_provider import AzulProvider
 from .serializers import PaymentSerializer
 
 logger = logging.getLogger(__name__)
@@ -195,6 +198,157 @@ def azul_checkout(request):
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
+def azul_card_checkout(request):
+    """Cobro con tarjeta usando Azul Data Vault (CR-11).
+
+    El PAN/CVV se envían sólo al tokenizador del proveedor, nunca se persisten
+    ni se registran. El cobro se realiza con el token y el `Payment` queda en
+    `pending` hasta que Azul confirma; los rechazos, cancelaciones y expiraciones
+    se reflejan en el estado. La clave de idempotencia evita doble cargo.
+    """
+    user = request.user
+    tenant = getattr(request, 'tenant', None) or getattr(user, 'tenant', None)
+    if not tenant:
+        return Response({'error': 'Tenant no encontrado'}, status=status.HTTP_400_BAD_REQUEST)
+
+    data = request.data
+    order_number = str(data.get('order_number') or '').strip()
+    currency = str(data.get('currency') or 'DOP').upper()
+    card_number = ''.join(ch for ch in str(data.get('card_number') or '') if ch.isdigit())
+    card_expiry = str(data.get('card_expiry') or '').strip()
+    card_cvv = ''.join(ch for ch in str(data.get('card_cvv') or '') if ch.isdigit())
+    card_holder = str(data.get('card_holder') or '').strip()
+    idempotency_key = (
+        request.META.get('HTTP_IDEMPOTENCY_KEY') or data.get('idempotency_key') or ''
+    ).strip()[:128] or None
+
+    if not idempotency_key:
+        return Response({'error': 'idempotency_key es requerida'}, status=status.HTTP_400_BAD_REQUEST)
+    if not order_number:
+        order_number = f'CARD-{tenant.id}-{user.id}-{int(__import__("time").time() * 1000)}'
+
+    try:
+        amount = Decimal(str(data.get('amount'))).quantize(Decimal('0.01'))
+    except (InvalidOperation, TypeError, ValueError):
+        return Response({'error': 'amount inválido'}, status=status.HTTP_400_BAD_REQUEST)
+    if amount <= 0:
+        return Response({'error': 'amount debe ser mayor a 0'}, status=status.HTTP_400_BAD_REQUEST)
+    if currency not in {'DOP', 'USD', 'EUR'}:
+        return Response({'error': 'currency no soportada'}, status=status.HTTP_400_BAD_REQUEST)
+    if not (13 <= len(card_number) <= 19) or not (3 <= len(card_cvv) <= 4) or not card_holder:
+        return Response({'error': 'Datos de tarjeta inválidos'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Expiry MM/YY, no vencida (zona horaria RD).
+    try:
+        exp_month, exp_year = (int(p) for p in card_expiry.split('/'))
+        if not (1 <= exp_month <= 12):
+            raise ValueError
+        exp_year += 2000 if exp_year < 100 else 0
+    except (ValueError, TypeError):
+        return Response({'error': 'Vencimiento inválido'}, status=status.HTTP_400_BAD_REQUEST)
+    from django.utils import timezone as dj_timezone
+    now = dj_timezone.now()
+    if exp_year < now.year or (exp_year == now.year and exp_month < now.month):
+        return Response({'error': 'La tarjeta está vencida'}, status=status.HTTP_402_PAYMENT_REQUIRED)
+
+    provider = AzulProvider(tenant=tenant)
+    if not provider.is_configured:
+        return Response(
+            {'error': 'Azul no está configurado'}, status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+
+    with transaction.atomic():
+        try:
+            with transaction.atomic():
+                attempt = AzulTransaction.objects.create(
+                    tenant=tenant, user=user, source='card', order_number=order_number,
+                    idempotency_key=idempotency_key, amount=amount, currency=currency,
+                    status='pending', response_code='',
+                )
+        except IntegrityError:
+            existing = AzulTransaction.objects.get(
+                tenant=tenant, idempotency_key=idempotency_key
+            )
+            return Response({
+                'success': existing.status == 'completed',
+                'status': existing.status,
+                'order_number': existing.order_number,
+                'payment_id': str(existing.payment_id) if existing.payment_id else None,
+                'idempotent': True,
+            })
+
+        provider_obj, _ = PaymentProvider.objects.get_or_create(name='azul')
+        payment = Payment.objects.create(
+            tenant=tenant, user=user, provider=provider_obj, amount=amount,
+            currency=currency, status='pending',
+            metadata={
+                'azul_order_number': order_number,
+                'source': 'azul_card',
+                'plan_id': str(data.get('plan_id') or ''),
+                'months': data.get('months') or 1,
+            },
+        )
+        attempt.payment = payment
+        attempt.save(update_fields=['payment'])
+
+    metadata = {'tenant_id': str(tenant.id), 'user_id': str(user.id),
+                'plan_id': str(data.get('plan_id') or '')}
+
+    vault = provider.create_vault_token(
+        card_number=card_number,
+        card_expiry=card_expiry,
+        customer_email=str(data.get('customer_email') or user.email),
+        metadata=metadata,
+    )
+    if not vault.get('success'):
+        attempt.status = 'failed'
+        attempt.last_error = 'tokenization_failed'
+        attempt.save(update_fields=['status', 'last_error', 'updated_at'])
+        Payment.objects.filter(pk=payment.pk, status='pending').update(status='failed')
+        return Response(
+            {'success': False, 'status': 'failed', 'error': vault.get('error_message')},
+            status=status.HTTP_402_PAYMENT_REQUIRED,
+        )
+
+    charge = provider.charge_with_vault(
+        token_id=vault['token_id'], amount=amount, currency=currency,
+        order_number=order_number, metadata=metadata,
+    )
+
+    if charge.success and charge.status == 'completed':
+        payment_status, event_status, http_status = 'completed', 'completed', status.HTTP_200_OK
+    elif charge.status in ('failed', 'declined'):
+        payment_status, event_status, http_status = 'failed', 'failed', status.HTTP_402_PAYMENT_REQUIRED
+    elif charge.status in ('cancelled', 'expired'):
+        # CR-11: conservar el estado terminal exacto. Antes 'expired' se
+        # aplanaba a 'cancelled' en Payment y en la respuesta al frontend.
+        payment_status, event_status, http_status = charge.status, charge.status, status.HTTP_402_PAYMENT_REQUIRED
+    else:
+        payment_status, event_status, http_status = 'pending', 'pending', status.HTTP_202_ACCEPTED
+
+    Payment.objects.filter(pk=payment.pk, status='pending').update(
+        status=payment_status,
+        completed_at=dj_timezone.now() if payment_status == 'completed' else None,
+    )
+    attempt.status = event_status
+    attempt.txn_number = charge.transaction_id or ''
+    attempt.response_code = str((charge.raw_response or {}).get('responseCode', '') or '')
+    attempt.save(update_fields=['status', 'txn_number', 'response_code', 'updated_at'])
+    payment.refresh_from_db()
+
+    return Response({
+        'success': payment_status == 'completed',
+        'status': payment_status,
+        'order_number': order_number,
+        'payment_id': str(payment.id),
+        'txn_number': charge.transaction_id or '',
+        'amount': str(payment.amount),
+        'currency': payment.currency,
+    }, status=http_status)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def azul_verify(request):
     """Verificar estado de una transacción Azul."""
     order_number = request.data.get('order_number', '')
@@ -241,18 +395,23 @@ def payment_availability(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def azul_webhook(request):
-    """Webhook público para notificaciones de Azul.
+    """Webhook público de Azul (CR-10).
 
-    Azul envía POST con datos de la transacción cuando cambia el estado.
+    Seguridad en capas, sin inventar un HMAC propio:
+      1. AUTH1/AUTH2 del protocolo Azul comparados en tiempo constante.
+      2. La orden, el importe y el tenant se validan contra el Payment LOCAL.
+      3. Confirmación server-to-server con `/verify` de Azul.
+      4. Evento persistido con `txn_number` único por tenant (anti-replay).
     """
     logger.info('Azul webhook received from=%s', request.META.get('REMOTE_ADDR', 'unknown'))
 
-    # N-1: Verificar credenciales del webhook
     auth1 = request.META.get('HTTP_AUTH1', '')
     auth2 = request.META.get('HTTP_AUTH2', '')
     system = IntegrationService.get_system_settings()
-
-    if auth1 != system.azul_auth1 or auth2 != system.azul_auth2:
+    if not (
+        hmac.compare_digest(auth1, system.azul_auth1 or '')
+        and hmac.compare_digest(auth2, system.azul_auth2 or '')
+    ):
         logger.warning('Azul webhook: credenciales inválidas desde %s',
                        request.META.get('REMOTE_ADDR', 'unknown'))
         return JsonResponse({'error': 'Unauthorized'}, status=401)
@@ -260,29 +419,82 @@ def azul_webhook(request):
     try:
         data = json.loads(request.body) if request.body else {}
     except (json.JSONDecodeError, ValueError):
-        data = {}
+        return JsonResponse({'error': 'Invalid JSON'}, status=400)
 
-    response_code = data.get('responseCode', '')
-    txn_number = data.get('txnNumber', '') or data.get('transactionId', '')
-    order_number = data.get('orderNumber', '')
+    response_code = str(data.get('responseCode', ''))
+    txn_number = str(data.get('txnNumber', '') or data.get('transactionId', ''))
+    order_number = str(data.get('orderNumber', ''))
+    if not txn_number or not order_number:
+        return JsonResponse({'error': 'txnNumber y orderNumber requeridos'}, status=400)
 
     logger.info('Azul webhook txn=%s code=%s order=%s', txn_number, response_code, order_number)
 
-    if response_code == '00' and txn_number:
-        try:
-            from apps.payments_api.models import Payment
-            payment = Payment.objects.filter(provider_payment_id=txn_number).first()
-            if payment:
-                payment.status = 'completed'
-                payment.completed_at = __import__('django.utils.timezone', fromlist=['now']).now()
-                payment.save(update_fields=['status', 'completed_at'])
-                logger.info('Azul webhook: payment %s completed', payment.id)
-            else:
-                logger.info('Azul webhook: no local Payment found for txn %s', txn_number)
-        except Exception as e:
-            logger.exception('Azul webhook processing error: %s', e)
+    # El Payment local es la autoridad de orden, importe y tenant.
+    payment = Payment.objects.filter(
+        metadata__azul_order_number=order_number
+    ).select_related('tenant').first()
+    if payment is None:
+        by_txn = Payment.objects.filter(provider_payment_id=txn_number).select_related('tenant').first()
+        if by_txn and str(by_txn.metadata.get('azul_order_number', '')) == order_number:
+            payment = by_txn
+    if payment is None or payment.tenant_id is None:
+        logger.warning('Azul webhook: orden/txn desconocidos order=%s txn=%s', order_number, txn_number)
+        return JsonResponse({'received': False, 'error': 'unknown_order'}, status=404)
 
-    return JsonResponse({'received': True})
+    # Importe: Azul reporta centavos; se tolera también formato de unidades.
+    raw_amount = data.get('amount')
+    if raw_amount not in (None, ''):
+        try:
+            reported = Decimal(str(raw_amount))
+        except (InvalidOperation, TypeError, ValueError):
+            return JsonResponse({'received': False, 'error': 'invalid_amount'}, status=400)
+        if reported not in (payment.amount, payment.amount * 100):
+            logger.warning('Azul webhook: importe discrepante payment=%s reported=%s', payment.id, reported)
+            return JsonResponse({'received': False, 'error': 'amount_mismatch'}, status=400)
+
+    # Confirmación real con el proveedor (mecanismo existente en el proyecto).
+    verification = AzulService().verify_transaction(order_number)
+    verified_txn = str(verification.get('txn_number', ''))
+    if not verification.get('success') or (verified_txn and verified_txn != txn_number):
+        logger.warning('Azul webhook: verificación fallida order=%s code=%s',
+                       order_number, verification.get('response_code'))
+        return JsonResponse({'received': False, 'error': 'verification_failed'}, status=400)
+
+    if response_code == '00':
+        new_status, event_status = 'completed', 'completed'
+    elif response_code in {'04', '05', '14', '41', '43', '51', '54', '57', '61', '62'}:
+        new_status, event_status = 'failed', 'failed'
+    elif response_code in {'99', 'TF'}:
+        new_status, event_status = 'cancelled', 'expired'
+    else:
+        new_status, event_status = 'pending', 'pending'
+
+    with transaction.atomic():
+        try:
+            with transaction.atomic():
+                AzulTransaction.objects.create(
+                    tenant=payment.tenant,
+                    user=payment.user,
+                    payment=payment,
+                    source='webhook',
+                    order_number=order_number,
+                    txn_number=txn_number,
+                    amount=payment.amount,
+                    currency=payment.currency,
+                    status=event_status,
+                    response_code=response_code,
+                )
+        except IntegrityError:
+            logger.info('Azul webhook duplicado (replay) txn=%s', txn_number)
+            return JsonResponse({'received': True, 'duplicate': True})
+
+        if new_status in ('completed', 'failed', 'cancelled'):
+            Payment.objects.filter(pk=payment.pk, status__in=['pending', 'processing']).update(
+                status=new_status,
+                completed_at=timezone.now() if new_status == 'completed' else None,
+            )
+
+    return JsonResponse({'received': True, 'status': new_status})
 
 
 # ---------------------------------------------------------------------------

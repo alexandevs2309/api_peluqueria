@@ -622,7 +622,7 @@ class AzulService:
                 'txn_number': txn_number,
                 'auth_code': auth_code,
                 'response_code': response_code,
-                'amount': float(amount),
+                'amount': amount,
                 'currency': currency,
                 'raw': data,
             }

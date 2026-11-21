@@ -3,6 +3,7 @@ from django.conf import settings
 from django.core import signing
 from django.db.models import Q
 from apps.subscriptions_api.models import UserSubscription
+from apps.core.models import TenantModel
 from apps.payments_api.storage import PaymentProofStorage
 import uuid
 
@@ -123,6 +124,7 @@ class Payment(models.Model):
         ('completed', 'Completado'),
         ('failed', 'Fallido'),
         ('cancelled', 'Cancelado'),
+        ('expired', 'Expirado'),
         ('refunded', 'Reembolsado'),
     ]
     
@@ -159,6 +161,64 @@ class Payment(models.Model):
     
     def __str__(self):
         return f"Payment {self.id} - {self.user.email} - {self.status}"
+
+
+class AzulTransaction(TenantModel):
+    """Trazabilidad e idempotencia de operaciones Azul (CR-10 / CR-11).
+
+    - `checkout` / `card`: intento de cobro local con clave de idempotencia.
+    - `webhook`: evento recibido; `txn_number` única por tenant evita replay.
+    """
+
+    SOURCE_CHOICES = [
+        ('checkout', 'Checkout Azul'),
+        ('card', 'Tarjeta con Data Vault'),
+        ('webhook', 'Webhook Azul'),
+    ]
+    STATUS_CHOICES = [
+        ('pending', 'Pendiente'),
+        ('completed', 'Completado'),
+        ('failed', 'Fallido'),
+        ('cancelled', 'Cancelado'),
+        ('expired', 'Expirado'),
+    ]
+
+    tenant = models.ForeignKey(
+        'tenants_api.Tenant', on_delete=models.CASCADE, related_name='azul_transactions'
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True
+    )
+    payment = models.ForeignKey(
+        'Payment', on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='azul_transactions',
+    )
+    source = models.CharField(max_length=16, choices=SOURCE_CHOICES, default='webhook')
+    order_number = models.CharField(max_length=64, db_index=True)
+    txn_number = models.CharField(max_length=128, blank=True, default='')
+    idempotency_key = models.CharField(max_length=128, null=True, blank=True)
+    amount = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    currency = models.CharField(max_length=3, default='DOP')
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default='pending', db_index=True)
+    response_code = models.CharField(max_length=8, blank=True, default='')
+    last_error = models.CharField(max_length=255, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='uniq_azul_tenant_idempotency_key',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'txn_number'],
+                condition=models.Q(source='webhook') & ~models.Q(txn_number=''),
+                name='uniq_azul_webhook_txn_per_tenant',
+            ),
+        ]
 
 
 class PaymentProof(models.Model):
