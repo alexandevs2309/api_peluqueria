@@ -20,6 +20,7 @@ from .settings_policy import (
     is_mfa_globally_enabled,
 )
 from apps.tenants_api.models import Tenant
+from apps.core.tenant_rls import rls_bypass
 from apps.settings_api.utils import validate_employee_limit, maybe_auto_upgrade_employee_limit
 
 User = get_user_model()
@@ -79,13 +80,16 @@ class RegisterSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
+        # El alta ocurre antes de que exista contexto RLS: la resolución del
+        # tenant debe hacerse con bypass explícito y acotado a esta consulta.
         tenant_subdomain = validated_data.pop('tenant_subdomain', None)
         tenant = None
         if tenant_subdomain:
-            try:
-                tenant = Tenant.objects.get(subdomain=tenant_subdomain)
-            except Tenant.DoesNotExist:
-                raise serializers.ValidationError("Tenant no encontrado.")
+            with rls_bypass():
+                try:
+                    tenant = Tenant.objects.get(subdomain=tenant_subdomain)
+                except Tenant.DoesNotExist:
+                    raise serializers.ValidationError("Tenant no encontrado.")
         user = User.objects.create_user(**validated_data)
         if tenant:
             user.tenant = tenant
@@ -99,89 +103,97 @@ class LoginSerializer(serializers.Serializer):
     tenant_subdomain = serializers.CharField(required=False, allow_blank=True)  # Alias legacy
 
     def validate(self, data):
-        email = (data.get('email') or '').strip().lower()
-        password = data.get('password')
-        tenant_input = get_explicit_tenant_input(data)
+        # La resolución de credenciales ocurre ANTES de que exista un tenant
+        # autenticado. Con RLS activo, tenants_api_tenant está en fail-closed y
+        # un select_related('tenant') devolvería tenant=None aunque el usuario
+        # sí pertenezca a uno. El bypass es explícito, temporal y no depende de
+        # datos del cliente: las consultas siguen filtrando por email/subdomain.
+        with rls_bypass():
+            email = (data.get('email') or '').strip().lower()
+            password = data.get('password')
+            tenant_input = get_explicit_tenant_input(data)
 
-        if not email:
-            raise serializers.ValidationError({'email': 'El correo es requerido.'})
+            if not email:
+                raise serializers.ValidationError({'email': 'El correo es requerido.'})
 
-        # Persist normalized values for downstream consumers
-        data['email'] = email
-        if tenant_input:
-            data['tenant'] = tenant_input
-            data['tenant_subdomain'] = tenant_input
+            # Persist normalized values for downstream consumers
+            data['email'] = email
+            if tenant_input:
+                data['tenant'] = tenant_input
+                data['tenant_subdomain'] = tenant_input
 
-        # Login sin tenant — inferir si hay un solo usuario
-        if not tenant_input:
-            superadmin = User.objects.filter(
-                email__iexact=email, is_superuser=True, tenant__isnull=True
-            ).first()
-            if superadmin:
-                if not superadmin.check_password(password):
+            # Login sin tenant — inferir si hay un solo usuario
+            if not tenant_input:
+                superadmin = User.objects.filter(
+                    email__iexact=email, is_superuser=True, tenant__isnull=True
+                ).first()
+                if superadmin:
+                    if not superadmin.check_password(password):
+                        raise serializers.ValidationError("Credenciales inválidas.")
+                    if not superadmin.is_active:
+                        raise serializers.ValidationError(
+                            "Cuenta inactiva. Contacte al administrador."
+                        )
+                    data['user'] = superadmin
+                    data['tenant'] = None
+                    return data
+
+                candidates = list(
+                    User.objects.filter(email__iexact=email).select_related('tenant')
+                )
+                if len(candidates) > 1:
+                    raise serializers.ValidationError({
+                        'tenant': 'Este correo pertenece a varios negocios. Indica el subdominio para continuar.'
+                    })
+                if not candidates:
                     raise serializers.ValidationError("Credenciales inválidas.")
-                if not superadmin.is_active:
+
+                user = candidates[0]
+                tenant = user.tenant
+                if not user.check_password(password):
+                    raise serializers.ValidationError("Credenciales inválidas.")
+                if not user.is_active:
                     raise serializers.ValidationError(
                         "Cuenta inactiva. Contacte al administrador."
                     )
-                data['user'] = superadmin
-                data['tenant'] = None
+                if is_email_verification_required() and not getattr(
+                    user, 'is_email_verified', False
+                ):
+                    raise serializers.ValidationError(
+                        "Debe verificar su correo antes de iniciar sesión."
+                    )
+                data['user'] = user
+                data['tenant'] = tenant
                 return data
 
-            candidates = list(
-                User.objects.filter(email__iexact=email).select_related('tenant')
-            )
-            if len(candidates) > 1:
-                raise serializers.ValidationError({
-                    'tenant': 'Este correo pertenece a varios negocios. Indica el subdominio para continuar.'
-                })
-            if not candidates:
+            # ✅ BUSCAR TENANT EXPLÍCITO
+            try:
+                tenant = Tenant.objects.get(
+                    subdomain=tenant_input, is_active=True, deleted_at__isnull=True
+                )
+            except Tenant.DoesNotExist:
                 raise serializers.ValidationError("Credenciales inválidas.")
 
-            user = candidates[0]
-            tenant = user.tenant
+            # ✅ BUSCAR USUARIO SOLO EN ESE TENANT
+            try:
+                user = User.objects.get(email__iexact=email, tenant=tenant)
+            except User.DoesNotExist:
+                raise serializers.ValidationError("Credenciales inválidas.")
+
+            # ✅ VALIDAR PASSWORD
             if not user.check_password(password):
                 raise serializers.ValidationError("Credenciales inválidas.")
+
+            # ✅ VALIDAR USUARIO ACTIVO
             if not user.is_active:
-                raise serializers.ValidationError(
-                    "Cuenta inactiva. Contacte al administrador."
-                )
-            if is_email_verification_required() and not getattr(
-                user, 'is_email_verified', False
-            ):
-                raise serializers.ValidationError(
-                    "Debe verificar su correo antes de iniciar sesión."
-                )
+                raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
+
+            if is_email_verification_required() and not getattr(user, 'is_email_verified', False):
+                raise serializers.ValidationError("Debe verificar su correo antes de iniciar sesión.")
+
             data['user'] = user
             data['tenant'] = tenant
             return data
-
-        # ✅ BUSCAR TENANT EXPLÍCITO
-        try:
-            tenant = Tenant.objects.get(subdomain=tenant_input, is_active=True, deleted_at__isnull=True)
-        except Tenant.DoesNotExist:
-            raise serializers.ValidationError("Credenciales inválidas.")
-
-        # ✅ BUSCAR USUARIO SOLO EN ESE TENANT
-        try:
-            user = User.objects.get(email__iexact=email, tenant=tenant)
-        except User.DoesNotExist:
-            raise serializers.ValidationError("Credenciales inválidas.")
-
-        # ✅ VALIDAR PASSWORD
-        if not user.check_password(password):
-            raise serializers.ValidationError("Credenciales inválidas.")
-
-        # ✅ VALIDAR USUARIO ACTIVO
-        if not user.is_active:
-            raise serializers.ValidationError("Cuenta inactiva. Contacte al administrador.")
-
-        if is_email_verification_required() and not getattr(user, 'is_email_verified', False):
-            raise serializers.ValidationError("Debe verificar su correo antes de iniciar sesión.")
-
-        data['user'] = user
-        data['tenant'] = tenant
-        return data
 
 class PasswordChangeSerializer(serializers.Serializer):
     old_password = serializers.CharField()

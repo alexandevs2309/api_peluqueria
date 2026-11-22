@@ -318,17 +318,20 @@ class LoginView(generics.GenericAPIView):
         ip_address = get_client_ip(request)
         user_for_lockout = None
 
+        # Resolución previa al login: todavía no hay contexto RLS. El bypass es
+        # explícito y solo cubre la búsqueda de credenciales para lockout/auditoría.
         if email:
-            if tenant_subdomain:
-                tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
-                if tenant_for_lockout:
-                    user_for_lockout = User.objects.filter(email__iexact=email, tenant=tenant_for_lockout).first()
-            else:
-                user_for_lockout = User.objects.filter(
-                    email__iexact=email,
-                    is_superuser=True,
-                    tenant__isnull=True
-                ).first()
+            with rls_bypass():
+                if tenant_subdomain:
+                    tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+                    if tenant_for_lockout:
+                        user_for_lockout = User.objects.filter(email__iexact=email, tenant=tenant_for_lockout).first()
+                else:
+                    user_for_lockout = User.objects.filter(
+                        email__iexact=email,
+                        is_superuser=True,
+                        tenant__isnull=True
+                    ).first()
 
         if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
             return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -341,19 +344,20 @@ class LoginView(generics.GenericAPIView):
         try:
             serializer.is_valid(raise_exception=True)
         except ValidationError as e:
-            if tenant_subdomain:
-                try:
-                    tenant = Tenant.objects.get(subdomain=tenant_subdomain)
-                    user = User.objects.filter(email__iexact=email, tenant=tenant).first()
-                except (Tenant.DoesNotExist, User.DoesNotExist):
-                    user = None
-            else:
-                user = User.objects.filter(
-                    email__iexact=email,
-                    is_superuser=True,
-                    tenant__isnull=True
-                ).first()
-            
+            with rls_bypass():
+                if tenant_subdomain:
+                    try:
+                        tenant = Tenant.objects.get(subdomain=tenant_subdomain)
+                        user = User.objects.filter(email__iexact=email, tenant=tenant).first()
+                    except (Tenant.DoesNotExist, User.DoesNotExist):
+                        user = None
+                else:
+                    user = User.objects.filter(
+                        email__iexact=email,
+                        is_superuser=True,
+                        tenant__isnull=True
+                    ).first()
+
             safe_create_login_audit(
                 user=user,
                 request=request,

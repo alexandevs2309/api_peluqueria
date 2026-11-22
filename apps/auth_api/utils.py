@@ -1,6 +1,8 @@
 from rest_framework_simplejwt.tokens import AccessToken
 from django.utils import timezone
 
+from apps.core.tenant_rls import rls_bypass
+
 
 def _login_window_start(window_minutes: int = 15):
     return timezone.now() - timezone.timedelta(minutes=window_minutes)
@@ -33,13 +35,15 @@ def resolve_login_user(email, tenant_subdomain=None):
     if not normalized_email:
         return None
 
-    if tenant_subdomain:
-        tenant = Tenant.objects.filter(subdomain=tenant_subdomain).first()
-        if not tenant:
-            return None
-        return User.objects.filter(email=normalized_email, tenant=tenant).first()
+    # Resolución de credenciales sin contexto de tenant: bypass temporal.
+    with rls_bypass():
+        if tenant_subdomain:
+            tenant = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+            if not tenant:
+                return None
+            return User.objects.filter(email=normalized_email, tenant=tenant).first()
 
-    return User.objects.filter(email=normalized_email).first()
+        return User.objects.filter(email=normalized_email).first()
 
 
 def exceeded_login_attempts(user, max_attempts: int, window_minutes: int = 15) -> bool:

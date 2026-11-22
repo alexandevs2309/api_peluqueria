@@ -20,6 +20,7 @@ from .cookie_utils import clear_auth_cookies, set_auth_cookies
 from django.utils.timezone import now
 from django.contrib.auth import get_user_model
 from apps.tenants_api.models import Tenant
+from apps.core.tenant_rls import rls_bypass
 from datetime import timedelta
 
 User = get_user_model()
@@ -83,17 +84,19 @@ class CookieLoginView(APIView):
         ip_address = get_client_ip(request)
         user_for_lockout = None
 
+        # Igual que LoginView: resolución previa al contexto RLS.
         if email:
-            if tenant_subdomain:
-                tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
-                if tenant_for_lockout:
-                    user_for_lockout = User.objects.filter(email__iexact=email, tenant=tenant_for_lockout).first()
-            else:
-                user_for_lockout = User.objects.filter(
-                    email__iexact=email,
-                    is_superuser=True,
-                    tenant__isnull=True
-                ).first()
+            with rls_bypass():
+                if tenant_subdomain:
+                    tenant_for_lockout = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+                    if tenant_for_lockout:
+                        user_for_lockout = User.objects.filter(email__iexact=email, tenant=tenant_for_lockout).first()
+                else:
+                    user_for_lockout = User.objects.filter(
+                        email__iexact=email,
+                        is_superuser=True,
+                        tenant__isnull=True
+                    ).first()
 
         if is_login_locked_out(user=user_for_lockout, ip_address=ip_address):
             return Response({"detail": get_login_lockout_message()}, status=status.HTTP_429_TOO_MANY_REQUESTS)
@@ -112,16 +115,17 @@ class CookieLoginView(APIView):
 
             if email:
                 try:
-                    if tenant_subdomain:
-                        tenant = Tenant.objects.filter(subdomain=tenant_subdomain).first()
-                        if tenant:
-                            user = User.objects.filter(email__iexact=email, tenant=tenant).first()
-                    else:
-                        user = User.objects.filter(
-                            email__iexact=email,
-                            is_superuser=True,
-                            tenant__isnull=True
-                        ).first()
+                    with rls_bypass():
+                        if tenant_subdomain:
+                            tenant = Tenant.objects.filter(subdomain=tenant_subdomain).first()
+                            if tenant:
+                                user = User.objects.filter(email__iexact=email, tenant=tenant).first()
+                        else:
+                            user = User.objects.filter(
+                                email__iexact=email,
+                                is_superuser=True,
+                                tenant__isnull=True
+                            ).first()
                 except Exception:
                     user = None
 
