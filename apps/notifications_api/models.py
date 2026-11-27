@@ -15,6 +15,10 @@ class InAppNotification(models.Model):
     ]
 
     recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='in_app_notifications')
+    # Origen de la notificación. Es nullable porque las notificaciones globales
+    # (sistema, SuperAdmin) no pertenecen a un negocio. Se rellena desde la
+    # señal/tarea que conoce la cita; si no, se deriva del destinatario.
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, null=True, blank=True, related_name='in_app_notifications')
     type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='system')
     title = models.CharField(max_length=255)
     message = models.TextField()
@@ -25,7 +29,15 @@ class InAppNotification(models.Model):
         ordering = ['-created_at']
         indexes = [
             models.Index(fields=['recipient', 'is_read']),
+            models.Index(fields=['tenant', 'is_read']),
         ]
+
+    def save(self, *args, **kwargs):
+        if self.tenant_id is None and self.recipient_id:
+            recipient_tenant_id = getattr(self.recipient, 'tenant_id', None)
+            if recipient_tenant_id:
+                self.tenant_id = recipient_tenant_id
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.recipient.email} - {self.title}"

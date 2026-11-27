@@ -12,6 +12,27 @@ def _can_manage_tenant_notifications(user, tenant=None) -> bool:
     role_name = get_effective_role_name(user, tenant=tenant)
     return role_name in {'SuperAdmin', 'Client-Admin'}
 
+
+def _scope_to_tenant(request, queryset):
+    """Foco opcional de SuperAdmin: ``?tenant=<id>``.
+
+    El tenant NUNCA se toma del body ni de un header. Un usuario de negocio
+    ignora el parámetro (su tenant ya viene del JWT/RLS); un SuperAdmin que
+    pase un id inexistente obtiene cero filas, nunca todas.
+    """
+    raw = request.query_params.get('tenant')
+    if raw is None or not getattr(request.user, 'is_superuser', False):
+        return queryset
+    try:
+        tenant_id = int(raw)
+    except (TypeError, ValueError):
+        return queryset.none()
+    from apps.tenants_api.models import Tenant
+    if not Tenant.objects.filter(id=tenant_id, deleted_at__isnull=True).exists():
+        return queryset.none()
+    return queryset.filter(tenant_id=tenant_id)
+
+
 class NotificationListCreateView(generics.ListCreateAPIView):
     serializer_class = InAppNotificationSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -23,7 +44,8 @@ class NotificationListCreateView(generics.ListCreateAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        return InAppNotification.objects.filter(recipient=user).order_by('-created_at')
+        queryset = InAppNotification.objects.filter(recipient=user).order_by('-created_at')
+        return _scope_to_tenant(self.request, queryset)
 
 class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = InAppNotificationSerializer
@@ -38,7 +60,8 @@ class NotificationDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         user = self.request.user
-        return InAppNotification.objects.filter(recipient=user)
+        queryset = InAppNotification.objects.filter(recipient=user)
+        return _scope_to_tenant(self.request, queryset)
 
 class NotificationTemplateListView(generics.ListCreateAPIView):
     serializer_class = NotificationTemplateSerializer
@@ -94,8 +117,13 @@ class MarkAllReadView(generics.GenericAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        InAppNotification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
-        return Response({'detail': 'Todas las notificaciones marcadas como leídas'})
+        queryset = InAppNotification.objects.filter(recipient=request.user, is_read=False)
+        queryset = _scope_to_tenant(request, queryset)
+        updated = queryset.update(is_read=True)
+        return Response({
+            'detail': 'Todas las notificaciones marcadas como leídas',
+            'updated': updated,
+        })
 
 
 class SendTestNotificationView(generics.GenericAPIView):

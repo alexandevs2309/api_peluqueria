@@ -2,10 +2,16 @@ from rest_framework import serializers
 from .models import Notification, NotificationTemplate, NotificationPreference, NotificationLog, InAppNotification
 
 class InAppNotificationSerializer(serializers.ModelSerializer):
+    tenant_name = serializers.CharField(source='tenant.name', read_only=True, allow_null=True)
+    tenant_subdomain = serializers.CharField(source='tenant.subdomain', read_only=True, allow_null=True)
+
     class Meta:
         model = InAppNotification
-        fields = ['id', 'type', 'title', 'message', 'is_read', 'created_at']
-        read_only_fields = ['created_at']
+        fields = [
+            'id', 'type', 'title', 'message', 'is_read', 'created_at',
+            'tenant', 'tenant_name', 'tenant_subdomain',
+        ]
+        read_only_fields = ['created_at', 'tenant', 'tenant_name', 'tenant_subdomain']
 
 class NotificationTemplateSerializer(serializers.ModelSerializer):
     class Meta:

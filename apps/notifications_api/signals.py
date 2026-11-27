@@ -52,6 +52,7 @@ def appointment_created(sender, instance, created, **kwargs):
         if stylist:
             InAppNotification.objects.create(
                 recipient=stylist,
+                tenant_id=instance.tenant_id,
                 type='appointment',
                 title='Nueva cita programada',
                 message=f"Cita con {client_name} el {dt_label}"
@@ -66,7 +67,7 @@ def appointment_created(sender, instance, created, **kwargs):
                 title='Cita agendada',
                 message=f"Tu cita de {service_name} fue agendada para el {dt_label}.",
                 is_read=False,
-                defaults={}
+                defaults={'tenant_id': instance.tenant_id}
             )
 
         # Notificación in-app para administradores del tenant
@@ -86,6 +87,7 @@ def appointment_created(sender, instance, created, **kwargs):
                         continue
                     InAppNotification.objects.create(
                         recipient_id=uid,
+                        tenant_id=instance.tenant_id,
                         type='appointment',
                         title='Nueva cita en la agenda',
                         message=f"{client_name} · {service_name} · {dt_label}"
@@ -292,6 +294,7 @@ def appointment_status_changed(sender, instance, **kwargs):
             try:
                 InAppNotification.objects.create(
                     recipient_id=recipient_id,
+                    tenant_id=instance.tenant_id,
                     type=ntype,
                     title=title,
                     message=message

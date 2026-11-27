@@ -73,6 +73,7 @@ def mark_expired_appointments(self):
                     seen.add(rid)
                     InAppNotification.objects.create(
                         recipient_id=rid,
+                        tenant_id=getattr(appointment, 'tenant_id', None),
                         type='appointment',
                         title='Cliente no asistió',
                         message=msg,
@@ -124,6 +125,7 @@ def send_daily_appointment_reminders(self):
                 continue
             InAppNotification.objects.create(
                 recipient_id=appointment.stylist_id,
+                tenant_id=appointment.tenant_id,
                 type='appointment',
                 title='Recordatorio: Cita hoy',
                 message=f"Cita con {client_name} a las {time_label}"
@@ -139,6 +141,7 @@ def send_daily_appointment_reminders(self):
                 ).exists():
                     InAppNotification.objects.create(
                         recipient_id=client_user.id,
+                        tenant_id=appointment.tenant_id,
                         type='appointment',
                         title='Recordatorio: Tienes una cita hoy',
                         message=f"Tu cita de {service_name} es hoy a las {time_label}."
@@ -182,6 +185,7 @@ def notify_upcoming_appointments(self):
             ).exists():
                 InAppNotification.objects.create(
                     recipient_id=appointment.stylist_id,
+                    tenant_id=appointment.tenant_id,
                     type='appointment',
                     title='⏰ Cita próxima',
                     message=f"Cita con {client_name} en 1 hora ({time_label})"
@@ -197,6 +201,7 @@ def notify_upcoming_appointments(self):
             ).exists():
                 InAppNotification.objects.create(
                     recipient_id=client_user.id,
+                    tenant_id=appointment.tenant_id,
                     type='appointment',
                     title='⏰ Tu cita es pronto',
                     message=f"Tu cita de {service_name} es en aproximadamente 1 hora ({time_label})."

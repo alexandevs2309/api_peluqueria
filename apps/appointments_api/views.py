@@ -457,7 +457,19 @@ def calendar_events(request):
             return Response([], status=200)
         base_filter &= Q(tenant=tenant)
     else:
-        if tenant:
+        # SuperAdmin: foco opcional por ?tenant=<id>. El id se valida contra
+        # tenants activos; un valor inválido devuelve cero eventos, nunca todos.
+        requested_tenant = request.GET.get('tenant')
+        if requested_tenant is not None:
+            try:
+                tenant_id = int(requested_tenant)
+            except (TypeError, ValueError):
+                return Response([], status=200)
+            from apps.tenants_api.models import Tenant
+            if not Tenant.objects.filter(id=tenant_id, deleted_at__isnull=True).exists():
+                return Response([], status=200)
+            base_filter &= Q(tenant_id=tenant_id)
+        elif tenant:
             base_filter &= Q(tenant=tenant)
 
     # Filtrar por sucursal si se solicita
