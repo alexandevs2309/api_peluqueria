@@ -13,7 +13,8 @@ class PublicTenantInfoSerializer(serializers.Serializer):
     name = serializers.CharField(source='tenant.name')
     subdomain = serializers.CharField(source='tenant.subdomain')
     booking_url = serializers.SerializerMethodField()
-    contact_email = serializers.EmailField(source='tenant.contact_email', allow_null=True)
+    # El correo de contacto del negocio también es su identidad de acceso: no se
+    # expone en el portal público de reservas. Sí se muestra el teléfono público.
     contact_phone = serializers.CharField(source='tenant.contact_phone', allow_null=True)
     address = serializers.CharField(source='tenant.address', allow_null=True)
     locale = serializers.CharField(source='tenant.locale')

@@ -113,6 +113,19 @@ class BookingIntegrityTests(TestCase):
         assert response.status_code == 200, response.data
         assert [item['id'] for item in response.data] == [self.employee.id]
 
+    def test_public_info_never_exposes_business_email(self):
+        """El correo del negocio es su identidad de acceso: no debe filtrarse al visitante."""
+        Tenant.objects.filter(pk=self.tenant.pk).update(
+            contact_email='aventuracuevas@icloud.com',
+            contact_phone='8095550000',
+        )
+
+        response = self.api.get(f'/api/booking/{self.tenant.subdomain}/info/')
+
+        assert response.status_code == 200, response.data
+        assert 'contact_email' not in response.data
+        assert response.data['contact_phone'] == '8095550000'
+
     @override_settings(FRONTEND_URL='https://app.auronsuite.com/')
     def test_booking_url_is_derived_from_tenant_subdomain(self):
         """El enlace público es propiedad del negocio, nunca del visitante."""
