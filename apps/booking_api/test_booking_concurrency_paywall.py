@@ -13,6 +13,7 @@ from apps.tenants_api.models import Tenant
 from apps.tenants_api.serializers import TenantSerializer
 from apps.services_api.models import Service, ServiceEmployee
 from apps.employees_api.models import Employee
+from apps.appointments_api.models import Appointment
 
 User = get_user_model()
 
@@ -93,6 +94,30 @@ class BookingIntegrityTests(TestCase):
         assert response.status_code == 201, response.data
         assert observed, 'La vista no bloqueó la fila del estilista'
         assert all(observed), 'El lock se ejecutó fuera de atomic()'
+
+    def test_each_booking_keeps_the_name_entered_by_the_visitor(self):
+        """Un mismo teléfono reutiliza el Client, pero cada cita debe mostrar su nombre."""
+        first_payload = self._payload('')
+        first_payload.pop('client_email')
+        first_payload['client_phone'] = '8095551234'
+        first_payload['client_name'] = 'Yeiko'
+        first = self.api.post(
+            f'/api/booking/{self.tenant.subdomain}/book/', first_payload, format='json'
+        )
+        assert first.status_code == 201, first.data
+
+        second_payload = dict(first_payload)
+        second_payload['date'] = (self.date + timedelta(days=1)).isoformat()
+        second_payload['client_name'] = 'Alexander'
+        second = self.api.post(
+            f'/api/booking/{self.tenant.subdomain}/book/', second_payload, format='json'
+        )
+
+        assert second.status_code == 201, second.data
+        assert second.data['client_name'] == 'Alexander'
+        appointment = Appointment.objects.get(id=second.data['id'])
+        assert appointment.client_name == 'Alexander'
+        assert appointment.client.full_name == 'Yeiko'  # el contacto se reutiliza
 
     def test_past_due_tenant_cannot_accept_public_bookings(self):
         """El paywall debe aplicarse al tenant del subdomain, aunque el visitante sea anónimo."""

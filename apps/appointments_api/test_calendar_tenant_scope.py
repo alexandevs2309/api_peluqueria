@@ -107,3 +107,36 @@ def test_usuario_de_negocio_no_puede_ampliar_el_filtro(calendar_scope):
     assert response.status_code == 200
     assert len(response.data) == 1
     assert response.data[0]['extendedProps']['notes'] == 'cita-calendar-beta'
+
+
+@pytest.mark.django_db
+def test_calendar_muestra_el_nombre_de_la_reserva_no_el_del_contacto(calendar_scope):
+    """Un contacto reutilizado no debe cambiar el nombre de citas anteriores."""
+    tenant_a, _, superuser, _, start, end = calendar_scope
+    client = Client.objects.get(tenant=tenant_a)
+    client.full_name = 'Yeiko'
+    client.save(update_fields=['full_name'])
+    Appointment.objects.create(
+        tenant=tenant_a, client=client, stylist=superuser,
+        date_time=timezone.now() + timedelta(days=2),
+        status='scheduled', client_name='Alexander',
+    )
+
+    response = _client(superuser).get(
+        '/api/appointments/calendar-events/',
+        {'start': start, 'end': end, 'tenant': tenant_a.id},
+    )
+
+    assert response.status_code == 200
+    by_name = {event['title']: event for event in response.data}
+    assert 'Alexander' in by_name
+    assert by_name['Alexander']['extendedProps']['clientName'] == 'Alexander'
+    assert 'Yeiko' in by_name  # la cita antigua conserva el nombre del contacto
+
+    list_response = _client(superuser).get(
+        '/api/appointments/appointments/', {'tenant': tenant_a.id, 'from': start},
+    )
+    assert list_response.status_code == 200, list_response.data
+    items = list_response.data.get('results', list_response.data)
+    names = [item['client_name'] for item in items]
+    assert 'Alexander' in names

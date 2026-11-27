@@ -44,7 +44,9 @@ def appointment_created(sender, instance, created, **kwargs):
         from .models import InAppNotification
         stylist = instance.stylist
         client = instance.client
-        client_name = client.full_name if client else 'Cliente'
+        client_name = getattr(instance, 'client_name', None) or (
+            client.full_name if client else 'Cliente'
+        )
         service_name = instance.service.name if getattr(instance, 'service', None) else 'Servicio'
         dt_label = instance.date_time.strftime('%d/%m/%Y a las %H:%M') if instance.date_time else ''
 

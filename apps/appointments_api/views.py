@@ -135,7 +135,13 @@ class AppointmentViewSet(AuditLoggingMixin, TenantScopedViewSet):
         else:
             tenant = self.request.tenant
 
-        save_kwargs = {'tenant': tenant}
+        # Las citas creadas desde el panel también congelan el nombre del
+        # cliente actual, igual que las reservas públicas.
+        client = serializer.validated_data.get('client')
+        save_kwargs = {
+            'tenant': tenant,
+            'client_name': getattr(client, 'full_name', None) if client else None,
+        }
 
         # Restricción y autoset de sucursal para empleados no administradores
         if user and getattr(user, 'is_authenticated', False) and not user.is_superuser:
@@ -490,15 +496,17 @@ def calendar_events(request):
             'cancelled': '#e74c3c'
         }.get(apt.status, '#95a5a6')
 
+        apt_client_name = apt.client_name or (apt.client.full_name if apt.client else 'Cliente')
+
         events.append({
             'id': apt.id,
-            'title': f"{apt.client.full_name}",
+            'title': apt_client_name,
             'start': apt.date_time.isoformat(),
             'end': end_time.isoformat(),
             'backgroundColor': color,
             'borderColor': color,
             'extendedProps': {
-                'clientName': apt.client.full_name,
+                'clientName': apt_client_name,
                 'clientPhone': apt.client.phone or '',
                 'stylistName': apt.stylist.full_name if apt.stylist else 'Sin asignar',
                 'serviceName': apt.service.name if apt.service else 'Sin servicio',

@@ -157,6 +157,10 @@ class AppointmentSerializer(serializers.ModelSerializer):
         return value
 
     def get_client_name(self, obj):
+        # Cada reserva muestra el nombre declarado al agendarla; las citas
+        # anteriores a este campo siguen usando el nombre del contacto.
+        if getattr(obj, 'client_name', None):
+            return obj.client_name
         if obj.client_id and obj.client:
             return obj.client.full_name
         return None

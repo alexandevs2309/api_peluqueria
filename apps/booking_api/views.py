@@ -271,6 +271,9 @@ def book_appointment(request, subdomain):
                     tenant=tenant,
                     branch=employee.branch,
                     client=client,
+                    # El contacto puede reutilizarse por teléfono/correo, pero la
+                    # cita conserva el nombre que el visitante escribió ahora.
+                    client_name=data['client_name'],
                     stylist=employee.user,
                     service=service,
                     date_time=date_time,
@@ -294,7 +297,7 @@ def book_appointment(request, subdomain):
     return Response({
         'id': appointment.id,
         'message': 'Cita agendada exitosamente',
-        'client_name': client.full_name,
+        'client_name': appointment.client_name,
         'stylist_name': employee.user.full_name or employee.user.email,
         'service_name': service.name,
         'date_time': date_time.isoformat(),
