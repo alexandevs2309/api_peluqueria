@@ -2,6 +2,31 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 from django.conf import settings
 
+from apps.core.tenant_rls import rls_bypass
+
+
+def _tenant_from_jwt_user(user):
+    """Resuelve el tenant del JWT sin depender del RLS de la petición.
+
+    En rutas públicas como ``/api/booking/<subdomain>/`` el contexto RLS se
+    fija desde el subdomain de la URL, no desde el usuario autenticado. Acceder
+    a ``user.tenant`` bajo ese contexto puede lanzar ``Tenant.DoesNotExist`` y
+    convertir una página pública en un 500 cuando el visitante tiene cookie de
+    otro negocio. El JWT ya trae ``tenant_id``: hacemos una única lectura
+    explícita con bypass y devolvemos ``None`` si la fila ya no existe.
+    """
+    if getattr(user, 'is_superuser', False):
+        return None
+
+    tenant_id = getattr(user, 'tenant_id', None)
+    if not tenant_id:
+        return None
+
+    from apps.tenants_api.models import Tenant
+
+    with rls_bypass():
+        return Tenant.objects.filter(pk=tenant_id).first()
+
 
 class CookieJWTAuthentication(JWTAuthentication):
     """
@@ -11,12 +36,8 @@ class CookieJWTAuthentication(JWTAuthentication):
 
     @staticmethod
     def _attach_tenant(request, user):
-        if getattr(user, 'is_superuser', False):
-            request.tenant = None
-            return
+        request.tenant = _tenant_from_jwt_user(user)
 
-        request.tenant = getattr(user, 'tenant', None)
-    
     def authenticate(self, request):
         # Primero intenta el método tradicional (Authorization header)
         header_auth = super().authenticate(request)
@@ -44,12 +65,8 @@ class DualJWTAuthentication(JWTAuthentication):
 
     @staticmethod
     def _attach_tenant(request, user):
-        if getattr(user, 'is_superuser', False):
-            request.tenant = None
-            return
+        request.tenant = _tenant_from_jwt_user(user)
 
-        request.tenant = getattr(user, 'tenant', None)
-    
     def authenticate(self, request):
         # Método 1: Authorization header (actual)
         try:
