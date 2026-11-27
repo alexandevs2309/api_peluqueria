@@ -11,7 +11,9 @@ logger = logging.getLogger(__name__)
 CHATBOT_SYSTEM_PROMPT = (
     "Eres el asistente comercial de Auron Suite, un software de gestión para barberías, "
     "peluquerías y salones de belleza en República Dominicana y Latinoamérica. "
-    "Responde en español, con datos oficiales y actualizados. Sé breve, claro y cordial."
+    "Responde en español, con datos oficiales y actualizados. Sé breve, claro y cordial. "
+    "Nunca inventes ni muestres enlaces con marcadores de posición: el enlace de reservas "
+    "es único por negocio y se copia desde Configuración → Datos del Negocio en el panel."
 )
 
 # Base de conocimiento estática rica para respuestas de fallback dinámicas e inteligentes
@@ -54,7 +56,7 @@ KNOWLEDGE_BASE = {
     ),
     "agenda_citas": (
         "La **agenda y reservas online** de Auron Suite está diseñada para ahorrar tiempo y profesionalizar tu salón:\n\n"
-        "• **Reservas 24/7**: Te proporcionamos un portal de reservas público para que tus clientes agenden solos desde su celular, sin interrumpir tu trabajo.\n"
+        "• **Reservas 24/7**: Cada negocio tiene su propio enlace público de reservas, generado a partir de su subdominio. Lo encuentras en **Configuración → Datos del Negocio** y puedes copiarlo y compartirlo por WhatsApp, Instagram o tu web.\n"
         "• **Prevención de Doble Agenda**: El motor del backend bloquea los slots automáticamente basándose en la disponibilidad real del barbero y la duración del servicio.\n"
         "• **Recordatorios por WhatsApp/Email**: El sistema envía alertas automáticas previas a la cita para mitigar las inasistencias (no-shows) de forma efectiva.\n"
         "• **Control Visual**: Agenda interactiva con estados de color para citas programadas, en curso, cobradas, canceladas o ausentes."

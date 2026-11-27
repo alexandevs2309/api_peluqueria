@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from apps.services_api.models import Service
+from apps.utils.booking_urls import public_booking_url
 from apps.employees_api.models import Employee, WorkSchedule
 from apps.clients_api.models import Client
 from django.contrib.auth import get_user_model
@@ -11,12 +12,18 @@ User = get_user_model()
 class PublicTenantInfoSerializer(serializers.Serializer):
     name = serializers.CharField(source='tenant.name')
     subdomain = serializers.CharField(source='tenant.subdomain')
+    booking_url = serializers.SerializerMethodField()
     contact_email = serializers.EmailField(source='tenant.contact_email', allow_null=True)
     contact_phone = serializers.CharField(source='tenant.contact_phone', allow_null=True)
     address = serializers.CharField(source='tenant.address', allow_null=True)
     locale = serializers.CharField(source='tenant.locale')
     currency = serializers.CharField(source='tenant.currency')
     time_zone = serializers.CharField(source='tenant.time_zone')
+
+    def get_booking_url(self, obj):
+        """Enlace canónico del negocio, derivado de su subdomain y de FRONTEND_URL."""
+        tenant = obj.get('tenant') if isinstance(obj, dict) else obj
+        return public_booking_url(tenant)
 
 
 class PublicServiceSerializer(serializers.ModelSerializer):

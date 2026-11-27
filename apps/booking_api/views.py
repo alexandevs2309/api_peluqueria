@@ -70,7 +70,8 @@ def public_stylists(request, subdomain):
 
     if service_id:
         employees = employees.filter(
-            Q(services__service_id=service_id) | Q(user__stylist_services__service_id=service_id)
+            Q(employee_services__service_id=service_id)
+            | Q(user__stylist_services__service_id=service_id)
         ).distinct()
 
     serializer = PublicStylistSerializer(employees, many=True)

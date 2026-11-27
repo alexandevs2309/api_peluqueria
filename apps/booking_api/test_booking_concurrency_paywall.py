@@ -1,16 +1,17 @@
-"""Regresiones BE-08 / CR-16: atomicidad, lock y paywall del booking público."""
+﻿"""Regresiones BE-08 / CR-16: atomicidad, lock y paywall del booking público."""
 from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import connection
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 from rest_framework.throttling import SimpleRateThrottle
 
 from apps.tenants_api.models import Tenant
-from apps.services_api.models import Service
+from apps.tenants_api.serializers import TenantSerializer
+from apps.services_api.models import Service, ServiceEmployee
 from apps.employees_api.models import Employee
 
 User = get_user_model()
@@ -99,3 +100,31 @@ class BookingIntegrityTests(TestCase):
         response = self._post()
         assert response.status_code == 402, response.data
         assert response.data['code'] == 'PAYMENT_REQUIRED'
+
+    def test_stylists_can_be_filtered_by_service(self):
+        """El portal filtra profesionales por servicio sin consultar una relation inexistente."""
+        ServiceEmployee.objects.create(service=self.service, employee=self.employee)
+
+        response = self.api.get(
+            f'/api/booking/{self.tenant.subdomain}/stylists/',
+            {'service_id': self.service.id},
+        )
+
+        assert response.status_code == 200, response.data
+        assert [item['id'] for item in response.data] == [self.employee.id]
+
+    @override_settings(FRONTEND_URL='https://app.auronsuite.com/')
+    def test_booking_url_is_derived_from_tenant_subdomain(self):
+        """El enlace público es propiedad del negocio, nunca del visitante."""
+        expected = 'https://app.auronsuite.com/reservar/bookingtest'
+
+        response = self.api.get(f'/api/booking/{self.tenant.subdomain}/info/')
+        assert response.status_code == 200, response.data
+        assert response.data['booking_url'] == expected
+
+        assert TenantSerializer(self.tenant).data['booking_url'] == expected
+
+    @override_settings(FRONTEND_URL='')
+    def test_booking_url_without_frontend_origin_is_relative(self):
+        response = self.api.get(f'/api/booking/{self.tenant.subdomain}/info/')
+        assert response.data['booking_url'] == '/reservar/bookingtest'

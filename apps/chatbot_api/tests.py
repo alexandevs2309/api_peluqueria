@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -50,3 +52,15 @@ class ChatBotTests(TestCase):
         response = self.client.post("/api/chatbot/", {"prompt": "alguna otra cosa?"}, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("Auron Suite es la plataforma", response.data["reply"])
+
+    @patch("apps.chatbot_api.views.ask_llm_simple", return_value=None)
+    def test_booking_reply_points_to_business_specific_link(self, _llm):
+        """El chatbot no debe anunciar una URL genérica con marcadores de posición."""
+        response = self.client.post(
+            "/api/chatbot/", {"prompt": "cómo funciona la agenda de citas?"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        reply = response.data["reply"]
+        self.assertNotIn("<subdomain>", reply)
+        self.assertIn("Configuración → Datos del Negocio", reply)
